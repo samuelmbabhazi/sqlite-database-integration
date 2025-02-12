@@ -565,11 +565,26 @@ QUERY;
 	}
 
 	public function testShowColumns() {
+		$this->assertQuery(
+			'
+			CREATE TABLE t (
+				id INT PRIMARY KEY,
+				name VARCHAR(255) NOT NULL,
+				age INT DEFAULT 0,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				deleted_at TIMESTAMP DEFAULT NULL,
+				CONSTRAINT name_unique UNIQUE (name),
+				INDEX name_index (name)
+			);
+		'
+		);
 
-		$query = 'SHOW COLUMNS FROM wp_posts';
+		$query = 'SHOW COLUMNS FROM t';
 		$this->assertQuery( $query );
 
 		$actual = $this->engine->get_query_results();
+		$this->assertCount( 6, $actual );
 		foreach ( $actual as $row ) {
 			$this->assertIsObject( $row );
 			$this->assertTrue( property_exists( $row, 'Field' ) );

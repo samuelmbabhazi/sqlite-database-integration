@@ -1265,6 +1265,10 @@ class WP_SQLite_Driver {
 		$keyword2 = $tokens[2] ?? null;
 
 		switch ( $keyword1->id ) {
+			case WP_MySQL_Lexer::COLUMNS_SYMBOL:
+			case WP_MySQL_Lexer::FIELDS_SYMBOL:
+				$this->execute_show_columns_statement( $node );
+				break;
 			case WP_MySQL_Lexer::CREATE_SYMBOL:
 				if ( WP_MySQL_Lexer::TABLE_SYMBOL === $keyword2->id ) {
 					$table_name = $this->unquote_sqlite_identifier(
@@ -1478,6 +1482,77 @@ class WP_SQLite_Driver {
 		}
 
 		$this->set_results_from_fetched_data( $tables );
+	}
+
+	/**
+	 * Translate and execute a MySQL SHOW COLUMNS statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "showStatement" AST node.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws PDOException               When given table doesn't exist.
+	 */
+	private function execute_show_columns_statement( WP_Parser_Node $node ): void {
+		$table_name = $this->unquote_sqlite_identifier(
+			$this->translate( $node->get_first_child_node( 'tableRef' ) )
+		);
+
+		// FROM/IN database.
+		$in_db = $node->get_first_child_node( 'inDb' );
+		if ( null === $in_db ) {
+			$database = $this->db_name;
+		} else {
+			$database = $this->unquote_sqlite_identifier(
+				$this->translate( $in_db->get_first_child_node( 'identifier' ) )
+			);
+		}
+
+		// Check if the table exists.
+		$table_exists = $this->execute_sqlite_query(
+			'SELECT 1 FROM _mysql_information_schema_tables WHERE table_schema = ? AND table_name = ?',
+			array( $this->db_name, $table_name )
+		)->fetchColumn();
+
+		if ( ! $table_exists ) {
+			throw new PDOException(
+				sprintf( "Table '%s.%s' doesn't exist", $database, $table_name ),
+				'42S02'
+			);
+		}
+
+		// LIKE and WHERE clauses.
+		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		if ( null !== $like_or_where ) {
+			$condition = $this->translate_show_like_or_where_condition( $like_or_where );
+		}
+
+		// Fetch column information.
+		$column_info = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT * FROM _mysql_information_schema_columns WHERE table_schema = ? AND table_name = ? %s',
+				$condition ?? ''
+			),
+			array( $database, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		if ( false === $column_info ) {
+			$this->set_results_from_fetched_data( array() );
+		}
+
+		// Format the results.
+		$columns = array();
+		foreach ( $column_info as $value ) {
+			$column    = array(
+				'Field'   => $value['COLUMN_NAME'],
+				'Type'    => $value['COLUMN_TYPE'],
+				'Null'    => $value['IS_NULLABLE'],
+				'Key'     => $value['COLUMN_KEY'],
+				'Default' => $value['COLUMN_DEFAULT'],
+				'Extra'   => $value['EXTRA'],
+			);
+			$columns[] = (object) $column;
+		}
+
+		$this->set_results_from_fetched_data( $columns );
 	}
 
 	/**
