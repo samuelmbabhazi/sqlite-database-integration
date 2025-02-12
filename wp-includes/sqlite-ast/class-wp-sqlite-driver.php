@@ -239,7 +239,19 @@ class WP_SQLite_Driver {
 	private static $mysql_grammar;
 
 	/**
-	 * The database name.
+	 * The main database name.
+	 *
+	 * The name of the main database that is used by the driver.
+	 *
+	 * @var string|null
+	 */
+	private $main_db_name;
+
+	/**
+	 * The name of the current database in use.
+	 *
+	 * This can be set with the USE statement. At the moment, we support only
+	 * the main driver database and the INFORMATION_SCHEMA database.
 	 *
 	 * @var string
 	 */
@@ -335,7 +347,8 @@ class WP_SQLite_Driver {
 		if ( ! isset( $options['database'] ) || ! is_string( $options['database'] ) ) {
 			throw $this->new_driver_exception( 'Option "database" is required.' );
 		}
-		$this->db_name = $options['database'];
+		$this->main_db_name = $options['database'];
+		$this->db_name      = $this->main_db_name;
 
 		// Database connection.
 		if ( isset( $options['connection'] ) && $options['connection'] instanceof PDO ) {
@@ -756,6 +769,9 @@ class WP_SQLite_Driver {
 				switch ( $subtree->rule_name ) {
 					case 'describeStatement':
 						$this->execute_describe_statement( $subtree );
+						break;
+					case 'useCommand':
+						$this->execute_use_statement( $subtree );
 						break;
 					default:
 						throw $this->new_not_supported_exception(
@@ -1595,6 +1611,32 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * Translate and execute a MySQL USE statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "useStatement" AST node.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_use_statement( WP_Parser_Node $node ): void {
+		$database_name = $this->unquote_sqlite_identifier(
+			$this->translate( $node->get_first_child_node( 'identifier' ) )
+		);
+
+		if ( 'information_schema' === strtolower( $database_name ) ) {
+			$this->db_name = 'information_schema';
+		} elseif ( $this->db_name === $database_name ) {
+			$this->db_name = $database_name;
+		} else {
+			throw $this->new_not_supported_exception(
+				sprintf(
+					"can't use schema '%s', only '%s' and 'information_schema' are supported",
+					$database_name,
+					$this->db_name
+				)
+			);
+		}
+	}
+
+	/**
 	 * Translate a MySQL AST node or token to an SQLite query fragment.
 	 *
 	 * @param  WP_Parser_Node|WP_MySQL_Token $node The AST node to translate.
@@ -1947,7 +1989,7 @@ class WP_SQLite_Driver {
 		$parts = array();
 
 		// Database name.
-		$is_information_schema = false;
+		$is_information_schema = 'information_schema' === $this->db_name;
 		if ( null !== $schema_node ) {
 			$schema_name = $this->unquote_sqlite_identifier(
 				$this->translate_sequence( $schema_node->get_children() )
