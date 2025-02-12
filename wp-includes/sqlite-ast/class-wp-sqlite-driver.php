@@ -2424,7 +2424,11 @@ class WP_SQLite_Driver {
 					', ',
 					array_map(
 						function ( $column ) {
-							return $this->quote_mysql_identifier( $column['COLUMN_NAME'] );
+							$definition = $this->quote_mysql_identifier( $column['COLUMN_NAME'] );
+							if ( null !== $column['SUB_PART'] ) {
+								$definition .= sprintf( '(%d)', $column['SUB_PART'] );
+							}
+							return $definition;
 						},
 						$constraint
 					)
