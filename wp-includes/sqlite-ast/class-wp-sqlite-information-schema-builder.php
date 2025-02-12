@@ -29,7 +29,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	const CREATE_INFORMATION_SCHEMA_QUERIES = array(
 		// TABLES
-		"CREATE TABLE IF NOT EXISTS _mysql_information_schema_tables (
+		"CREATE TABLE IF NOT EXISTS <prefix>tables (
 			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def',  -- always 'def'
 			TABLE_SCHEMA TEXT NOT NULL,                 -- database name
 			TABLE_NAME TEXT NOT NULL,                   -- table name
@@ -55,7 +55,7 @@ class WP_SQLite_Information_Schema_Builder {
 		) STRICT",
 
 		// COLUMNS
-		"CREATE TABLE IF NOT EXISTS _mysql_information_schema_columns (
+		"CREATE TABLE IF NOT EXISTS <prefix>columns (
 			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def',      -- always 'def'
 			TABLE_SCHEMA TEXT NOT NULL,                     -- database name
 			TABLE_NAME TEXT NOT NULL,                       -- table name
@@ -82,7 +82,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// VIEWS
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS _mysql_information_schema_views (
+		'CREATE TABLE IF NOT EXISTS <prefix>views (
 			TABLE_CATALOG TEXT NOT NULL,
 			TABLE_SCHEMA TEXT NOT NULL,
 			TABLE_NAME TEXT NOT NULL,
@@ -97,7 +97,7 @@ class WP_SQLite_Information_Schema_Builder {
 		) STRICT',
 
 		// STATISTICS (indexes)
-		"CREATE TABLE IF NOT EXISTS _mysql_information_schema_statistics (
+		"CREATE TABLE IF NOT EXISTS <prefix>statistics (
 			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def', -- always 'def'
 			TABLE_SCHEMA TEXT NOT NULL,                -- database name
 			TABLE_NAME TEXT NOT NULL,                  -- table name
@@ -120,7 +120,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// TABLE_CONSTRAINTS
 		// @TODO: Implement. Could this be just a view?
-		'CREATE TABLE IF NOT EXISTS _mysql_information_schema_table_constraints (
+		'CREATE TABLE IF NOT EXISTS <prefix>constraints (
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
@@ -131,7 +131,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// CHECK_CONSTRAINTS
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS _mysql_information_schema_check_constraints (
+		'CREATE TABLE IF NOT EXISTS <prefix>check_constraints (
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			TABLE_NAME TEXT NOT NULL,
@@ -141,7 +141,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// KEY_COLUMN_USAGE
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS _mysql_information_schema_key_column_usage (
+		'CREATE TABLE IF NOT EXISTS <prefix>key_column_usage (
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
@@ -158,7 +158,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// REFERENTIAL_CONSTRAINTS
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS _mysql_information_schema_referential_constraints (
+		'CREATE TABLE IF NOT EXISTS <prefix>referential_constraints (
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
@@ -173,7 +173,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// TRIGGERS
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS _mysql_information_schema_triggers (
+		'CREATE TABLE IF NOT EXISTS <prefix>triggers (
 			TRIGGER_CATALOG TEXT NOT NULL,
 			TRIGGER_SCHEMA TEXT NOT NULL,
 			TRIGGER_NAME TEXT NOT NULL,
@@ -330,6 +330,13 @@ class WP_SQLite_Information_Schema_Builder {
 	private $db_name;
 
 	/**
+	 * A prefix for information schema table names.
+	 *
+	 * @var string
+	 */
+	private $table_prefix;
+
+	/**
 	 * Query callback.
 	 *
 	 * @TODO: Consider extracting a part of the WP_SQLite_Driver class
@@ -342,12 +349,24 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Constructor.
 	 *
-	 * @param string                                $database       Database name.
-	 * @param callable(string, array): PDOStatement $query_callback A callback that executes an SQLite query.
+	 * @param string                                $database        Database name.
+	 * @param string                                $reserved_prefix An identifier prefix for internal database objects.
+	 * @param callable(string, array): PDOStatement $query_callback  A callback that executes an SQLite query.
 	 */
-	public function __construct( string $database, callable $query_callback ) {
+	public function __construct( string $database, string $reserved_prefix, callable $query_callback ) {
 		$this->db_name        = $database;
 		$this->query_callback = $query_callback;
+		$this->table_prefix   = $reserved_prefix . 'mysql_information_schema_';
+	}
+
+	/**
+	 * Get SQLite table name for the given MySQL information schema table name.
+	 *
+	 * @param  string $infromation_schema_table_name The MySQL information schema table name.
+	 * @return string                                The SQLite table name.
+	 */
+	public function get_table_name( string $infromation_schema_table_name ): string {
+		return $this->table_prefix . $infromation_schema_table_name;
 	}
 
 	/**
@@ -356,7 +375,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	public function ensure_information_schema_tables(): void {
 		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
-			$this->query( $query );
+			$this->query( str_replace( '<prefix>', $this->table_prefix, $query ) );
 		}
 	}
 
@@ -373,7 +392,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// 1. Table.
 		$this->insert_values(
-			'_mysql_information_schema_tables',
+			'tables',
 			array(
 				'table_schema'    => $this->db_name,
 				'table_name'      => $table_name,
@@ -396,7 +415,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$column_node,
 				$column_position
 			);
-			$this->insert_values( '_mysql_information_schema_columns', $column_data );
+			$this->insert_values( 'columns', $column_data );
 
 			// Inline column constraint.
 			$column_constraint_data = $this->extract_column_constraint_data(
@@ -406,10 +425,7 @@ class WP_SQLite_Information_Schema_Builder {
 				'YES' === $column_data['is_nullable']
 			);
 			if ( null !== $column_constraint_data ) {
-				$this->insert_values(
-					'_mysql_information_schema_statistics',
-					$column_constraint_data
-				);
+				$this->insert_values( 'statistics', $column_constraint_data );
 			}
 
 			$column_position += 1;
@@ -523,21 +539,21 @@ class WP_SQLite_Information_Schema_Builder {
 		foreach ( $table_refs as $table_ref ) {
 			$table_name = $this->get_value( $table_ref );
 			$this->delete_values(
-				'_mysql_information_schema_tables',
+				'tables',
 				array(
 					'table_schema' => $this->db_name,
 					'table_name'   => $table_name,
 				)
 			);
 			$this->delete_values(
-				'_mysql_information_schema_columns',
+				'columns',
 				array(
 					'table_schema' => $this->db_name,
 					'table_name'   => $table_name,
 				)
 			);
 			$this->delete_values(
-				'_mysql_information_schema_statistics',
+				'statistics',
 				array(
 					'table_schema' => $this->db_name,
 					'table_name'   => $table_name,
@@ -556,22 +572,23 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
 	 */
 	private function record_add_column( string $table_name, string $column_name, WP_Parser_Node $node ): void {
-		$position = $this->query(
-			'
+		$columns_table_name = $this->get_table_name( 'columns' );
+		$position           = $this->query(
+			"
 				SELECT MAX(ordinal_position)
-				FROM _mysql_information_schema_columns
+				FROM $columns_table_name
 				WHERE table_schema = ?
 				AND table_name = ?
-			',
+			",
 			array( $this->db_name, $table_name )
 		)->fetchColumn();
 
 		$column_data = $this->extract_column_data( $table_name, $column_name, $node, (int) $position + 1 );
-		$this->insert_values( '_mysql_information_schema_columns', $column_data );
+		$this->insert_values( 'columns', $column_data );
 
 		$column_constraint_data = $this->extract_column_constraint_data( $table_name, $column_name, $node, true );
 		if ( null !== $column_constraint_data ) {
-			$this->insert_values( '_mysql_information_schema_statistics', $column_constraint_data );
+			$this->insert_values( 'statistics', $column_constraint_data );
 		}
 	}
 
@@ -591,7 +608,7 @@ class WP_SQLite_Information_Schema_Builder {
 	): void {
 		$column_data = $this->extract_column_data( $table_name, $new_column_name, $node, 0 );
 		$this->update_values(
-			'_mysql_information_schema_columns',
+			'columns',
 			$column_data,
 			array(
 				'table_schema' => $this->db_name,
@@ -603,7 +620,7 @@ class WP_SQLite_Information_Schema_Builder {
 		// Update column name in statistics, if it has changed.
 		if ( $new_column_name !== $column_name ) {
 			$this->update_values(
-				'_mysql_information_schema_statistics',
+				'statistics',
 				array(
 					'column_name' => $new_column_name,
 				),
@@ -624,7 +641,7 @@ class WP_SQLite_Information_Schema_Builder {
 			'YES' === $column_data['is_nullable']
 		);
 		if ( null !== $column_constraint_data ) {
-			$this->insert_values( '_mysql_information_schema_statistics', $column_constraint_data );
+			$this->insert_values( 'statistics', $column_constraint_data );
 			$this->sync_column_key_info( $table_name );
 		}
 	}
@@ -652,7 +669,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function record_drop_column( $table_name, $column_name ): void {
 		$this->delete_values(
-			'_mysql_information_schema_columns',
+			'columns',
 			array(
 				'table_schema' => $this->db_name,
 				'table_name'   => $table_name,
@@ -674,7 +691,7 @@ class WP_SQLite_Information_Schema_Builder {
 		 *   - https://dev.mysql.com/doc/refman/8.4/en/alter-table.html
 		 */
 		$this->delete_values(
-			'_mysql_information_schema_statistics',
+			'statistics',
 			array(
 				'table_schema' => $this->db_name,
 				'table_name'   => $table_name,
@@ -695,7 +712,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function record_drop_index( string $table_name, string $index_name ): void {
 		$this->delete_values(
-			'_mysql_information_schema_statistics',
+			'statistics',
 			array(
 				'table_schema' => $this->db_name,
 				'table_name'   => $table_name,
@@ -746,13 +763,14 @@ class WP_SQLite_Information_Schema_Builder {
 		// Fetch column info.
 		$column_names = array_filter( $key_part_column_names );
 		if ( count( $column_names ) > 0 ) {
-			$column_info = $this->query(
-				'
+			$columns_table_name = $this->get_table_name( 'columns' );
+			$column_info        = $this->query(
+				"
 					SELECT column_name, data_type, is_nullable, character_maximum_length
-					FROM _mysql_information_schema_columns
+					FROM $columns_table_name
 					WHERE table_schema = ?
 					AND table_name = ?
-					AND column_name IN (' . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
+					AND column_name IN (" . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
 				',
 				array_merge( array( $this->db_name, $table_name ), $column_names )
 			)->fetchAll(
@@ -796,7 +814,7 @@ class WP_SQLite_Information_Schema_Builder {
 			);
 
 			$this->insert_values(
-				'_mysql_information_schema_statistics',
+				'statistics',
 				array(
 					'table_schema'  => $this->db_name,
 					'table_name'    => $table_name,
@@ -926,6 +944,8 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function sync_column_key_info( string $table_name ): void {
 		// @TODO: Consider listing only affected columns.
+		$columns_table_name    = $this->get_table_name( 'columns' );
+		$statistics_table_name = $this->get_table_name( 'statistics' );
 		$this->query(
 			"
 				WITH s AS (
@@ -937,12 +957,12 @@ class WP_SQLite_Information_Schema_Builder {
 							WHEN MAX(seq_in_index = 1) THEN 'MUL'
 							ELSE ''
 						END AS column_key
-					FROM _mysql_information_schema_statistics
+					FROM $statistics_table_name
 					WHERE table_schema = ?
 					AND table_name = ?
 					GROUP BY column_name
 				)
-				UPDATE _mysql_information_schema_columns AS c
+				UPDATE $columns_table_name AS c
 				SET
 					column_key = s.column_key,
 					is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable)
@@ -1742,7 +1762,7 @@ class WP_SQLite_Information_Schema_Builder {
 	private function insert_values( string $table_name, array $data ): void {
 		$this->query(
 			'
-				INSERT INTO ' . $table_name . ' (' . implode( ', ', array_keys( $data ) ) . ')
+				INSERT INTO ' . $this->get_table_name( $table_name ) . ' (' . implode( ', ', array_keys( $data ) ) . ')
 				VALUES (' . implode( ', ', array_fill( 0, count( $data ), '?' ) ) . ')
 			',
 			array_values( $data )
@@ -1769,7 +1789,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		$this->query(
 			'
-				UPDATE ' . $table_name . '
+				UPDATE ' . $this->get_table_name( $table_name ) . '
 				SET ' . implode( ', ', $set ) . '
 				WHERE ' . implode( ' AND ', $where_clause ) . '
 			',
@@ -1791,7 +1811,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		$this->query(
 			'
-				DELETE FROM ' . $table_name . '
+				DELETE FROM ' . $this->get_table_name( $table_name ) . '
 				WHERE ' . implode( ' AND ', $where_clause ) . '
 			',
 			array_values( $where )

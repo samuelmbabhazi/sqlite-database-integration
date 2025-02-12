@@ -413,7 +413,8 @@ class WP_SQLite_Driver {
 
 		// Initialize information schema builder.
 		$this->information_schema_builder = new WP_SQLite_Information_Schema_Builder(
-			$this->db_name,
+			$this->main_db_name,
+			self::RESERVED_PREFIX,
 			array( $this, 'execute_sqlite_query' )
 		);
 		$this->information_schema_builder->ensure_information_schema_tables();
@@ -1054,8 +1055,9 @@ class WP_SQLite_Driver {
 
 		// Handle IF NOT EXISTS.
 		if ( $subnode->has_child_node( 'ifNotExists' ) ) {
+			$tables_table = $this->information_schema_builder->get_table_name( 'tables' );
 			$table_exists = $this->execute_sqlite_query(
-				'SELECT 1 FROM _mysql_information_schema_tables WHERE table_schema = ? AND table_name = ?',
+				"SELECT 1 FROM $tables_table WHERE table_schema = ? AND table_name = ?",
 				array( $this->db_name, $table_name )
 			)->fetchColumn();
 
@@ -1092,8 +1094,9 @@ class WP_SQLite_Driver {
 		);
 
 		// Save all column names from the original table.
-		$column_names = $this->execute_sqlite_query(
-			'SELECT COLUMN_NAME FROM _mysql_information_schema_columns WHERE table_schema = ? AND table_name = ?',
+		$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+		$column_names  = $this->execute_sqlite_query(
+			"SELECT COLUMN_NAME FROM $columns_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_COLUMN );
 
@@ -1333,7 +1336,8 @@ class WP_SQLite_Driver {
 	 * @param string $table_name The table name to show indexes for.
 	 */
 	private function execute_show_index_statement( string $table_name ): void {
-		$index_info = $this->execute_sqlite_query(
+		$statistics_table = $this->information_schema_builder->get_table_name( 'statistics' );
+		$index_info       = $this->execute_sqlite_query(
 			'
 				SELECT
 					TABLE_NAME AS `Table`,
@@ -1351,7 +1355,7 @@ class WP_SQLite_Driver {
 					INDEX_COMMENT AS `Index_comment`,
 					IS_VISIBLE AS `Visible`,
 					EXPRESSION AS `Expression`
-				FROM _mysql_information_schema_statistics
+				FROM ' . $statistics_table . '
 				WHERE table_schema = ?
 				AND table_name = ?
 				ORDER BY
@@ -1389,9 +1393,10 @@ class WP_SQLite_Driver {
 		}
 
 		// Fetch table information.
-		$table_info = $this->execute_sqlite_query(
+		$tables_tables = $this->information_schema_builder->get_table_name( 'tables' );
+		$table_info    = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM _mysql_information_schema_tables WHERE table_schema = ? %s',
+				"SELECT * FROM $tables_tables WHERE table_schema = ? %s",
 				$condition ?? ''
 			),
 			array( $database )
@@ -1453,9 +1458,10 @@ class WP_SQLite_Driver {
 		}
 
 		// Fetch table information.
-		$table_info = $this->execute_sqlite_query(
+		$table_tables = $this->information_schema_builder->get_table_name( 'tables' );
+		$table_info   = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM _mysql_information_schema_tables WHERE table_schema = ? %s',
+				"SELECT * FROM $table_tables WHERE table_schema = ? %s",
 				$condition ?? ''
 			),
 			array( $database )
@@ -1507,8 +1513,9 @@ class WP_SQLite_Driver {
 		}
 
 		// Check if the table exists.
-		$table_exists = $this->execute_sqlite_query(
-			'SELECT 1 FROM _mysql_information_schema_tables WHERE table_schema = ? AND table_name = ?',
+		$tables_tables = $this->information_schema_builder->get_table_name( 'tables' );
+		$table_exists  = $this->execute_sqlite_query(
+			"SELECT 1 FROM $tables_tables WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
 		)->fetchColumn();
 
@@ -1528,7 +1535,8 @@ class WP_SQLite_Driver {
 		// Fetch column information.
 		$column_info = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM _mysql_information_schema_columns WHERE table_schema = ? AND table_name = ? %s',
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? %s',
+				$this->information_schema_builder->get_table_name( 'columns' ),
 				$condition ?? ''
 			),
 			array( $database, $table_name )
@@ -1566,8 +1574,9 @@ class WP_SQLite_Driver {
 			$this->translate( $node->get_first_child_node( 'tableRef' ) )
 		);
 
-		$column_info = $this->execute_sqlite_query(
-			'
+		$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+		$column_info   = $this->execute_sqlite_query(
+			"
 				SELECT
 					column_name AS `Field`,
 					column_type AS `Type`,
@@ -1575,10 +1584,10 @@ class WP_SQLite_Driver {
 					column_key AS `Key`,
 					column_default AS `Default`,
 					extra AS Extra
-				FROM _mysql_information_schema_columns
+				FROM $columns_table
 				WHERE table_schema = ?
 				AND table_name = ?
-			',
+			",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
@@ -2221,10 +2230,11 @@ class WP_SQLite_Driver {
 	 */
 	private function get_sqlite_create_table_statement( string $table_name, ?string $new_table_name = null ): array {
 		// 1. Get table info.
-		$table_info = $this->execute_sqlite_query(
+		$tables_table = $this->information_schema_builder->get_table_name( 'tables' );
+		$table_info   = $this->execute_sqlite_query(
 			"
 				SELECT *
-				FROM _mysql_information_schema_tables
+				FROM $tables_table
 				WHERE table_type = 'BASE TABLE'
 				AND table_schema = ?
 				AND table_name = ?
@@ -2239,14 +2249,16 @@ class WP_SQLite_Driver {
 		}
 
 		// 2. Get column info.
-		$column_info = $this->execute_sqlite_query(
-			'SELECT * FROM _mysql_information_schema_columns WHERE table_schema = ? AND table_name = ?',
+		$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+		$column_info   = $this->execute_sqlite_query(
+			"SELECT * FROM $columns_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
-		$constraint_info = $this->execute_sqlite_query(
-			'SELECT * FROM _mysql_information_schema_statistics WHERE table_schema = ? AND table_name = ?',
+		$statistics_table = $this->information_schema_builder->get_table_name( 'statistics' );
+		$constraint_info  = $this->execute_sqlite_query(
+			"SELECT * FROM $statistics_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -2400,10 +2412,11 @@ class WP_SQLite_Driver {
 	 */
 	private function get_mysql_create_table_statement( string $table_name ): ?string {
 		// 1. Get table info.
-		$table_info = $this->execute_sqlite_query(
+		$tables_table = $this->information_schema_builder->get_table_name( 'tables' );
+		$table_info   = $this->execute_sqlite_query(
 			"
 				SELECT *
-				FROM _mysql_information_schema_tables
+				FROM $tables_table
 				WHERE table_type = 'BASE TABLE'
 				AND table_schema = ?
 				AND table_name = ?
@@ -2416,14 +2429,16 @@ class WP_SQLite_Driver {
 		}
 
 		// 2. Get column info.
-		$column_info = $this->execute_sqlite_query(
-			'SELECT * FROM _mysql_information_schema_columns WHERE table_schema = ? AND table_name = ?',
+		$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+		$column_info   = $this->execute_sqlite_query(
+			"SELECT * FROM $columns_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
-		$constraint_info = $this->execute_sqlite_query(
-			'SELECT * FROM _mysql_information_schema_statistics WHERE table_schema = ? AND table_name = ?',
+		$statistics_table = $this->information_schema_builder->get_table_name( 'statistics' );
+		$constraint_info  = $this->execute_sqlite_query(
+			"SELECT * FROM $statistics_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
