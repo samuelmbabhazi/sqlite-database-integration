@@ -1637,7 +1637,30 @@ class WP_SQLite_Driver {
 					return implode( ' ', $parts );
 				}
 				return $this->translate_sequence( $node->get_children() );
+			case 'schemaRef':
+				return $this->translate_schema_identifier( $node );
 			case 'qualifiedIdentifier':
+			case 'tableRefWithWildcard':
+				$parts = $node->get_descendant_nodes( 'identifier' );
+				if ( count( $parts ) === 2 ) {
+					return $this->translate_qualified_identifier( $parts[0], $parts[1] );
+				}
+				return $this->translate_qualified_identifier( null, $parts[0] );
+			case 'fieldIdentifier':
+			case 'simpleIdentifier':
+				$parts = $node->get_descendant_nodes( 'identifier' );
+				if ( count( $parts ) === 3 ) {
+					return $this->translate_qualified_identifier( $parts[0], $parts[1], $parts[2] );
+				} elseif ( count( $parts ) === 2 ) {
+					return $this->translate_qualified_identifier( null, $parts[0], $parts[1] );
+				}
+				return $this->translate_qualified_identifier( null, null, $parts[0] );
+			case 'tableWild':
+				$parts = $node->get_descendant_nodes( 'identifier' );
+				if ( count( $parts ) === 2 ) {
+					return $this->translate_qualified_identifier( $parts[0], $parts[1] ) . '.*';
+				}
+				return $this->translate_qualified_identifier( null, $parts[0] ) . '.*';
 			case 'dotIdentifier':
 				return $this->translate_sequence( $node->get_children(), '' );
 			case 'identifierKeyword':
@@ -1902,6 +1925,66 @@ class WP_SQLite_Driver {
 		}
 
 		return '`' . str_replace( '`', '``', $value ) . '`';
+	}
+
+	/**
+	 * Translate a qualified MySQL identifier to SQLite.
+	 *
+	 * The identifier can be composed of 1 to 3 parts (schema, object, child).
+	 *
+	 * @param  WP_Parser_Node|null $schema_node An identifier node representing a schema name (database).
+	 * @param  WP_Parser_Node|null $object_node An identifier node representing a database-level object name
+	 *                                          (table, view, procedure, trigger, etc.).
+	 * @param  WP_Parser_Node|null $child_node  An identifier node representing an object child name (column, index, etc.).
+	 * @return string                           The translated value.
+	 * @throws WP_SQLite_Driver_Exception       When the translation fails.
+	 */
+	private function translate_qualified_identifier(
+		?WP_Parser_Node $schema_node,
+		?WP_Parser_Node $object_node = null,
+		?WP_Parser_Node $child_node = null
+	): string {
+		$parts = array();
+
+		// Database name.
+		$is_information_schema = false;
+		if ( null !== $schema_node ) {
+			$schema_name = $this->unquote_sqlite_identifier(
+				$this->translate_sequence( $schema_node->get_children() )
+			);
+			if ( 'information_schema' === strtolower( $schema_name ) ) {
+				$is_information_schema = true;
+			} elseif ( $this->db_name === $schema_name ) {
+				$is_information_schema = false;
+			} else {
+				throw $this->new_not_supported_exception(
+					sprintf(
+						"can't use schema '%s', only '%s' and 'information_schema' are supported",
+						$schema_name,
+						$this->db_name
+					)
+				);
+			}
+		}
+
+		// Database-level object name (table, view, procedure, trigger, etc.).
+		if ( null !== $object_node ) {
+			if ( $is_information_schema ) {
+				$object_name = $this->unquote_sqlite_identifier(
+					$this->translate_sequence( $object_node->get_children() )
+				);
+				$parts[]     = $this->information_schema_builder->get_table_name( $object_name );
+			} else {
+				$parts[] = $this->translate( $object_node );
+			}
+		}
+
+		// Object child name (column, index, etc.).
+		if ( null !== $child_node ) {
+			$parts[] = $this->translate( $child_node );
+		}
+
+		return implode( '.', $parts );
 	}
 
 	/**

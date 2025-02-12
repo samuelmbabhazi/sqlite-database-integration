@@ -106,8 +106,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `s`.`t` ( `c` ) VALUES ( 1 )',
-			'INSERT INTO s.t (c) VALUES (1)'
+			'INSERT INTO `t` ( `c` ) VALUES ( 1 )',
+			'INSERT INTO wp.t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
@@ -133,8 +133,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `s`.`t` ( `c` ) VALUES ( 1 )',
-			'REPLACE INTO s.t (c) VALUES (1)'
+			'REPLACE INTO `t` ( `c` ) VALUES ( 1 )',
+			'REPLACE INTO wp.t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
@@ -160,8 +160,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			'UPDATE `s`.`t` SET `c` = 1',
-			'UPDATE s.t SET c = 1'
+			'UPDATE `t` SET `c` = 1',
+			'UPDATE wp.t SET c = 1'
 		);
 
 		$this->assertQuery(
@@ -194,8 +194,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			'DELETE FROM `s`.`t`',
-			'DELETE FROM s.t'
+			'DELETE FROM `t`',
+			'DELETE FROM wp.t'
 		);
 
 		$this->assertQuery(
