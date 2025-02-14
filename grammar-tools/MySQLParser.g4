@@ -4351,12 +4351,14 @@ triggerRef:
 
 viewName:
     qualifiedIdentifier
-    | dotIdentifier
+    /* @CHANGED: Added missing version constraint. */
+    | {serverVersion < 80000}? dotIdentifier
 ;
 
 viewRef:
     qualifiedIdentifier
-    | dotIdentifier
+    /* @CHANGED: Added missing version constraint. */
+    | {serverVersion < 80000}? dotIdentifier
 ;
 
 tablespaceName:
@@ -4401,7 +4403,8 @@ engineRef:
 
 tableName:
     qualifiedIdentifier
-    | dotIdentifier
+    /* @CHANGED: Added missing version constraint. */
+    | {serverVersion < 80000}? dotIdentifier
 ;
 
 filterTableRef: // Always qualified.
@@ -4414,7 +4417,8 @@ tableRefWithWildcard:
 
 tableRef:
     qualifiedIdentifier
-    | dotIdentifier
+    /* @CHANGED: Added missing version constraint. */
+    | {serverVersion < 80000}? dotIdentifier
 ;
 
 tableRefList:
