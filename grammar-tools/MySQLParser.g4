@@ -3567,7 +3567,8 @@ getDiagnostics:
 signalAllowedExpr:
     literal
     | variable
-    | qualifiedIdentifier
+    /* @CHANGED: Changed "qualifiedIdentifier" to "simpleIdentifier" as per sql_yacc.yy. */
+    | simpleIdentifier
 ;
 
 statementInformationItem:
