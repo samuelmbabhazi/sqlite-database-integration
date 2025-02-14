@@ -359,11 +359,11 @@ restrict:
 
 /*
  * @CHANGED:
- * Fixed ALTER TABLE with ORDER to use 'qualifiedIdentifier' instead of just 'identifier'.
+ * Fixed ALTER TABLE with ORDER to use 'simpleIdentifier' instead of just 'identifier'.
  * This is necessary to support "t.id" in a query like "ALTER TABLE t ORDER BY t.id".
  */
 alterOrderList:
-    qualifiedIdentifier direction? (COMMA_SYMBOL qualifiedIdentifier direction?)*
+    simpleIdentifier direction? (COMMA_SYMBOL simpleIdentifier direction?)*
 ;
 
 alterAlgorithmOption:
