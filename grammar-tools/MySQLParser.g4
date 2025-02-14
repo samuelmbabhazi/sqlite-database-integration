@@ -1717,7 +1717,7 @@ xid:
 /*
  * @CHANGED:
  * Fixed "replicationStatement" to correctly support the "RESET PERSIST" statement.
- * The "ifExists" clause wasn't optional, and "identifier" was used instead of "qualifiedIdentifier".
+ * The "ifExists" clause wasn't optional, and "identifier" was used instead of "internalVariableName".
  */
 replicationStatement:
     PURGE_SYMBOL (BINARY_SYMBOL | MASTER_SYMBOL) LOGS_SYMBOL (
