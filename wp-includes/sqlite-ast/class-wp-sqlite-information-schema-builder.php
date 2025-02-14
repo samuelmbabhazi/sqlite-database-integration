@@ -406,7 +406,7 @@ class WP_SQLite_Information_Schema_Builder {
 		// 2. Columns.
 		$column_position = 1;
 		foreach ( $node->get_descendant_nodes( 'columnDefinition' ) as $column_node ) {
-			$column_name = $this->get_value( $column_node->get_first_child_node( 'columnName' ) );
+			$column_name = $this->get_value( $column_node->get_first_child_node( 'fieldIdentifier' ) );
 
 			// Column definition.
 			$column_data = $this->extract_column_data(
@@ -482,7 +482,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 			// CHANGE [COLUMN]
 			if ( WP_MySQL_Lexer::CHANGE_SYMBOL === $first_token->id ) {
-				$old_name = $this->get_value( $action->get_first_child_node( 'columnInternalRef' ) );
+				$old_name = $this->get_value( $action->get_first_child_node( 'fieldIdentifier' ) );
 				$new_name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
 				$this->record_change_column(
 					$table_name,
@@ -495,7 +495,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 			// MODIFY [COLUMN]
 			if ( WP_MySQL_Lexer::MODIFY_SYMBOL === $first_token->id ) {
-				$name = $this->get_value( $action->get_first_child_node( 'columnInternalRef' ) );
+				$name = $this->get_value( $action->get_first_child_node( 'fieldIdentifier' ) );
 				$this->record_modify_column(
 					$table_name,
 					$name,
@@ -507,7 +507,7 @@ class WP_SQLite_Information_Schema_Builder {
 			// DROP
 			if ( WP_MySQL_Lexer::DROP_SYMBOL === $first_token->id ) {
 				// DROP [COLUMN]
-				$column_ref = $action->get_first_child_node( 'columnInternalRef' );
+				$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
 				if ( null !== $column_ref ) {
 					$name = $this->get_value( $column_ref );
 					$this->record_drop_column( $table_name, $name );

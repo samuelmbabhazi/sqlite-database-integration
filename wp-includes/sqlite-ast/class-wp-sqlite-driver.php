@@ -1112,7 +1112,7 @@ class WP_SQLite_Driver {
 
 			switch ( $first_token->id ) {
 				case WP_MySQL_Lexer::DROP_SYMBOL:
-					$name = $this->translate( $action->get_first_child_node( 'columnInternalRef' ) );
+					$name = $this->translate( $action->get_first_child_node( 'fieldIdentifier' ) );
 					if ( null !== $name ) {
 						$name = $this->unquote_sqlite_identifier( $name );
 						unset( $column_map[ $name ] );
@@ -1120,7 +1120,7 @@ class WP_SQLite_Driver {
 					break;
 				case WP_MySQL_Lexer::CHANGE_SYMBOL:
 					$old_name = $this->unquote_sqlite_identifier(
-						$this->translate( $action->get_first_child_node( 'columnInternalRef' ) )
+						$this->translate( $action->get_first_child_node( 'fieldIdentifier' ) )
 					);
 					$new_name = $this->unquote_sqlite_identifier(
 						$this->translate( $action->get_first_child_node( 'identifier' ) )
@@ -1129,7 +1129,7 @@ class WP_SQLite_Driver {
 					$column_map[ $old_name ] = $new_name;
 					break;
 				case WP_MySQL_Lexer::RENAME_SYMBOL:
-					$column_ref = $action->get_first_child_node( 'columnInternalRef' );
+					$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
 					if ( null !== $column_ref ) {
 						$old_name = $this->unquote_sqlite_identifier(
 							$this->translate( $column_ref )
