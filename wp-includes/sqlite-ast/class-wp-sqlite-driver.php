@@ -754,6 +754,9 @@ class WP_SQLite_Driver {
 						$this->set_result_from_affected_rows();
 				}
 				break;
+			case 'truncateTableStatement':
+				$this->execute_truncate_table_statement( $node );
+				break;
 			case 'setStatement':
 				/*
 				 * It would be lovely to support at least SET autocommit,
@@ -1270,6 +1273,24 @@ class WP_SQLite_Driver {
 			$this->execute_sqlite_query( $query );
 		}
 		$this->information_schema_builder->record_drop_table( $node );
+	}
+
+	/**
+	 * Translate and execute a MySQL TRUNCATE TABLE statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "truncateTableStatement" AST node.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_truncate_table_statement( WP_Parser_Node $node ): void {
+		$table_name = $this->unquote_sqlite_identifier(
+			$this->translate( $node->get_first_child_node( 'tableRef' ) )
+		);
+
+		$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
+
+		$this->execute_sqlite_query( "DELETE FROM $quoted_table_name" );
+		$this->execute_sqlite_query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $table_name ) );
+		$this->set_result_from_affected_rows();
 	}
 
 	/**
