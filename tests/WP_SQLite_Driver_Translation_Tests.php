@@ -213,7 +213,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM _wp_sqlite_mysql_information_schema_tables WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
@@ -232,7 +232,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -255,7 +255,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'NO', 'int', null, null, 10, 0, null, null, null, 'int', 'PRI', 'auto_increment', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_statistics (table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, sub_part, packed, nullable, index_type, comment, index_comment, is_visible, expression)'
@@ -277,7 +277,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'MyISAM', 'FIXED', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'MyISAM', 'Fixed', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM _wp_sqlite_mysql_information_schema_tables WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
@@ -297,7 +297,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_czech_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_czech_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM _wp_sqlite_mysql_information_schema_tables WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
@@ -325,7 +325,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'NO', 'int', null, null, 10, 0, null, null, null, 'int', 'PRI', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_statistics (table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, sub_part, packed, nullable, index_type, comment, index_comment, is_visible, expression)'
@@ -347,7 +347,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't1', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't1', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't1', 'id', 1, null, 'NO', 'int', null, null, 10, 0, null, null, null, 'int', 'PRI', 'auto_increment', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_statistics (table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, sub_part, packed, nullable, index_type, comment, index_comment, is_visible, expression)'
@@ -367,7 +367,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't2', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't2', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't2', 'id', 1, null, 'NO', 'int', null, null, 10, 0, null, null, null, 'int', 'PRI', 'auto_increment', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_statistics (table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, sub_part, packed, nullable, index_type, comment, index_comment, is_visible, expression)'
@@ -387,7 +387,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't3', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't3', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't3', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', 'auto_increment', 'select,insert,update,references', '', '', null)",
 				"SELECT column_name, data_type, is_nullable, character_maximum_length FROM _wp_sqlite_mysql_information_schema_columns WHERE table_schema = 'wp' AND table_name = 't3' AND column_name IN ('id')",
@@ -411,7 +411,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 			)
@@ -431,7 +431,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', 'UNI', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_statistics (table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, sub_part, packed, nullable, index_type, comment, index_comment, is_visible, expression)'
@@ -460,7 +460,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -792,7 +792,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'i1', 1, null, 'YES', 'bit', null, null, 1, null, null, null, null, 'bit(1)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -813,7 +813,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'i1', 1, null, 'YES', 'tinyint', null, null, 3, 0, null, null, null, 'tinyint(1)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -834,7 +834,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'i1', 1, null, 'YES', 'tinyint', null, null, 3, 0, null, null, null, 'tinyint', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -863,7 +863,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'f1', 1, null, 'YES', 'float', null, null, 12, null, null, null, null, 'float', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -888,7 +888,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'f1', 1, null, 'YES', 'decimal', null, null, 10, 0, null, null, null, 'decimal(10,0)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -913,7 +913,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'char', 1, 4, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'char(1)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -934,7 +934,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'varchar', 255, 1020, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -957,7 +957,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'char', 1, 3, null, null, null, 'utf8', 'utf8_general_ci', 'char(1)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -982,7 +982,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1005,7 +1005,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1028,7 +1028,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 't1', 1, null, 'YES', 'tinytext', 255, 255, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'tinytext', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1053,7 +1053,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'e', 1, null, 'YES', 'enum', 1, 4, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'enum(''a'',''b'',''c'')', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM _wp_sqlite_mysql_information_schema_tables WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
@@ -1072,7 +1072,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'd', 1, null, 'YES', 'date', null, null, null, null, null, null, null, 'date', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1099,7 +1099,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'b', 1, null, 'YES', 'binary', 1, 1, null, null, null, null, null, 'binary(1)', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1120,7 +1120,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'b1', 1, null, 'YES', 'tinyblob', 255, 255, null, null, null, null, null, 'tinyblob', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1145,7 +1145,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'g1', 1, null, 'YES', 'geometry', null, null, null, null, null, null, null, 'geometry', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1170,7 +1170,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'g1', 1, null, 'YES', 'multipoint', null, null, null, null, null, null, null, 'multipoint', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1193,7 +1193,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'g1', 1, null, 'YES', 'geomcollection', null, null, null, null, null, null, null, 'geomcollection', '', '', 'select,insert,update,references', '', '', null)",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
@@ -1214,7 +1214,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertExecutedInformationSchemaQueries(
 			array(
 				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
 				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'NO', 'bigint', null, null, 20, 0, null, null, null, 'bigint unsigned', 'PRI', 'auto_increment', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM _wp_sqlite_mysql_information_schema_tables WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",

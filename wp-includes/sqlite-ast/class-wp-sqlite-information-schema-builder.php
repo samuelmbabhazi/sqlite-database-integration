@@ -50,7 +50,7 @@ class WP_SQLite_Information_Schema_Builder {
 			CHECK_TIME TEXT,                            -- not implemented
 			TABLE_COLLATION TEXT NOT NULL,              -- table collation
 			CHECKSUM INTEGER,                           -- not implemented
-			CREATE_OPTIONS TEXT,                        -- extra CREATE TABLE options
+			CREATE_OPTIONS TEXT NOT NULL DEFAULT '',    -- extra CREATE TABLE options
 			TABLE_COMMENT TEXT NOT NULL DEFAULT ''      -- comment
 		) STRICT",
 
@@ -387,7 +387,7 @@ class WP_SQLite_Information_Schema_Builder {
 	public function record_create_table( WP_Parser_Node $node ): void {
 		$table_name       = $this->get_value( $node->get_first_descendant_node( 'tableName' ) );
 		$table_engine     = $this->get_table_engine( $node );
-		$table_row_format = 'MyISAM' === $table_engine ? 'FIXED' : 'DYNAMIC';
+		$table_row_format = 'MyISAM' === $table_engine ? 'Fixed' : 'Dynamic';
 		$table_collation  = $this->get_table_collation( $node );
 
 		// 1. Table.
