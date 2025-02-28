@@ -1122,11 +1122,6 @@ class WP_SQLite_Driver {
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_COLUMN );
 
-		// Preserve ROWIDs.
-		// This also addresses a special case when all original columns are dropped
-		// and there is nothing to copy. We'll always have at least the ROWID column.
-		array_unshift( $column_names, 'rowid' );
-
 		// Track column renames and removals.
 		$column_map = array_combine( $column_names, $column_names );
 		foreach ( $node->get_descendant_nodes( 'alterListItem' ) as $action ) {
@@ -1167,66 +1162,7 @@ class WP_SQLite_Driver {
 		}
 
 		$this->information_schema_builder->record_alter_table( $node );
-
-		/*
-		 * See:
-		 *   https://www.sqlite.org/lang_altertable.html#making_other_kinds_of_table_schema_changes
-		 */
-
-		// 1. If foreign key constraints are enabled, disable them.
-		$pragma_foreign_keys = $this->execute_sqlite_query( 'PRAGMA foreign_keys' )->fetchColumn();
-		$this->execute_sqlite_query( 'PRAGMA foreign_keys = OFF' );
-
-		// 2. Create a new table with the new schema.
-		$tmp_table_name        = self::RESERVED_PREFIX . "tmp_{$table_name}_" . uniqid();
-		$quoted_table_name     = $this->quote_sqlite_identifier( $table_name );
-		$quoted_tmp_table_name = $this->quote_sqlite_identifier( $tmp_table_name );
-		$queries               = $this->get_sqlite_create_table_statement( $table_name, $tmp_table_name );
-		$create_table_query    = $queries[0];
-		$constraint_queries    = array_slice( $queries, 1 );
-		$this->execute_sqlite_query( $create_table_query );
-
-		// 3. Copy data from the original table to the new table.
-		$this->execute_sqlite_query(
-			sprintf(
-				'INSERT INTO %s (%s) SELECT %s FROM %s',
-				$quoted_tmp_table_name,
-				implode(
-					', ',
-					array_map( array( $this, 'quote_sqlite_identifier' ), $column_map )
-				),
-				implode(
-					', ',
-					array_map( array( $this, 'quote_sqlite_identifier' ), array_keys( $column_map ) )
-				),
-				$quoted_table_name
-			)
-		);
-
-		// 4. Drop the original table.
-		$this->execute_sqlite_query( sprintf( 'DROP TABLE %s', $quoted_table_name ) );
-
-		// 5. Rename the new table to the original table name.
-		$this->execute_sqlite_query(
-			sprintf(
-				'ALTER TABLE %s RENAME TO %s',
-				$quoted_tmp_table_name,
-				$quoted_table_name
-			)
-		);
-
-		// 6. Reconstruct indexes, triggers, and views.
-		foreach ( $constraint_queries as $query ) {
-			$this->execute_sqlite_query( $query );
-		}
-
-		// 7. If foreign key constraints were enabled, verify and enable them.
-		if ( '1' === $pragma_foreign_keys ) {
-			$this->execute_sqlite_query( 'PRAGMA foreign_key_check' );
-			$this->execute_sqlite_query( 'PRAGMA foreign_keys = ON' );
-		}
-
-		// @TODO: Triggers and views.
+		$this->recreate_table_from_information_schema( $table_name, $column_map );
 
 		// @TODO: Consider using a "fast path" for ALTER TABLE statements that
 		//        consist only of operations that SQLite's ALTER TABLE supports.
@@ -1666,6 +1602,8 @@ class WP_SQLite_Driver {
 	 * This emulates the following MySQL statements:
 	 *  - ANALYZE TABLE
 	 *  - CHECK TABLE
+	 *  - OPTIMIZE TABLE
+	 *  - REPAIR TABLE
 	 *
 	 * @param  WP_Parser_Node $node       A "tableAdministrationStatement" AST node.
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
@@ -1689,6 +1627,17 @@ class WP_SQLite_Driver {
 						if ( 'ok' === $errors[0] ) {
 							array_shift( $errors );
 						}
+						break;
+					case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
+					case WP_MySQL_Lexer::REPAIR_SYMBOL:
+						/*
+						 * SQLite doesn't support OPTIMIZE and REPAIR TABLE commands.
+						 * We will recreate the table and copy the data instead.
+						 * This corresponds to older MySQL OPTIMIZE TABLE behavior
+						 * and still applies to some storage engines in some cases.
+						 */
+						$this->recreate_table_from_information_schema( $table_name );
+						$errors = array();
 						break;
 					default:
 						throw $this->new_not_supported_exception(
@@ -2405,6 +2354,97 @@ class WP_SQLite_Driver {
 			}
 		}
 		return $value;
+	}
+
+	/**
+	 * Recreate an existing table using data in the information schema.
+	 *
+	 * This is used for a generic support of ALTER TABLE queries, as well as
+	 * for some other statements like OPTIMIZE TABLE and REPAIR TABLE.
+	 *
+	 * See:
+	 *   https://www.sqlite.org/lang_altertable.html#making_other_kinds_of_table_schema_changes
+	 *
+	 * @param  string $table_name The name of the table to recreate.
+	 * @param  array  $column_map Optional. A map of column names (old name -> new name)
+	 *                            to use when copying data from the original table.
+	 *                            When not provided, all columns are copied without renaming.
+	 * @throws WP_SQLite_Driver_Exception
+	 */
+	private function recreate_table_from_information_schema( string $table_name, array $column_map = null ): void {
+		if ( null === $column_map ) {
+			$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+			$column_names  = $this->execute_sqlite_query(
+				"SELECT COLUMN_NAME FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+				array( $this->db_name, $table_name )
+			)->fetchAll( PDO::FETCH_COLUMN );
+			$column_map    = array_combine( $column_names, $column_names );
+		}
+
+		// Preserve ROWIDs.
+		// This also addresses a special case when all original columns are dropped
+		// and there is nothing to copy. We'll always have at least the ROWID column.
+		$column_map = array( 'rowid' => 'rowid' ) + $column_map;
+
+		/*
+		 * See:
+		 *   https://www.sqlite.org/lang_altertable.html#making_other_kinds_of_table_schema_changes
+		 */
+
+		// 1. If foreign key constraints are enabled, disable them.
+		$pragma_foreign_keys = $this->execute_sqlite_query( 'PRAGMA foreign_keys' )->fetchColumn();
+		$this->execute_sqlite_query( 'PRAGMA foreign_keys = OFF' );
+
+		// 2. Create a new table with the new schema.
+		$tmp_table_name        = self::RESERVED_PREFIX . "tmp_{$table_name}_" . uniqid();
+		$quoted_table_name     = $this->quote_sqlite_identifier( $table_name );
+		$quoted_tmp_table_name = $this->quote_sqlite_identifier( $tmp_table_name );
+		$queries               = $this->get_sqlite_create_table_statement( $table_name, $tmp_table_name );
+		$create_table_query    = $queries[0];
+		$constraint_queries    = array_slice( $queries, 1 );
+		$this->execute_sqlite_query( $create_table_query );
+
+		// 3. Copy data from the original table to the new table.
+		$this->execute_sqlite_query(
+			sprintf(
+				'INSERT INTO %s (%s) SELECT %s FROM %s',
+				$quoted_tmp_table_name,
+				implode(
+					', ',
+					array_map( array( $this, 'quote_sqlite_identifier' ), $column_map )
+				),
+				implode(
+					', ',
+					array_map( array( $this, 'quote_sqlite_identifier' ), array_keys( $column_map ) )
+				),
+				$quoted_table_name
+			)
+		);
+
+		// 4. Drop the original table.
+		$this->execute_sqlite_query( sprintf( 'DROP TABLE %s', $quoted_table_name ) );
+
+		// 5. Rename the new table to the original table name.
+		$this->execute_sqlite_query(
+			sprintf(
+				'ALTER TABLE %s RENAME TO %s',
+				$quoted_tmp_table_name,
+				$quoted_table_name
+			)
+		);
+
+		// 6. Reconstruct indexes, triggers, and views.
+		foreach ( $constraint_queries as $query ) {
+			$this->execute_sqlite_query( $query );
+		}
+
+		// 7. If foreign key constraints were enabled, verify and enable them.
+		if ( '1' === $pragma_foreign_keys ) {
+			$this->execute_sqlite_query( 'PRAGMA foreign_key_check' );
+			$this->execute_sqlite_query( 'PRAGMA foreign_keys = ON' );
+		}
+
+		// @TODO: Triggers and views.
 	}
 
 	/**
