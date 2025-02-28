@@ -1665,6 +1665,7 @@ class WP_SQLite_Driver {
 	 *
 	 * This emulates the following MySQL statements:
 	 *  - ANALYZE TABLE
+	 *  - CHECK TABLE
 	 *
 	 * @param  WP_Parser_Node $node       A "tableAdministrationStatement" AST node.
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
@@ -1681,6 +1682,13 @@ class WP_SQLite_Driver {
 					case WP_MySQL_Lexer::ANALYZE_SYMBOL:
 						$stmt   = $this->execute_sqlite_query( "ANALYZE $quoted_table_name" );
 						$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );
+						break;
+					case WP_MySQL_Lexer::CHECK_SYMBOL:
+						$stmt   = $this->execute_sqlite_query( "PRAGMA integrity_check($quoted_table_name)" );
+						$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );
+						if ( 'ok' === $errors[0] ) {
+							array_shift( $errors );
+						}
 						break;
 					default:
 						throw $this->new_not_supported_exception(
