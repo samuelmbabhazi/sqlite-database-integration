@@ -786,6 +786,9 @@ class WP_SQLite_Driver {
 						);
 				}
 				break;
+			case 'tableAdministrationStatement':
+				$this->execute_administration_statement( $node );
+				break;
 			default:
 				throw $this->new_not_supported_exception(
 					sprintf( 'statement type: "%s"', $node->rule_name )
@@ -1655,6 +1658,64 @@ class WP_SQLite_Driver {
 				)
 			);
 		}
+	}
+
+	/**
+	 * Translate and execute a MySQL administration statement in SQLite.
+	 *
+	 * This emulates the following MySQL statements:
+	 *  - ANALYZE TABLE
+	 *
+	 * @param  WP_Parser_Node $node       A "tableAdministrationStatement" AST node.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_administration_statement( WP_Parser_Node $node ): void {
+		$first_token    = $node->get_first_child_token();
+		$table_ref_list = $node->get_first_child_node( 'tableRefList' );
+		$results        = array();
+		foreach ( $table_ref_list->get_child_nodes( 'tableRef' ) as $table_ref ) {
+			$table_name        = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+			$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
+			try {
+				switch ( $first_token->id ) {
+					case WP_MySQL_Lexer::ANALYZE_SYMBOL:
+						$stmt   = $this->execute_sqlite_query( "ANALYZE $quoted_table_name" );
+						$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );
+						break;
+					default:
+						throw $this->new_not_supported_exception(
+							sprintf(
+								'statement type: "%s" > "%s"',
+								$node->rule_name,
+								$first_token->value
+							)
+						);
+				}
+			} catch ( PDOException $e ) {
+				if ( 'HY000' === $e->getCode() ) {
+					$errors = array( "Table '$table_name' doesn't exist" );
+				} else {
+					$errors = array( $e->getMessage() );
+				}
+			}
+
+			$operation = strtolower( $first_token->value );
+			foreach ( $errors as $error ) {
+				$results[] = (object) array(
+					'Table'    => $this->db_name . '.' . $table_name,
+					'Op'       => $operation,
+					'Msg_type' => 'Error',
+					'Msg_text' => $error,
+				);
+			}
+			$results[] = (object) array(
+				'Table'    => $this->db_name . '.' . $table_name,
+				'Op'       => $operation,
+				'Msg_type' => 'status',
+				'Msg_text' => count( $errors ) > 0 ? 'Operation failed' : 'OK',
+			);
+		}
+		$this->set_results_from_fetched_data( $results );
 	}
 
 	/**
