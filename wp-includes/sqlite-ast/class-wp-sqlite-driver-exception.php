@@ -1,6 +1,6 @@
 <?php
 
-class WP_SQLite_Driver_Exception extends Exception {
+class WP_SQLite_Driver_Exception extends PDOException {
 	/**
 	 * The SQLite driver that originated the exception.
 	 *
@@ -8,13 +8,22 @@ class WP_SQLite_Driver_Exception extends Exception {
 	 */
 	private $driver;
 
+	/**
+	 * Constructor.
+	 *
+	 * @param WP_SQLite_Driver $driver   The SQLite driver that originated the exception.
+	 * @param string           $message  The exception message.
+	 * @param int|string       $code     The exception code. In PDO, it can be a string with value of SQLSTATE.
+	 * @param Throwable|null   $previous The previous throwable used for the exception chaining.
+	 */
 	public function __construct(
 		WP_SQLite_Driver $driver,
 		string $message,
-		int $code = 0,
+		$code = 0,
 		Throwable $previous = null
 	) {
-		parent::__construct( $message, $code, $previous );
+		parent::__construct( $message, 0, $previous );
+		$this->code   = $code;
 		$this->driver = $driver;
 	}
 

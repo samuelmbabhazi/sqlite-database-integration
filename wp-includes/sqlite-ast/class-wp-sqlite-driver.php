@@ -1496,7 +1496,7 @@ class WP_SQLite_Driver {
 		)->fetchColumn();
 
 		if ( ! $table_exists ) {
-			throw new PDOException(
+			throw $this->new_driver_exception(
 				sprintf( "Table '%s.%s' doesn't exist", $database, $table_name ),
 				'42S02'
 			);
@@ -2499,7 +2499,8 @@ class WP_SQLite_Driver {
 
 		if ( false === $table_info ) {
 			throw $this->new_driver_exception(
-				sprintf( 'Table "%s" not found in information schema', $table_name )
+				sprintf( "Table '%s' doesn't exist", $table_name ),
+				'42S02'
 			);
 		}
 
@@ -2909,13 +2910,13 @@ class WP_SQLite_Driver {
 	 * Create a new SQLite driver exception.
 	 *
 	 * @param string         $message  The exception message.
-	 * @param int            $code     The exception code.
+	 * @param int|string     $code     The exception code. For PDO errors, a string representing SQLSTATE.
 	 * @param Throwable|null $previous The previous exception.
 	 * @return WP_SQLite_Driver_Exception
 	 */
 	private function new_driver_exception(
 		string $message,
-		int $code = 0,
+		$code = 0,
 		Throwable $previous = null
 	): WP_SQLite_Driver_Exception {
 		return new WP_SQLite_Driver_Exception( $this, $message, $code, $previous );
