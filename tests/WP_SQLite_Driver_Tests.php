@@ -3885,4 +3885,12 @@ QUERY
 			$results
 		);
 	}
+
+	public function testCompoundPrimaryKeyAndAutoincrementNotSupported(): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Cannot combine AUTOINCREMENT and multiple primary keys in SQLite' );
+		$this->assertQuery(
+			'CREATE TABLE t1 (id1 INT AUTO_INCREMENT, id2 INT, PRIMARY KEY(id1, id2))'
+		);
+	}
 }

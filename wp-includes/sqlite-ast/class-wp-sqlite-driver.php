@@ -2641,6 +2641,11 @@ class WP_SQLite_Driver {
 
 			if ( 'PRIMARY' === $info['INDEX_NAME'] ) {
 				if ( $has_autoincrement ) {
+					if ( count( $constraint ) > 1 ) {
+						throw $this->new_driver_exception(
+							'Cannot combine AUTOINCREMENT and multiple primary keys in SQLite'
+						);
+					}
 					continue;
 				}
 				$query  = '  PRIMARY KEY (';
