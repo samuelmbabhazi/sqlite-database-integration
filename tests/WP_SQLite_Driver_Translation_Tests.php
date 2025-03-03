@@ -1248,6 +1248,68 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testIndexHints(): void {
+		// USE INDEX
+		$this->assertQuery(
+			'SELECT * FROM `t`',
+			'SELECT * FROM t USE INDEX (i)'
+		);
+
+		// USE KEY
+		$this->assertQuery(
+			'SELECT * FROM `t`',
+			'SELECT * FROM t USE KEY (k)'
+		);
+
+		// FORCE INDEX
+		$this->assertQuery(
+			'SELECT * FROM `t`',
+			'SELECT * FROM t FORCE INDEX (i)'
+		);
+
+		// FORCE KEY
+		$this->assertQuery(
+			'SELECT * FROM `t`',
+			'SELECT * FROM t FORCE KEY (k)'
+		);
+
+		// IGNORE INDEX
+		$this->assertQuery(
+			'SELECT * FROM `t`',
+			'SELECT * FROM t IGNORE INDEX (i)'
+		);
+
+		// IGNORE KEY
+		$this->assertQuery(
+			'SELECT * FROM `t`',
+			'SELECT * FROM t IGNORE KEY (k)'
+		);
+
+		// FOR JOIN
+		$this->assertQuery(
+			'SELECT * FROM `t` JOIN `j` ON `t`.`id` = `j`.`t_id`',
+			'SELECT * FROM t USE INDEX FOR JOIN (i) JOIN j ON t.id = j.t_id'
+		);
+
+		// FOR ORDER BY
+		$this->assertQuery(
+			'SELECT * FROM `t` ORDER BY `id` DESC',
+			'SELECT * FROM t USE INDEX FOR ORDER BY (i) ORDER BY id DESC'
+		);
+
+		// FOR GROUP BY
+		$this->assertQuery(
+			'SELECT * FROM `t` GROUP BY `id` HAVING `id` = 1',
+			'SELECT * FROM t USE INDEX FOR GROUP BY (i) GROUP BY id HAVING id = 1'
+		);
+
+		// A complex query with multiple hints and conditions.
+		$this->assertQuery(
+			'SELECT * FROM `t` JOIN `j` ON `t`.`id` = `j`.`t_id` WHERE `id` = 1 GROUP BY `id` HAVING `id` = 1 ORDER BY `id` DESC',
+			'SELECT * FROM `t` USE INDEX (i) USE INDEX FOR JOIN (j) USE KEY FOR ORDER BY (o) IGNORE INDEX FOR GROUP BY (g) JOIN j ON t.id = j.t_id WHERE id = 1 GROUP BY id HAVING id = 1 ORDER BY id DESC'
+		);
+	}
+
 	private function assertQuery( $expected, string $query ): void {
 		$error = null;
 		try {
