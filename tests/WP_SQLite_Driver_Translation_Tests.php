@@ -508,6 +508,19 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testDropTemporaryTable(): void {
+		$this->assertQuery(
+			'DROP TABLE `temp`.`t`',
+			'DROP TEMPORARY TABLE t'
+		);
+
+		// With IF NOT EXISTS.
+		$this->assertQuery(
+			'DROP TABLE IF EXISTS `temp`.`t`',
+			'DROP TEMPORARY TABLE IF EXISTS t'
+		);
+	}
+
 	public function testAlterTableAddColumn(): void {
 		$this->driver->query( 'CREATE TABLE t (id INT)' );
 		$this->assertQuery(

@@ -1195,7 +1195,7 @@ class WP_SQLite_Driver {
 				// Replace table list with the current table reference.
 				if ( ! $is_token && 'tableRefList' === $child->rule_name ) {
 					// Add a "temp." schema prefix for temporary tables.
-					$prefix = $is_temporary ? '"temp".' : '';
+					$prefix = $is_temporary ? '`temp`.' : '';
 					$part   = $prefix . $this->translate( $table_ref );
 				} else {
 					$part = $this->translate( $child );
