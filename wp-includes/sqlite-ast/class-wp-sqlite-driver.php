@@ -494,6 +494,11 @@ class WP_SQLite_Driver {
 	 * @return mixed Return value, depending on the query type.
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 *
+	 * TODO:
+	 *   The API of this function is not final.
+	 *   We should also add support for parametrized queries.
+	 *   See: https://github.com/Automattic/sqlite-database-integration/issues/7
 	 */
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
 		$this->flush();
@@ -713,9 +718,17 @@ class WP_SQLite_Driver {
 			case 'createStatement':
 				$subtree = $node->get_first_child_node();
 				switch ( $subtree->rule_name ) {
+					case 'createDatabase':
+						/*
+						 * TODO:
+						 * This should probably be a no-op, in combination with
+						 * DROP DATABASE deleting the data file and recreating it.
+						 */
 					case 'createTable':
 						$this->execute_create_table_statement( $node );
 						break;
+					case 'createIndex':
+						// TODO: SQLite has a CREATE INDEX statement. We should support it.
 					default:
 						throw $this->new_not_supported_exception(
 							sprintf(
@@ -1312,6 +1325,27 @@ class WP_SQLite_Driver {
 	 * @param string $table_name The table name to show indexes for.
 	 */
 	private function execute_show_index_statement( string $table_name ): void {
+		// TODO: FROM/IN (multiple)
+		// TODO: WHERE
+
+		/*
+		 * TODO: Index naming.
+		 *
+		 * From the old driver:
+		 *
+		 * SQLite automatically assigns names to some indexes.
+		 * However, dbDelta in WordPress expects the name to be
+		 * the same as in the original CREATE TABLE. Let's
+		 * translate the name back.
+		 *
+		 * The old driver does the two following conversions:
+		 *   1)
+		 *       $mysql_key_name = substr( $mysql_key_name, strlen( 'sqlite_autoindex_' ) );
+		 *       $mysql_key_name = preg_replace( '/_[0-9]+$/', '', $mysql_key_name );
+		 *   2)
+		 *       $mysql_key_name = substr( $mysql_key_name, strlen( "{$table_name}__" ) );
+		 */
+
 		$statistics_table = $this->information_schema_builder->get_table_name( 'statistics' );
 		$index_info       = $this->execute_sqlite_query(
 			'
@@ -1474,6 +1508,7 @@ class WP_SQLite_Driver {
 	 * @throws PDOException               When given table doesn't exist.
 	 */
 	private function execute_show_columns_statement( WP_Parser_Node $node ): void {
+		// TODO: EXTENDED, FULL
 		$table_name = $this->unquote_sqlite_identifier(
 			$this->translate( $node->get_first_child_node( 'tableRef' ) )
 		);
