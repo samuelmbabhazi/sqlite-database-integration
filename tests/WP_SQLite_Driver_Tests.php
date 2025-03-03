@@ -3893,4 +3893,42 @@ QUERY
 			'CREATE TABLE t1 (id1 INT AUTO_INCREMENT, id2 INT, PRIMARY KEY(id1, id2))'
 		);
 	}
+
+	/**
+	 * @dataProvider getReservedPrefixTestData
+	 */
+	public function testReservedPrefix( string $query, string $error ): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( $error );
+		$this->assertQuery( $query );
+	}
+
+	public function getReservedPrefixTestData(): array {
+		return array(
+			array(
+				'SELECT * FROM _wp_sqlite_t',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT _wp_sqlite_t FROM t',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT t._wp_sqlite_t FROM t',
+				"Invalid identifier `t`.`_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'CREATE TABLE _wp_sqlite_t (id INT)',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'ALTER TABLE _wp_sqlite_t ADD COLUMN name TEXT',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'DROP TABLE _wp_sqlite_t',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+		);
+	}
 }
