@@ -341,7 +341,7 @@ class WP_SQLite_DB extends wpdb {
 			if ( $this->dbh instanceof WP_SQLite_Driver ) {
 				$this->rows_affected = $this->dbh->get_last_return_value();
 			} else {
-				$this->rows_affected = $this->dbh->get_rows_affected();
+				$this->rows_affected = $this->dbh->get_affected_rows();
 			}
 
 			// Take note of the insert_id.
