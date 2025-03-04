@@ -3931,4 +3931,49 @@ QUERY
 			),
 		);
 	}
+
+	/**
+	 * @dataProvider getInformationSchemaIsReadonlyTestData
+	 */
+	public function testInformationSchemaIsReadonly( string $query ): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "Access denied for user 'sqlite'@'%' to database 'information_schema'" );
+		$this->assertQuery( $query );
+	}
+
+	public function getInformationSchemaIsReadonlyTestData(): array {
+		return array(
+			array( 'INSERT INTO information_schema.tables (table_name) VALUES ("t")' ),
+			array( 'UPDATE information_schema.tables SET table_name = "new_t" WHERE table_name = "t"' ),
+			array( 'DELETE FROM information_schema.tables WHERE table_name = "t"' ),
+			array( 'CREATE TABLE information_schema.new_table (id INT)' ),
+			array( 'ALTER TABLE information_schema.tables ADD COLUMN new_column INT' ),
+			array( 'DROP TABLE information_schema.tables' ),
+			array( 'TRUNCATE information_schema.tables' ),
+		);
+	}
+
+	/**
+	 * @dataProvider getInformationSchemaIsReadonlyWithUseTestData
+	 */
+	public function testInformationSchemaIsReadonlyWithUse( string $query ): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "Access denied for user 'sqlite'@'%' to database 'information_schema'" );
+		$this->assertQuery( 'USE information_schema' );
+		$this->assertQuery( $query );
+	}
+
+	public function getInformationSchemaIsReadonlyWithUseTestData(): array {
+		return array(
+			array( 'INSERT INTO tables (table_name) VALUES ("t")' ),
+			array( 'UPDATE tables SET table_name = "new_t" WHERE table_name = "t"' ),
+			array( 'DELETE FROM tables WHERE table_name = "t"' ),
+			array( 'CREATE TABLE new_table (id INT)' ),
+			array( 'ALTER TABLE tables ADD COLUMN new_column INT' ),
+			array( 'DROP TABLE tables' ),
+			array( 'TRUNCATE tables' ),
+		);
+	}
 }

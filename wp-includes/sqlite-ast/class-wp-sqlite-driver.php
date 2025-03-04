@@ -307,6 +307,13 @@ class WP_SQLite_Driver {
 	private $last_sql_calc_found_rows = null;
 
 	/**
+	 * Whether the current MySQL query is read-only.
+	 *
+	 * @var bool
+	 */
+	private $is_readonly;
+
+	/**
 	 * Transaction nesting level of the executed SQLite queries.
 	 *
 	 * @var int
@@ -703,6 +710,7 @@ class WP_SQLite_Driver {
 		$node = $children[0]->get_first_child_node();
 		switch ( $node->rule_name ) {
 			case 'selectStatement':
+				$this->is_readonly = true;
 				$this->execute_select_statement( $node );
 				break;
 			case 'insertStatement':
@@ -778,12 +786,14 @@ class WP_SQLite_Driver {
 				$this->last_result = 0;
 				break;
 			case 'showStatement':
+				$this->is_readonly = true;
 				$this->execute_show_statement( $node );
 				break;
 			case 'utilityStatement':
 				$subtree = $node->get_first_child_node();
 				switch ( $subtree->rule_name ) {
 					case 'describeStatement':
+						$this->is_readonly = true;
 						$this->execute_describe_statement( $subtree );
 						break;
 					case 'useCommand':
@@ -2084,6 +2094,24 @@ class WP_SQLite_Driver {
 			}
 		}
 
+		/*
+		 * Make the 'information_schema' database read-only.
+		 *
+		 * This basic approach is rather restrictive, as it blocks the usage
+		 * of information schema tables in all data-modifying statements.
+		 *
+		 * Some of these statements can be valid, when the schema is only read:
+		 *   DELETE t FROM t JOIN information_schema.columns c ON ...
+		 *
+		 * If needed, a more granular approach can be implemented in the future.
+		 */
+		if ( true === $is_information_schema && false === $this->is_readonly ) {
+			throw $this->new_driver_exception(
+				"Access denied for user 'sqlite'@'%' to database 'information_schema'",
+				'42000'
+			);
+		}
+
 		// Database-level object name (table, view, procedure, trigger, etc.).
 		if ( null !== $object_node ) {
 			if ( $is_information_schema ) {
@@ -2937,6 +2965,7 @@ class WP_SQLite_Driver {
 		$this->last_sqlite_queries = array();
 		$this->last_result         = null;
 		$this->last_return_value   = null;
+		$this->is_readonly         = false;
 	}
 
 	/**
