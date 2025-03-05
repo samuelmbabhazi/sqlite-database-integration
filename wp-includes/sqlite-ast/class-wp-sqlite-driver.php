@@ -729,7 +729,10 @@ class WP_SQLite_Driver {
 					case 'createDatabase':
 						/*
 						 * TODO:
-						 * This should probably be a no-op, in combination with
+						 * We could support this by creating a new SQLite database
+						 * file (e.g., $slugified_db_name.sqlite).
+						 *
+						 * Alternatively, it could be a no-op, in combination with
 						 * DROP DATABASE deleting the data file and recreating it.
 						 */
 					case 'createTable':
