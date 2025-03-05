@@ -29,7 +29,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	const CREATE_INFORMATION_SCHEMA_QUERIES = array(
 		// TABLES
-		"CREATE TABLE IF NOT EXISTS <prefix>tables (
+		"CREATE TABLE IF NOT EXISTS <prefix>tables (    -- '<prefix>' is a placeholder replaced at runtime
 			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def',  -- always 'def'
 			TABLE_SCHEMA TEXT NOT NULL,                 -- database name
 			TABLE_NAME TEXT NOT NULL,                   -- table name
@@ -55,7 +55,7 @@ class WP_SQLite_Information_Schema_Builder {
 		) STRICT",
 
 		// COLUMNS
-		"CREATE TABLE IF NOT EXISTS <prefix>columns (
+		"CREATE TABLE IF NOT EXISTS <prefix>columns (       -- '<prefix>' is a placeholder replaced at runtime
 			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def',      -- always 'def'
 			TABLE_SCHEMA TEXT NOT NULL,                     -- database name
 			TABLE_NAME TEXT NOT NULL,                       -- table name
@@ -82,7 +82,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// VIEWS
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS <prefix>views (
+		"CREATE TABLE IF NOT EXISTS <prefix>views ( -- '<prefix>' is a placeholder replaced at runtime
 			TABLE_CATALOG TEXT NOT NULL,
 			TABLE_SCHEMA TEXT NOT NULL,
 			TABLE_NAME TEXT NOT NULL,
@@ -94,54 +94,54 @@ class WP_SQLite_Information_Schema_Builder {
 			CHARACTER_SET_CLIENT TEXT NOT NULL,
 			COLLATION_CONNECTION TEXT NOT NULL,
 			ALGORITHM TEXT NOT NULL
-		) STRICT',
+		) STRICT",
 
 		// STATISTICS (indexes)
-		"CREATE TABLE IF NOT EXISTS <prefix>statistics (
-			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def', -- always 'def'
-			TABLE_SCHEMA TEXT NOT NULL,                -- database name
-			TABLE_NAME TEXT NOT NULL,                  -- table name
-			NON_UNIQUE INTEGER NOT NULL,               -- 0 for unique indexes, 1 otherwise
-			INDEX_SCHEMA TEXT NOT NULL,                -- index database name
-			INDEX_NAME TEXT NOT NULL,                  -- index name, for PKs always 'PRIMARY'
-			SEQ_IN_INDEX INTEGER NOT NULL,             -- column position in index (from 1)
-			COLUMN_NAME TEXT,                          -- column name (NULL for functional indexes)
-			COLLATION TEXT,                            -- column sort in the index ('A', 'D', or NULL)
-			CARDINALITY INTEGER,                       -- not implemented
-			SUB_PART INTEGER,                          -- number of indexed chars, NULL for full column
-			PACKED TEXT,                               -- not implemented
-			NULLABLE TEXT NOT NULL,                    -- 'YES' if column can contain NULL, '' otherwise
-			INDEX_TYPE TEXT NOT NULL,                  -- 'BTREE', 'FULLTEXT', 'SPATIAL'
-			COMMENT TEXT NOT NULL DEFAULT '',          -- not implemented
-			INDEX_COMMENT TEXT NOT NULL DEFAULT '',    -- index comment
-			IS_VISIBLE TEXT NOT NULL DEFAULT 'YES',    -- 'NO' if column is hidden, 'YES' otherwise
-			EXPRESSION TEXT                            -- expression for functional indexes
+		"CREATE TABLE IF NOT EXISTS <prefix>statistics ( -- '<prefix>' is a placeholder replaced at runtime
+			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def',   -- always 'def'
+			TABLE_SCHEMA TEXT NOT NULL,                  -- database name
+			TABLE_NAME TEXT NOT NULL,                    -- table name
+			NON_UNIQUE INTEGER NOT NULL,                 -- 0 for unique indexes, 1 otherwise
+			INDEX_SCHEMA TEXT NOT NULL,                  -- index database name
+			INDEX_NAME TEXT NOT NULL,                    -- index name, for PKs always 'PRIMARY'
+			SEQ_IN_INDEX INTEGER NOT NULL,               -- column position in index (from 1)
+			COLUMN_NAME TEXT,                            -- column name (NULL for functional indexes)
+			COLLATION TEXT,                              -- column sort in the index ('A', 'D', or NULL)
+			CARDINALITY INTEGER,                         -- not implemented
+			SUB_PART INTEGER,                            -- number of indexed chars, NULL for full column
+			PACKED TEXT,                                 -- not implemented
+			NULLABLE TEXT NOT NULL,                      -- 'YES' if column can contain NULL, '' otherwise
+			INDEX_TYPE TEXT NOT NULL,                    -- 'BTREE', 'FULLTEXT', 'SPATIAL'
+			COMMENT TEXT NOT NULL DEFAULT '',            -- not implemented
+			INDEX_COMMENT TEXT NOT NULL DEFAULT '',      -- index comment
+			IS_VISIBLE TEXT NOT NULL DEFAULT 'YES',      -- 'NO' if column is hidden, 'YES' otherwise
+			EXPRESSION TEXT                              -- expression for functional indexes
 		) STRICT",
 
 		// TABLE_CONSTRAINTS
 		// @TODO: Implement. Could this be just a view?
-		'CREATE TABLE IF NOT EXISTS <prefix>constraints (
+		"CREATE TABLE IF NOT EXISTS <prefix>constraints ( -- '<prefix>' is a placeholder replaced at runtime
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
 			TABLE_SCHEMA TEXT NOT NULL,
 			TABLE_NAME TEXT NOT NULL,
 			CONSTRAINT_TYPE TEXT NOT NULL
-		) STRICT',
+		) STRICT",
 
 		// CHECK_CONSTRAINTS
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS <prefix>check_constraints (
+		"CREATE TABLE IF NOT EXISTS <prefix>check_constraints ( -- '<prefix>' is a placeholder replaced at runtime
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			TABLE_NAME TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
 			CHECK_CLAUSE TEXT NOT NULL
-		) STRICT',
+		) STRICT",
 
 		// KEY_COLUMN_USAGE
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS <prefix>key_column_usage (
+		"CREATE TABLE IF NOT EXISTS <prefix>key_column_usage ( -- '<prefix>' is a placeholder replaced at runtime
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
@@ -154,11 +154,11 @@ class WP_SQLite_Information_Schema_Builder {
 			REFERENCED_TABLE_SCHEMA TEXT,
 			REFERENCED_TABLE_NAME TEXT,
 			REFERENCED_COLUMN_NAME TEXT
-		) STRICT',
+		) STRICT",
 
 		// REFERENTIAL_CONSTRAINTS
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS <prefix>referential_constraints (
+		"CREATE TABLE IF NOT EXISTS <prefix>referential_constraints ( -- '<prefix>' is a placeholder replaced at runtime
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
@@ -169,11 +169,11 @@ class WP_SQLite_Information_Schema_Builder {
 			UPDATE_RULE TEXT NOT NULL,
 			DELETE_RULE TEXT NOT NULL,
 			REFERENCED_TABLE_NAME TEXT NOT NULL
-		) STRICT',
+		) STRICT",
 
 		// TRIGGERS
 		// @TODO: Implement.
-		'CREATE TABLE IF NOT EXISTS <prefix>triggers (
+		"CREATE TABLE IF NOT EXISTS <prefix>triggers ( -- '<prefix>' is a placeholder replaced at runtime
 			TRIGGER_CATALOG TEXT NOT NULL,
 			TRIGGER_SCHEMA TEXT NOT NULL,
 			TRIGGER_NAME TEXT NOT NULL,
@@ -196,7 +196,7 @@ class WP_SQLite_Information_Schema_Builder {
 			CHARACTER_SET_CLIENT TEXT NOT NULL,
 			COLLATION_CONNECTION TEXT NOT NULL,
 			DATABASE_COLLATION TEXT NOT NULL
-		) STRICT',
+		) STRICT",
 	);
 
 	/**
