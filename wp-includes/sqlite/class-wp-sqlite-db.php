@@ -124,6 +124,11 @@ class WP_SQLite_DB extends wpdb {
 	 *                or real_escape next.
 	 */
 	public function esc_like( $text ) {
+		// The new driver adds "ESCAPE '\\'" to every LIKE expression by default.
+		// We only need to overload this function to a no-op for the old driver.
+		if ( $this->dbh instanceof WP_SQLite_Driver ) {
+			return parent::esc_like( $text );
+		}
 		return $text;
 	}
 
