@@ -107,7 +107,8 @@ class WP_SQLite_DB extends wpdb {
 		if ( ! is_scalar( $data ) ) {
 			return '';
 		}
-		return addslashes( $data );
+		$escaped = addslashes( $data );
+		return $this->add_placeholder_escape( $escaped );
 	}
 
 	/**
