@@ -99,12 +99,15 @@ class WP_SQLite_DB extends wpdb {
 	 *
 	 * @see wpdb::_real_escape()
 	 *
-	 * @param string $str The string to escape.
+	 * @param string $data The string to escape.
 	 *
 	 * @return string escaped
 	 */
-	public function _real_escape( $str ) {
-		return addslashes( $str );
+	public function _real_escape( $data ) {
+		if ( ! is_scalar( $data ) ) {
+			return '';
+		}
+		return addslashes( $data );
 	}
 
 	/**
