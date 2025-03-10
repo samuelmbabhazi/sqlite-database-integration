@@ -3776,4 +3776,204 @@ QUERY
 			$this->engine->get_query_results()
 		);
 	}
+
+	public function testShowCreateTableWithEmptyDatetimeDefault() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+				timestamp1 datetime NOT NULL,
+				timestamp2 date NOT NULL,
+				timestamp3 time NOT NULL,
+				timestamp4 timestamp NOT NULL,
+				timestamp5 year NOT NULL,
+				notempty1 datetime DEFAULT '1999-12-12 12:12:12',
+				notempty2 date DEFAULT '1999-12-12',
+				notempty3 time DEFAULT '12:12:12',
+				notempty4 year DEFAULT '2024',
+				notempty5 timestamp DEFAULT '1999-12-12 12:12:12'
+			);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+
+		$this->assertEquals(
+			"CREATE TABLE `_tmp_table` (
+  `ID` bigint NOT NULL AUTO_INCREMENT,
+  `timestamp1` datetime NOT NULL,
+  `timestamp2` date NOT NULL,
+  `timestamp3` time NOT NULL,
+  `timestamp4` timestamp NOT NULL,
+  `timestamp5` year NOT NULL,
+  `notempty1` datetime DEFAULT '1999-12-12 12:12:12',
+  `notempty2` date DEFAULT '1999-12-12',
+  `notempty3` time DEFAULT '12:12:12',
+  `notempty4` year DEFAULT '2024',
+  `notempty5` timestamp NULL DEFAULT '1999-12-12 12:12:12',
+  PRIMARY KEY (`ID`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testShowCreateTablePreservesKeyLengths() {
+		$this->assertQuery(
+			'CREATE TABLE _tmp__table (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					`order_id` bigint(20) unsigned DEFAULT NULL,
+					`meta_key` varchar(255) DEFAULT NULL,
+					`meta_value` text DEFAULT NULL,
+					`meta_data` mediumblob DEFAULT NULL,
+					PRIMARY KEY (`id`),
+					KEY `meta_key_value` (`meta_key`(20),`meta_value`(82)),
+					KEY `order_id_meta_key_meta_value` (`order_id`,`meta_key`(100),`meta_value`(82)),
+					KEY `order_id_meta_key_meta_data` (`order_id`,`meta_key`(100),`meta_data`(100))
+				);'
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp__table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			'CREATE TABLE `_tmp__table` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `order_id` bigint(20) unsigned DEFAULT NULL,
+  `meta_key` varchar(255) DEFAULT NULL,
+  `meta_value` text DEFAULT NULL,
+  `meta_data` mediumblob DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `meta_key_value` (`meta_key`(20), `meta_value`(82)),
+  KEY `order_id_meta_key_meta_value` (`order_id`, `meta_key`(100), `meta_value`(82)),
+  KEY `order_id_meta_key_meta_data` (`order_id`, `meta_key`(100), `meta_data`(100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testTimestampColumnNamedTimestamp() {
+		$this->assertQuery(
+			'CREATE TABLE `_tmp_table` (
+				`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				`timestamp` datetime NOT NULL,
+				PRIMARY KEY (`id`),
+				KEY timestamp (timestamp)
+			);'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'bigint(20) unsigned',
+					'Null'    => 'NO',
+					'Key'     => 'PRI',
+					'Default' => null,
+					'Extra'   => 'auto_increment',
+				),
+				(object) array(
+					'Field'   => 'timestamp',
+					'Type'    => 'datetime',
+					'Null'    => 'NO',
+					'Key'     => 'MUL',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+	}
+
+	public function testCompoundPrimaryKeyAndAutoincrementNotSupported(): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Cannot combine AUTOINCREMENT and multiple primary keys in SQLite' );
+		$this->assertQuery(
+			'CREATE TABLE t1 (id1 INT AUTO_INCREMENT, id2 INT, PRIMARY KEY(id1, id2))'
+		);
+	}
+
+	/**
+	 * @dataProvider getReservedPrefixTestData
+	 */
+	public function testReservedPrefix( string $query, string $error ): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( $error );
+		$this->assertQuery( $query );
+	}
+
+	public function getReservedPrefixTestData(): array {
+		return array(
+			array(
+				'SELECT * FROM _wp_sqlite_t',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT _wp_sqlite_t FROM t',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT t._wp_sqlite_t FROM t',
+				"Invalid identifier `t`.`_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'CREATE TABLE _wp_sqlite_t (id INT)',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'ALTER TABLE _wp_sqlite_t ADD COLUMN name TEXT',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'DROP TABLE _wp_sqlite_t',
+				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+			),
+		);
+	}
+
+	/**
+	 * @dataProvider getInformationSchemaIsReadonlyTestData
+	 */
+	public function testInformationSchemaIsReadonly( string $query ): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "Access denied for user 'sqlite'@'%' to database 'information_schema'" );
+		$this->assertQuery( $query );
+	}
+
+	public function getInformationSchemaIsReadonlyTestData(): array {
+		return array(
+			array( 'INSERT INTO information_schema.tables (table_name) VALUES ("t")' ),
+			array( 'UPDATE information_schema.tables SET table_name = "new_t" WHERE table_name = "t"' ),
+			array( 'DELETE FROM information_schema.tables WHERE table_name = "t"' ),
+			array( 'CREATE TABLE information_schema.new_table (id INT)' ),
+			array( 'ALTER TABLE information_schema.tables ADD COLUMN new_column INT' ),
+			array( 'DROP TABLE information_schema.tables' ),
+			array( 'TRUNCATE information_schema.tables' ),
+		);
+	}
+
+	/**
+	 * @dataProvider getInformationSchemaIsReadonlyWithUseTestData
+	 */
+	public function testInformationSchemaIsReadonlyWithUse( string $query ): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "Access denied for user 'sqlite'@'%' to database 'information_schema'" );
+		$this->assertQuery( 'USE information_schema' );
+		$this->assertQuery( $query );
+	}
+
+	public function getInformationSchemaIsReadonlyWithUseTestData(): array {
+		return array(
+			array( 'INSERT INTO tables (table_name) VALUES ("t")' ),
+			array( 'UPDATE tables SET table_name = "new_t" WHERE table_name = "t"' ),
+			array( 'DELETE FROM tables WHERE table_name = "t"' ),
+			array( 'CREATE TABLE new_table (id INT)' ),
+			array( 'ALTER TABLE tables ADD COLUMN new_column INT' ),
+			array( 'DROP TABLE tables' ),
+			array( 'TRUNCATE tables' ),
+		);
+	}
 }

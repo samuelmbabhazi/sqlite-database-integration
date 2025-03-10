@@ -298,14 +298,18 @@ alterListItem:
         | OPEN_PAR_SYMBOL tableElementList CLOSE_PAR_SYMBOL
     )
     | ADD_SYMBOL tableConstraintDef
-    | CHANGE_SYMBOL COLUMN_SYMBOL? columnInternalRef identifier fieldDefinition place?
-    | MODIFY_SYMBOL COLUMN_SYMBOL? columnInternalRef fieldDefinition place?
+    /* @CHANGED: Replaced "columnInternalRef" with "fieldIdentifier" as per sql_yacc.yy. */
+    | CHANGE_SYMBOL COLUMN_SYMBOL? fieldIdentifier identifier fieldDefinition place?
+    /* @CHANGED: Replaced "columnInternalRef" with "fieldIdentifier" as per sql_yacc.yy. */
+    | MODIFY_SYMBOL COLUMN_SYMBOL? fieldIdentifier fieldDefinition place?
     | DROP_SYMBOL (
-        COLUMN_SYMBOL? columnInternalRef restrict?
+        /* @CHANGED: Replaced "columnInternalRef" with "fieldIdentifier" as per sql_yacc.yy. */
+        COLUMN_SYMBOL? fieldIdentifier restrict?
         | FOREIGN_SYMBOL KEY_SYMBOL (
+            /* @CHANGED: Replaced "columnInternalRef" with "fieldIdentifier" as per sql_yacc.yy. */
             // This part is no longer optional starting with 5.7.
-            {serverVersion >= 50700}? columnInternalRef
-            | {serverVersion < 50700}? columnInternalRef?
+            {serverVersion >= 50700}? fieldIdentifier
+            | {serverVersion < 50700}? fieldIdentifier?
         )
         | PRIMARY_SYMBOL KEY_SYMBOL
         | keyOrIndex indexRef
@@ -314,7 +318,8 @@ alterListItem:
     )
     | DISABLE_SYMBOL KEYS_SYMBOL
     | ENABLE_SYMBOL KEYS_SYMBOL
-    | ALTER_SYMBOL COLUMN_SYMBOL? columnInternalRef (
+    /* @CHANGED: Replaced "columnInternalRef" with "fieldIdentifier" as per sql_yacc.yy. */
+    | ALTER_SYMBOL COLUMN_SYMBOL? fieldIdentifier (
         SET_SYMBOL DEFAULT_SYMBOL (
             {serverVersion >= 80014}? exprWithParentheses
             | signedLiteral
@@ -325,7 +330,8 @@ alterListItem:
     | {serverVersion >= 80000}? ALTER_SYMBOL INDEX_SYMBOL indexRef visibility
     | {serverVersion >= 80017}? ALTER_SYMBOL CHECK_SYMBOL identifier constraintEnforcement
     | {serverVersion >= 80019}? ALTER_SYMBOL CONSTRAINT_SYMBOL identifier constraintEnforcement
-    | {serverVersion >= 80000}? RENAME_SYMBOL COLUMN_SYMBOL columnInternalRef TO_SYMBOL identifier
+    /* @CHANGED: Replaced "columnInternalRef" with "fieldIdentifier" as per sql_yacc.yy. */
+    | {serverVersion >= 80000}? RENAME_SYMBOL COLUMN_SYMBOL fieldIdentifier TO_SYMBOL identifier
     | RENAME_SYMBOL (TO_SYMBOL | AS_SYMBOL)? tableName
     | {serverVersion >= 50700}? RENAME_SYMBOL keyOrIndex indexRef TO_SYMBOL indexName
     | CONVERT_SYMBOL TO_SYMBOL charset (
@@ -353,11 +359,11 @@ restrict:
 
 /*
  * @CHANGED:
- * Fixed ALTER TABLE with ORDER to use 'qualifiedIdentifier' instead of just 'identifier'.
+ * Fixed ALTER TABLE with ORDER to use 'simpleIdentifier' instead of just 'identifier'.
  * This is necessary to support "t.id" in a query like "ALTER TABLE t ORDER BY t.id".
  */
 alterOrderList:
-    qualifiedIdentifier direction? (COMMA_SYMBOL qualifiedIdentifier direction?)*
+    simpleIdentifier direction? (COMMA_SYMBOL simpleIdentifier direction?)*
 ;
 
 alterAlgorithmOption:
@@ -1711,7 +1717,7 @@ xid:
 /*
  * @CHANGED:
  * Fixed "replicationStatement" to correctly support the "RESET PERSIST" statement.
- * The "ifExists" clause wasn't optional, and "identifier" was used instead of "qualifiedIdentifier".
+ * The "ifExists" clause wasn't optional, and "identifier" was used instead of "internalVariableName".
  */
 replicationStatement:
     PURGE_SYMBOL (BINARY_SYMBOL | MASTER_SYMBOL) LOGS_SYMBOL (
@@ -3561,7 +3567,8 @@ getDiagnostics:
 signalAllowedExpr:
     literal
     | variable
-    | qualifiedIdentifier
+    /* @CHANGED: Changed "qualifiedIdentifier" to "simpleIdentifier" as per sql_yacc.yy. */
+    | simpleIdentifier
 ;
 
 statementInformationItem:
@@ -3627,7 +3634,8 @@ schedule:
 ;
 
 columnDefinition:
-    columnName fieldDefinition checkOrReferences?
+    /* @CHANGED: Replaced "columnInternalRef" with "fieldIdentifier" as per sql_yacc.yy. */
+    fieldIdentifier fieldDefinition checkOrReferences?
 ;
 
 checkOrReferences:
@@ -4265,16 +4273,19 @@ usePartition:
 // Sometimes we need additional reference rules with different form, depending on the place such a reference is used.
 
 // A name for a field (column/index). Can be qualified with the current schema + table (although it's not a reference).
+/* @CHANGED: Moved the conditional from "columnName" to "fieldIdentifier" as per sql_yacc.yy. */
 fieldIdentifier:
-    dotIdentifier
-    | qualifiedIdentifier dotIdentifier?
+    // With server 8.0 this became a simple identifier.
+    {serverVersion < 80000}? (dotIdentifier | qualifiedIdentifier dotIdentifier?)
+    | {serverVersion >= 80000}? identifier
 ;
 
-columnName:
+/* @CHANGED: Replaced more universally with "fieldIdentifier" as per sql_yacc.yy. */
+/*columnName:
     // With server 8.0 this became a simple identifier.
     {serverVersion >= 80000}? identifier
     | {serverVersion < 80000}? fieldIdentifier
-;
+;*/
 
 // A reference to a column of the object we are working on.
 columnInternalRef:
@@ -4340,12 +4351,14 @@ triggerRef:
 
 viewName:
     qualifiedIdentifier
-    | dotIdentifier
+    /* @CHANGED: Added missing version constraint. */
+    | {serverVersion < 80000}? dotIdentifier
 ;
 
 viewRef:
     qualifiedIdentifier
-    | dotIdentifier
+    /* @CHANGED: Added missing version constraint. */
+    | {serverVersion < 80000}? dotIdentifier
 ;
 
 tablespaceName:
@@ -4390,7 +4403,8 @@ engineRef:
 
 tableName:
     qualifiedIdentifier
-    | dotIdentifier
+    /* @CHANGED: Added missing version constraint. */
+    | {serverVersion < 80000}? dotIdentifier
 ;
 
 filterTableRef: // Always qualified.
@@ -4403,7 +4417,8 @@ tableRefWithWildcard:
 
 tableRef:
     qualifiedIdentifier
-    | dotIdentifier
+    /* @CHANGED: Added missing version constraint. */
+    | {serverVersion < 80000}? dotIdentifier
 ;
 
 tableRefList:
