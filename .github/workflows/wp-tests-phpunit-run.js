@@ -47,9 +47,6 @@ const expectedErrors = [
 const expectedFailures = [
 	'Tests_Comment::test_wp_new_comment_respects_comment_field_lengths',
 	'Tests_Comment::test_wp_update_comment',
-	'Tests_DB_dbDelta::test_column_type_change_with_hyphens_in_name',
-	'Tests_DB_dbDelta::test_query_with_backticks_does_not_cause_a_query_to_alter_all_columns_and_indices_to_run_even_if_none_have_changed',
-	'Tests_DB_dbDelta::test_query_with_backticks_does_not_throw_an_undefined_index_warning',
 	'Tests_DB_dbDelta::test_spatial_indices',
 	'Tests_DB::test_charset_switched_to_utf8mb4',
 	'Tests_DB::test_close',

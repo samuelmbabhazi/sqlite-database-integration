@@ -337,6 +337,17 @@ class WP_SQLite_Information_Schema_Builder {
 	private $table_prefix;
 
 	/**
+	 * A prefix for information schema table names for temporary tables.
+	 *
+	 * This is needed because for temporary tables, we store the information
+	 * schema tables as temporary tables as well, and temporary tables with
+	 * the same name as regular tables would override the regular tables.
+	 *
+	 * @var string
+	 */
+	private $temporary_table_prefix;
+
+	/**
 	 * Query callback.
 	 *
 	 * @TODO: Consider extracting a part of the WP_SQLite_Driver class
@@ -354,19 +365,40 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param callable(string, array): PDOStatement $query_callback  A callback that executes an SQLite query.
 	 */
 	public function __construct( string $database, string $reserved_prefix, callable $query_callback ) {
-		$this->db_name        = $database;
-		$this->query_callback = $query_callback;
-		$this->table_prefix   = $reserved_prefix . 'mysql_information_schema_';
+		$this->db_name                = $database;
+		$this->query_callback         = $query_callback;
+		$this->table_prefix           = $reserved_prefix . 'mysql_information_schema_';
+		$this->temporary_table_prefix = $reserved_prefix . 'mysql_information_schema_tmp_';
 	}
 
 	/**
 	 * Get SQLite table name for the given MySQL information schema table name.
 	 *
-	 * @param  string $infromation_schema_table_name The MySQL information schema table name.
+	 * @param  bool   $table_is_temporary            Whether a temporary table information schema is requested.
+	 * @param  string $information_schema_table_name The MySQL information schema table name.
 	 * @return string                                The SQLite table name.
 	 */
-	public function get_table_name( string $infromation_schema_table_name ): string {
-		return $this->table_prefix . $infromation_schema_table_name;
+	public function get_table_name( bool $table_is_temporary, string $information_schema_table_name ): string {
+		$prefix = $table_is_temporary ? $this->temporary_table_prefix : $this->table_prefix;
+		return $prefix . $information_schema_table_name;
+	}
+
+	/**
+	 * Check if a temporary table exists in the SQLite database.
+	 *
+	 * @param  string $table_name The temporary table name.
+	 * @return bool               True if the temporary table exists, false otherwise.
+	 */
+	public function temporary_table_exists( string $table_name ): bool {
+		/*
+		 * We could search in the "{$this->temporary_table_prefix}tables" table,
+		 * but it may not exist yet, so using "sqlite_temp_schema" is simpler.
+		 */
+		$stmt = $this->query(
+			"SELECT 1 FROM sqlite_temp_schema WHERE type = 'table' AND name = ?",
+			array( $table_name )
+		);
+		return $stmt->fetchColumn() === '1';
 	}
 
 	/**
@@ -376,6 +408,17 @@ class WP_SQLite_Information_Schema_Builder {
 	public function ensure_information_schema_tables(): void {
 		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
 			$this->query( str_replace( '<prefix>', $this->table_prefix, $query ) );
+		}
+	}
+
+	/**
+	 * Ensure that the temporary information schema tables exist in
+	 * the SQLite database. Tables that are missing will be created.
+	 */
+	public function ensure_temporary_information_schema_tables(): void {
+		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
+			$query = str_replace( 'CREATE TABLE', 'CREATE TEMPORARY TABLE', $query );
+			$this->query( str_replace( '<prefix>', $this->temporary_table_prefix, $query ) );
 		}
 	}
 
@@ -390,9 +433,20 @@ class WP_SQLite_Information_Schema_Builder {
 		$table_row_format = 'MyISAM' === $table_engine ? 'Fixed' : 'Dynamic';
 		$table_collation  = $this->get_table_collation( $node );
 
+		/*
+		 * When creating a temporary table:
+		 *   1. Track that we're processing a temporary table.
+		 *   2. Ensure that the temporary information schema tables exist.
+		 */
+		$subnode            = $node->get_first_child_node();
+		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+		if ( true === $table_is_temporary ) {
+			$this->ensure_temporary_information_schema_tables();
+		}
+
 		// 1. Table.
 		$this->insert_values(
-			'tables',
+			$this->get_table_name( $table_is_temporary, 'tables' ),
 			array(
 				'table_schema'    => $this->db_name,
 				'table_name'      => $table_name,
@@ -415,7 +469,10 @@ class WP_SQLite_Information_Schema_Builder {
 				$column_node,
 				$column_position
 			);
-			$this->insert_values( 'columns', $column_data );
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'columns' ),
+				$column_data
+			);
 
 			// Inline column constraint.
 			$column_constraint_data = $this->extract_column_constraint_data(
@@ -425,7 +482,10 @@ class WP_SQLite_Information_Schema_Builder {
 				'YES' === $column_data['is_nullable']
 			);
 			if ( null !== $column_constraint_data ) {
-				$this->insert_values( 'statistics', $column_constraint_data );
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'statistics' ),
+					$column_constraint_data
+				);
 			}
 
 			$column_position += 1;
@@ -433,7 +493,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// 3. Constraints.
 		foreach ( $node->get_descendant_nodes( 'tableConstraintDef' ) as $constraint_node ) {
-			$this->record_add_constraint( $table_name, $constraint_node );
+			$this->record_add_constraint( $table_is_temporary, $table_name, $constraint_node );
 		}
 	}
 
@@ -446,6 +506,9 @@ class WP_SQLite_Information_Schema_Builder {
 		$table_name = $this->get_value( $node->get_first_descendant_node( 'tableRef' ) );
 		$actions    = $node->get_descendant_nodes( 'alterListItem' );
 
+		// Check if a temporary table with the given name exists.
+		$table_is_temporary = $this->temporary_table_exists( $table_name );
+
 		foreach ( $actions as $action ) {
 			$first_token = $action->get_first_child_token();
 
@@ -456,7 +519,7 @@ class WP_SQLite_Information_Schema_Builder {
 				if ( count( $column_definitions ) > 0 ) {
 					foreach ( $column_definitions as $column_definition ) {
 						$name = $this->get_value( $column_definition->get_first_child_node( 'identifier' ) );
-						$this->record_add_column( $table_name, $name, $column_definition );
+						$this->record_add_column( $table_is_temporary, $table_name, $name, $column_definition );
 					}
 					continue;
 				}
@@ -465,7 +528,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$field_definition = $action->get_first_descendant_node( 'fieldDefinition' );
 				if ( null !== $field_definition ) {
 					$name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
-					$this->record_add_column( $table_name, $name, $field_definition );
+					$this->record_add_column( $table_is_temporary, $table_name, $name, $field_definition );
 					// @TODO: Handle FIRST/AFTER.
 					continue;
 				}
@@ -473,7 +536,7 @@ class WP_SQLite_Information_Schema_Builder {
 				// ADD CONSTRAINT.
 				$constraint = $action->get_first_descendant_node( 'tableConstraintDef' );
 				if ( null !== $constraint ) {
-					$this->record_add_constraint( $table_name, $constraint );
+					$this->record_add_constraint( $table_is_temporary, $table_name, $constraint );
 					continue;
 				}
 
@@ -485,6 +548,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$old_name = $this->get_value( $action->get_first_child_node( 'fieldIdentifier' ) );
 				$new_name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
 				$this->record_change_column(
+					$table_is_temporary,
 					$table_name,
 					$old_name,
 					$new_name,
@@ -497,6 +561,7 @@ class WP_SQLite_Information_Schema_Builder {
 			if ( WP_MySQL_Lexer::MODIFY_SYMBOL === $first_token->id ) {
 				$name = $this->get_value( $action->get_first_child_node( 'fieldIdentifier' ) );
 				$this->record_modify_column(
+					$table_is_temporary,
 					$table_name,
 					$name,
 					$action->get_first_descendant_node( 'fieldDefinition' )
@@ -510,14 +575,14 @@ class WP_SQLite_Information_Schema_Builder {
 				$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
 				if ( null !== $column_ref ) {
 					$name = $this->get_value( $column_ref );
-					$this->record_drop_column( $table_name, $name );
+					$this->record_drop_column( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 
 				// DROP INDEX
 				if ( $action->has_child_node( 'keyOrIndex' ) ) {
 					$name = $this->get_value( $action->get_first_child_node( 'indexRef' ) );
-					$this->record_drop_index( $table_name, $name );
+					$this->record_drop_index( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 			}
@@ -531,29 +596,30 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	public function record_drop_table( WP_Parser_Node $node ): void {
 		$child_node = $node->get_first_child_node();
-		if ( $child_node->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL ) ) {
-			return;
-		}
+
+		$has_temporary_keyword = $child_node->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
 
 		$table_refs = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
 		foreach ( $table_refs as $table_ref ) {
-			$table_name = $this->get_value( $table_ref );
+			$table_name         = $this->get_value( $table_ref );
+			$table_is_temporary = $has_temporary_keyword || $this->temporary_table_exists( $table_name );
+
 			$this->delete_values(
-				'tables',
+				$this->get_table_name( $table_is_temporary, 'tables' ),
 				array(
 					'table_schema' => $this->db_name,
 					'table_name'   => $table_name,
 				)
 			);
 			$this->delete_values(
-				'columns',
+				$this->get_table_name( $table_is_temporary, 'columns' ),
 				array(
 					'table_schema' => $this->db_name,
 					'table_name'   => $table_name,
 				)
 			);
 			$this->delete_values(
-				'statistics',
+				$this->get_table_name( $table_is_temporary, 'statistics' ),
 				array(
 					'table_schema' => $this->db_name,
 					'table_name'   => $table_name,
@@ -567,12 +633,18 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Analyze ADD COLUMN definition and record data in the information schema.
 	 *
-	 * @param string         $table_name  The table name.
-	 * @param string         $column_name The column name.
-	 * @param WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param string         $column_name        The column name.
+	 * @param WP_Parser_Node $node               The "columnDefinition" or "fieldDefinition" AST node.
 	 */
-	private function record_add_column( string $table_name, string $column_name, WP_Parser_Node $node ): void {
-		$columns_table_name = $this->get_table_name( 'columns' );
+	private function record_add_column(
+		bool $table_is_temporary,
+		string $table_name,
+		string $column_name,
+		WP_Parser_Node $node
+	): void {
+		$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
 		$position           = $this->query(
 			"
 				SELECT MAX(ordinal_position)
@@ -584,23 +656,31 @@ class WP_SQLite_Information_Schema_Builder {
 		)->fetchColumn();
 
 		$column_data = $this->extract_column_data( $table_name, $column_name, $node, (int) $position + 1 );
-		$this->insert_values( 'columns', $column_data );
+		$this->insert_values(
+			$this->get_table_name( $table_is_temporary, 'columns' ),
+			$column_data
+		);
 
 		$column_constraint_data = $this->extract_column_constraint_data( $table_name, $column_name, $node, true );
 		if ( null !== $column_constraint_data ) {
-			$this->insert_values( 'statistics', $column_constraint_data );
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'statistics' ),
+				$column_constraint_data
+			);
 		}
 	}
 
 	/**
 	 * Analyze CHANGE COLUMN definition and record data in the information schema.
 	 *
-	 * @param string         $table_name      The table name.
-	 * @param string         $column_name     The column name.
-	 * @param string         $new_column_name The new column name when the column is renamed.
-	 * @param WP_Parser_Node $node            The "fieldDefinition" AST node.
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param string         $column_name        The column name.
+	 * @param string         $new_column_name    The new column name when the column is renamed.
+	 * @param WP_Parser_Node $node               The "fieldDefinition" AST node.
 	 */
 	private function record_change_column(
+		bool $table_is_temporary,
 		string $table_name,
 		string $column_name,
 		string $new_column_name,
@@ -608,7 +688,7 @@ class WP_SQLite_Information_Schema_Builder {
 	): void {
 		$column_data = $this->extract_column_data( $table_name, $new_column_name, $node, 0 );
 		$this->update_values(
-			'columns',
+			$this->get_table_name( $table_is_temporary, 'columns' ),
 			$column_data,
 			array(
 				'table_schema' => $this->db_name,
@@ -620,7 +700,7 @@ class WP_SQLite_Information_Schema_Builder {
 		// Update column name in statistics, if it has changed.
 		if ( $new_column_name !== $column_name ) {
 			$this->update_values(
-				'statistics',
+				$this->get_table_name( $table_is_temporary, 'statistics' ),
 				array(
 					'column_name' => $new_column_name,
 				),
@@ -641,35 +721,45 @@ class WP_SQLite_Information_Schema_Builder {
 			'YES' === $column_data['is_nullable']
 		);
 		if ( null !== $column_constraint_data ) {
-			$this->insert_values( 'statistics', $column_constraint_data );
-			$this->sync_column_key_info( $table_name );
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'statistics' ),
+				$column_constraint_data
+			);
+			$this->sync_column_key_info( $table_is_temporary, $table_name );
 		}
 	}
 
 	/**
 	 * Analyze MODIFY COLUMN definition and record data in the information schema.
 	 *
-	 * @param string         $table_name      The table name.
-	 * @param string         $column_name     The column name.
-	 * @param WP_Parser_Node $node            The "fieldDefinition" AST node.
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param string         $column_name        The column name.
+	 * @param WP_Parser_Node $node               The "fieldDefinition" AST node.
 	 */
 	private function record_modify_column(
+		bool $table_is_temporary,
 		string $table_name,
 		string $column_name,
 		WP_Parser_Node $node
 	): void {
-		$this->record_change_column( $table_name, $column_name, $column_name, $node );
+		$this->record_change_column( $table_is_temporary, $table_name, $column_name, $column_name, $node );
 	}
 
 	/**
 	 * Record DROP COLUMN data in the information schema.
 	 *
-	 * @param string $table_name  The table name.
-	 * @param string $column_name The column name.
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $table_name         The table name.
+	 * @param string $column_name        The column name.
 	 */
-	private function record_drop_column( $table_name, $column_name ): void {
+	private function record_drop_column(
+		bool $table_is_temporary,
+		string $table_name,
+		string $column_name
+	): void {
 		$this->delete_values(
-			'columns',
+			$this->get_table_name( $table_is_temporary, 'columns' ),
 			array(
 				'table_schema' => $this->db_name,
 				'table_name'   => $table_name,
@@ -691,7 +781,7 @@ class WP_SQLite_Information_Schema_Builder {
 		 *   - https://dev.mysql.com/doc/refman/8.4/en/alter-table.html
 		 */
 		$this->delete_values(
-			'statistics',
+			$this->get_table_name( $table_is_temporary, 'statistics' ),
 			array(
 				'table_schema' => $this->db_name,
 				'table_name'   => $table_name,
@@ -701,34 +791,44 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// @TODO: Renumber SEQ_IN_INDEX values.
 
-		$this->sync_column_key_info( $table_name );
+		$this->sync_column_key_info( $table_is_temporary, $table_name );
 	}
 
 	/**
 	 * Record DROP INDEX data in the information schema.
 	 *
-	 * @param string $table_name The table name.
-	 * @param string $index_name The index name.
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $table_name         The table name.
+	 * @param string $index_name         The index name.
 	 */
-	private function record_drop_index( string $table_name, string $index_name ): void {
+	private function record_drop_index(
+		bool $table_is_temporary,
+		string $table_name,
+		string $index_name
+	): void {
 		$this->delete_values(
-			'statistics',
+			$this->get_table_name( $table_is_temporary, 'statistics' ),
 			array(
 				'table_schema' => $this->db_name,
 				'table_name'   => $table_name,
 				'index_name'   => $index_name,
 			)
 		);
-		$this->sync_column_key_info( $table_name );
+		$this->sync_column_key_info( $table_is_temporary, $table_name );
 	}
 
 	/**
 	 * Analyze ADD CONSTRAINT definition and record data in the information schema.
 	 *
-	 * @param string         $table_name  The table name.
-	 * @param WP_Parser_Node $node        The "tableConstraintDef" AST node.
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param WP_Parser_Node $node               The "tableConstraintDef" AST node.
 	 */
-	private function record_add_constraint( string $table_name, WP_Parser_Node $node ): void {
+	private function record_add_constraint(
+		bool $table_is_temporary,
+		string $table_name,
+		WP_Parser_Node $node
+	): void {
 		// Get first constraint keyword.
 		$children = $node->get_children();
 		$keyword  = $children[0] instanceof WP_MySQL_Token ? $children[0] : $children[1];
@@ -763,7 +863,7 @@ class WP_SQLite_Information_Schema_Builder {
 		// Fetch column info.
 		$column_names = array_filter( $key_part_column_names );
 		if ( count( $column_names ) > 0 ) {
-			$columns_table_name = $this->get_table_name( 'columns' );
+			$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
 			$column_info        = $this->query(
 				"
 					SELECT column_name, data_type, is_nullable, character_maximum_length
@@ -814,7 +914,7 @@ class WP_SQLite_Information_Schema_Builder {
 			);
 
 			$this->insert_values(
-				'statistics',
+				$this->get_table_name( $table_is_temporary, 'statistics' ),
 				array(
 					'table_schema'  => $this->db_name,
 					'table_name'    => $table_name,
@@ -839,7 +939,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$seq_in_index += 1;
 		}
 
-		$this->sync_column_key_info( $table_name );
+		$this->sync_column_key_info( $table_is_temporary, $table_name );
 	}
 
 	/**
@@ -941,11 +1041,14 @@ class WP_SQLite_Information_Schema_Builder {
 	 *     4. "":    Column is not indexed.
 	 *
 	 *   B) IS_NULLABLE: In COLUMNS, "YES"/"NO". In STATISTICS, "YES"/"".
+	 *
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $table_name         The table name.
 	 */
-	private function sync_column_key_info( string $table_name ): void {
+	private function sync_column_key_info( bool $table_is_temporary, string $table_name ): void {
 		// @TODO: Consider listing only affected columns.
-		$columns_table_name    = $this->get_table_name( 'columns' );
-		$statistics_table_name = $this->get_table_name( 'statistics' );
+		$columns_table_name    = $this->get_table_name( $table_is_temporary, 'columns' );
+		$statistics_table_name = $this->get_table_name( $table_is_temporary, 'statistics' );
 		$this->query(
 			"
 				WITH s AS (
@@ -1762,7 +1865,7 @@ class WP_SQLite_Information_Schema_Builder {
 	private function insert_values( string $table_name, array $data ): void {
 		$this->query(
 			'
-				INSERT INTO ' . $this->get_table_name( $table_name ) . ' (' . implode( ', ', array_keys( $data ) ) . ')
+				INSERT INTO ' . $table_name . ' (' . implode( ', ', array_keys( $data ) ) . ')
 				VALUES (' . implode( ', ', array_fill( 0, count( $data ), '?' ) ) . ')
 			',
 			array_values( $data )
@@ -1789,7 +1892,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		$this->query(
 			'
-				UPDATE ' . $this->get_table_name( $table_name ) . '
+				UPDATE ' . $table_name . '
 				SET ' . implode( ', ', $set ) . '
 				WHERE ' . implode( ' AND ', $where_clause ) . '
 			',
@@ -1811,7 +1914,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		$this->query(
 			'
-				DELETE FROM ' . $this->get_table_name( $table_name ) . '
+				DELETE FROM ' . $table_name . '
 				WHERE ' . implode( ' AND ', $where_clause ) . '
 			',
 			array_values( $where )
