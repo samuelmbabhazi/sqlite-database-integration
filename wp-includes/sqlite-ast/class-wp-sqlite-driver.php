@@ -1086,14 +1086,22 @@ class WP_SQLite_Driver {
 	private function execute_create_table_statement( WP_Parser_Node $node ): void {
 		$subnode = $node->get_first_child_node();
 
-		// Handle TEMPORARY and CREATE TABLE ... SELECT.
+		// Handle TEMPORARY keyword.
 		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
-		$element_list       = $subnode->get_first_child_node( 'tableElementList' );
+
+		// Handle CREATE TABLE ... [AS] SELECT.
+		$element_list = $subnode->get_first_child_node( 'tableElementList' );
 		if ( null === $element_list ) {
-			$query = $this->translate( $node ) . ' STRICT';
-			$this->execute_sqlite_query( $query );
-			$this->set_result_from_affected_rows();
-			return;
+			/*
+			 * While SQLite supports CREATE TABLE ... AS SELECT statements,
+			 * we need to somehow implement information schema support for
+			 * the tables created in this way.
+			 *
+			 * TODO: Implement information schema support for CREATE TABLE ... AS SELECT.
+			 */
+			throw $this->new_not_supported_exception(
+				'CREATE TABLE ... [AS] SELECT is currently not supported'
+			);
 		}
 
 		// Get table name.
