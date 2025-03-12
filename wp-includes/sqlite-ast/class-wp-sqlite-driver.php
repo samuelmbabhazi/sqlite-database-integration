@@ -1792,8 +1792,6 @@ class WP_SQLite_Driver {
 					return implode( ' ', $parts );
 				}
 				return $this->translate_sequence( $node->get_children() );
-			case 'schemaRef':
-				return $this->translate_schema_identifier( $node );
 			case 'qualifiedIdentifier':
 			case 'tableRefWithWildcard':
 				$parts = $node->get_descendant_nodes( 'identifier' );
