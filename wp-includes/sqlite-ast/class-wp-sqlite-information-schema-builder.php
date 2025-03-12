@@ -348,6 +348,16 @@ class WP_SQLite_Information_Schema_Builder {
 	private $temporary_table_prefix;
 
 	/**
+	 * Whether the information schema for temporary tables was already created.
+	 *
+	 * This is used to avoid trying to create a temporary information schema
+	 * for each CREATE TEMPORARY TABLE statement during a single session.
+	 *
+	 * @var bool
+	 */
+	private $temporary_information_schema_exists = false;
+
+	/**
 	 * Query callback.
 	 *
 	 * @TODO: Consider extracting a part of the WP_SQLite_Driver class
@@ -420,6 +430,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$query = str_replace( 'CREATE TABLE', 'CREATE TEMPORARY TABLE', $query );
 			$this->query( str_replace( '<prefix>', $this->temporary_table_prefix, $query ) );
 		}
+		$this->temporary_information_schema_exists = true;
 	}
 
 	/**
@@ -440,22 +451,39 @@ class WP_SQLite_Information_Schema_Builder {
 		 */
 		$subnode            = $node->get_first_child_node();
 		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
-		if ( true === $table_is_temporary ) {
+		if ( $table_is_temporary && ! $this->temporary_information_schema_exists ) {
 			$this->ensure_temporary_information_schema_tables();
 		}
 
 		// 1. Table.
-		$this->insert_values(
-			$this->get_table_name( $table_is_temporary, 'tables' ),
-			array(
-				'table_schema'    => $this->db_name,
-				'table_name'      => $table_name,
-				'table_type'      => 'BASE TABLE',
-				'engine'          => $table_engine,
-				'row_format'      => $table_row_format,
-				'table_collation' => $table_collation,
-			)
+		$tables_table_name = $this->get_table_name( $table_is_temporary, 'tables' );
+		$table_data        = array(
+			'table_schema'    => $this->db_name,
+			'table_name'      => $table_name,
+			'table_type'      => 'BASE TABLE',
+			'engine'          => $table_engine,
+			'row_format'      => $table_row_format,
+			'table_collation' => $table_collation,
 		);
+
+		try {
+			$this->insert_values( $tables_table_name, $table_data );
+		} catch ( PDOException $e ) {
+			/*
+			 * Even though we keep track of whether the temporary information
+			 * schema tables already exist, there is a special case in which
+			 * the tracked information may be incorrect.
+			 *
+			 * This can happen when the query is in a transaction that is later
+			 * rolled back. In that case, let's ensure the schema, and try again.
+			 */
+			if ( $table_is_temporary && str_contains( $e->getMessage(), 'no such table' ) ) {
+				$this->ensure_temporary_information_schema_tables();
+				$this->insert_values( $tables_table_name, $table_data );
+			} else {
+				throw $e;
+			}
+		}
 
 		// 2. Columns.
 		$column_position = 1;
