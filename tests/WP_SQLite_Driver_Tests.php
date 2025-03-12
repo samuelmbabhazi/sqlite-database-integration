@@ -3079,6 +3079,20 @@ QUERY
 		);
 	}
 
+	public function testCreateTemporaryTableIfNotExists(): void {
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE t (ID INTEGER, name TEXT)'
+		);
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS t (ID INTEGER, name TEXT)'
+		);
+
+		$this->expectExceptionMessage( 'table `t` already exists' );
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE t (ID INTEGER, name TEXT)'
+		);
+	}
+
 	public function testTranslatesComplexDelete() {
 		$this->sqlite->query(
 			"CREATE TABLE wptests_dummy (
