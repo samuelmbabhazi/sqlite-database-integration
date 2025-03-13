@@ -401,23 +401,6 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
-	// @TODO: IF NOT EXISTS
-	/*public function testCreateTableWithIfNotExists(): void {
-		$this->assertQuery(
-			'CREATE TABLE IF NOT EXISTS "t" ( "id" INTEGER ) STRICT',
-			'CREATE TABLE IF NOT EXISTS t (id INT)'
-		);
-
-		$this->assertExecutedInformationSchemaQueries(
-			array(
-				'INSERT INTO _wp_sqlite_mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
-					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'Dynamic', 'utf8mb4_general_ci')",
-				'INSERT INTO _wp_sqlite_mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
-					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
-			)
-		);
-	}*/
-
 	public function testCreateTableWithInlineUniqueIndexes(): void {
 		$this->assertQuery(
 			array(
@@ -480,7 +463,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
-	public function testCreateTableFromSelectQuery(): void {
+	// @TODO: Implement information schema support for CREATE TABLE ... AS SELECT.
+	/*public function testCreateTableFromSelectQuery(): void {
 		// CREATE TABLE AS SELECT ...
 		$this->assertQuery(
 			'CREATE TABLE `t1` AS SELECT * FROM `t2` STRICT',
@@ -493,22 +477,19 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE `t1` AS SELECT * FROM `t2` STRICT',
 			'CREATE TABLE t1 SELECT * FROM t2'
 		);
-	}
+	}*/
 
 	public function testCreateTemporaryTable(): void {
 		$this->assertQuery(
 			'CREATE TEMPORARY TABLE `t` ( `id` INTEGER ) STRICT',
 			'CREATE TEMPORARY TABLE t (id INT)'
 		);
-
-		// With IF NOT EXISTS.
-		$this->assertQuery(
-			'CREATE TEMPORARY TABLE IF NOT EXISTS `t` ( `id` INTEGER ) STRICT',
-			'CREATE TEMPORARY TABLE IF NOT EXISTS t (id INT)'
-		);
 	}
 
 	public function testDropTemporaryTable(): void {
+		// Create a temporary table first so DROP doesn't fail.
+		$this->driver->query( 'CREATE TEMPORARY TABLE t (id INT)' );
+
 		$this->assertQuery(
 			'DROP TABLE `temp`.`t`',
 			'DROP TEMPORARY TABLE t'
@@ -1346,6 +1327,16 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		if ( count( $executed_queries ) > 2 ) {
 			$executed_queries = array_values( array_slice( $executed_queries, 1, -1, true ) );
 		}
+
+		// Remove temporary table existence checks.
+		$executed_queries = array_values(
+			array_filter(
+				$executed_queries,
+				function ( $query ) {
+					return "SELECT 1 FROM sqlite_temp_schema WHERE type = 'table' AND name = ?" !== $query;
+				}
+			)
+		);
 
 		// Remove "information_schema" queries.
 		$executed_queries = array_values(

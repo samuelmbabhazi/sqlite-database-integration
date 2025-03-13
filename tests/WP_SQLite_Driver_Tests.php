@@ -3079,6 +3079,20 @@ QUERY
 		);
 	}
 
+	public function testCreateTemporaryTableIfNotExists(): void {
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE t (ID INTEGER, name TEXT)'
+		);
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS t (ID INTEGER, name TEXT)'
+		);
+
+		$this->expectExceptionMessage( 'table `t` already exists' );
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE t (ID INTEGER, name TEXT)'
+		);
+	}
+
 	public function testTranslatesComplexDelete() {
 		$this->sqlite->query(
 			"CREATE TABLE wptests_dummy (
@@ -3975,5 +3989,55 @@ QUERY
 			array( 'DROP TABLE tables' ),
 			array( 'TRUNCATE tables' ),
 		);
+	}
+
+	public function testTemporaryTableHasPriorityOverStandardTable(): void {
+		// Create a standard and a temporary table with the same name.
+		$this->assertQuery( 'CREATE TABLE t (a INT, INDEX ia(a))' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t (b INT, INDEX ib(b))' );
+
+		// SHOW CREATE TABLE will show the temporary table.
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			"CREATE TEMPORARY TABLE `t` (\n"
+				. "  `b` int DEFAULT NULL,\n"
+				. "  KEY `ib` (`b`)\n"
+				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+			$result[0]->{'Create Table'}
+		);
+
+		// SHOW COLUMNS FROM will show the temporary table.
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertEquals( 'b', $result[0]->Field );
+
+		// DESCRIBE will show the temporary table.
+		$result = $this->assertQuery( 'DESCRIBE t' );
+		$this->assertEquals( 'b', $result[0]->Field );
+
+		// SHOW INDEXES FROM will show the temporary table.
+		$result = $this->assertQuery( 'SHOW INDEXES FROM t' );
+		$this->assertEquals( 'ib', $result[0]->Key_name );
+
+		// ALTER TABLE will use the temporary table.
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN c INT' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertEquals( 'b', $result[0]->Field );
+		$this->assertEquals( 'c', $result[1]->Field );
+
+		// The temporary table doesn't show up in information schema.
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.columns WHERE table_name = "t"' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'a', $result[0]->COLUMN_NAME );
+
+		// First DROP TABLE removes the temporary table.
+		$this->assertQuery( 'DROP TABLE t' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertEquals( 'a', $result[0]->Field );
+
+		// Second DROP TABLE removes the standard table.
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "Table 'wp.t' doesn't exist" );
+		$this->assertQuery( 'DROP TABLE t' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
 	}
 }

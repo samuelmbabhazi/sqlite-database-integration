@@ -1086,14 +1086,22 @@ class WP_SQLite_Driver {
 	private function execute_create_table_statement( WP_Parser_Node $node ): void {
 		$subnode = $node->get_first_child_node();
 
-		// Handle TEMPORARY and CREATE TABLE ... SELECT.
-		$is_temporary = $subnode->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+		// Handle TEMPORARY keyword.
+		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+
+		// Handle CREATE TABLE ... [AS] SELECT.
 		$element_list = $subnode->get_first_child_node( 'tableElementList' );
-		if ( true === $is_temporary || null === $element_list ) {
-			$query = $this->translate( $node ) . ' STRICT';
-			$this->execute_sqlite_query( $query );
-			$this->set_result_from_affected_rows();
-			return;
+		if ( null === $element_list ) {
+			/*
+			 * While SQLite supports CREATE TABLE ... AS SELECT statements,
+			 * we need to somehow implement information schema support for
+			 * the tables created in this way.
+			 *
+			 * TODO: Implement information schema support for CREATE TABLE ... AS SELECT.
+			 */
+			throw $this->new_not_supported_exception(
+				'CREATE TABLE ... [AS] SELECT is currently not supported'
+			);
 		}
 
 		// Get table name.
@@ -1103,7 +1111,7 @@ class WP_SQLite_Driver {
 
 		// Handle IF NOT EXISTS.
 		if ( $subnode->has_child_node( 'ifNotExists' ) ) {
-			$tables_table = $this->information_schema_builder->get_table_name( 'tables' );
+			$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 			$table_exists = $this->execute_sqlite_query(
 				"SELECT 1 FROM $tables_table WHERE table_schema = ? AND table_name = ?",
 				array( $this->db_name, $table_name )
@@ -1119,7 +1127,7 @@ class WP_SQLite_Driver {
 		$this->information_schema_builder->record_create_table( $node );
 
 		// Generate CREATE TABLE statement from the information schema tables.
-		$queries            = $this->get_sqlite_create_table_statement( $table_name );
+		$queries            = $this->get_sqlite_create_table_statement( $table_is_temporary, $table_name );
 		$create_table_query = $queries[0];
 		$constraint_queries = array_slice( $queries, 1 );
 
@@ -1141,8 +1149,10 @@ class WP_SQLite_Driver {
 			$this->translate( $node->get_first_descendant_node( 'tableRef' ) )
 		);
 
+		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+
 		// Save all column names from the original table.
-		$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_names  = $this->execute_sqlite_query(
 			"SELECT COLUMN_NAME FROM $columns_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
@@ -1188,7 +1198,7 @@ class WP_SQLite_Driver {
 		}
 
 		$this->information_schema_builder->record_alter_table( $node );
-		$this->recreate_table_from_information_schema( $table_name, $column_map );
+		$this->recreate_table_from_information_schema( $table_is_temporary, $table_name, $column_map );
 
 		// @TODO: Consider using a "fast path" for ALTER TABLE statements that
 		//        consist only of operations that SQLite's ALTER TABLE supports.
@@ -1201,13 +1211,15 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_drop_table_statement( WP_Parser_Node $node ): void {
-		$child_node = $node->get_first_child_node();
+		// Record the changes in the information schema.
+		$this->information_schema_builder->record_drop_table( $node );
 
 		// MySQL supports removing multiple tables in a single query DROP query.
 		// In SQLite, we need to execute each DROP TABLE statement separately.
-		$table_refs   = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
-		$is_temporary = $child_node->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
-		$queries      = array();
+		$child_node         = $node->get_first_child_node();
+		$table_refs         = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
+		$table_is_temporary = $child_node->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+		$queries            = array();
 		foreach ( $table_refs as $table_ref ) {
 			$parts = array();
 			foreach ( $child_node->get_children() as $child ) {
@@ -1221,7 +1233,7 @@ class WP_SQLite_Driver {
 				// Replace table list with the current table reference.
 				if ( ! $is_token && 'tableRefList' === $child->rule_name ) {
 					// Add a "temp." schema prefix for temporary tables.
-					$prefix = $is_temporary ? '`temp`.' : '';
+					$prefix = $table_is_temporary ? '`temp`.' : '';
 					$part   = $prefix . $this->translate( $table_ref );
 				} else {
 					$part = $this->translate( $child );
@@ -1237,7 +1249,6 @@ class WP_SQLite_Driver {
 		foreach ( $queries as $query ) {
 			$this->execute_sqlite_query( $query );
 		}
-		$this->information_schema_builder->record_drop_table( $node );
 	}
 
 	/**
@@ -1280,7 +1291,9 @@ class WP_SQLite_Driver {
 						$this->translate( $node->get_first_child_node( 'tableRef' ) )
 					);
 
-					$sql = $this->get_mysql_create_table_statement( $table_name );
+					$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+
+					$sql = $this->get_mysql_create_table_statement( $table_is_temporary, $table_name );
 					if ( null === $sql ) {
 						$this->set_results_from_fetched_data( array() );
 					} else {
@@ -1341,6 +1354,8 @@ class WP_SQLite_Driver {
 		// TODO: FROM/IN (multiple)
 		// TODO: WHERE
 
+		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+
 		/*
 		 * TODO: Index naming.
 		 *
@@ -1359,7 +1374,7 @@ class WP_SQLite_Driver {
 		 *       $mysql_key_name = substr( $mysql_key_name, strlen( "{$table_name}__" ) );
 		 */
 
-		$statistics_table = $this->information_schema_builder->get_table_name( 'statistics' );
+		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$index_info       = $this->execute_sqlite_query(
 			'
 				SELECT
@@ -1416,7 +1431,10 @@ class WP_SQLite_Driver {
 		}
 
 		// Fetch table information.
-		$tables_tables = $this->information_schema_builder->get_table_name( 'tables' );
+		$tables_tables = $this->information_schema_builder->get_table_name(
+			false, // SHOW TABLE STATUS lists only non-temporary tables.
+			'tables'
+		);
 		$table_info    = $this->execute_sqlite_query(
 			sprintf(
 				"SELECT * FROM $tables_tables WHERE table_schema = ? %s",
@@ -1481,7 +1499,10 @@ class WP_SQLite_Driver {
 		}
 
 		// Fetch table information.
-		$table_tables = $this->information_schema_builder->get_table_name( 'tables' );
+		$table_tables = $this->information_schema_builder->get_table_name(
+			false, // SHOW TABLES lists only non-temporary tables.
+			'tables'
+		);
 		$table_info   = $this->execute_sqlite_query(
 			sprintf(
 				"SELECT * FROM $table_tables WHERE table_schema = ? %s",
@@ -1536,8 +1557,10 @@ class WP_SQLite_Driver {
 			);
 		}
 
+		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+
 		// Check if the table exists.
-		$tables_tables = $this->information_schema_builder->get_table_name( 'tables' );
+		$tables_tables = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_exists  = $this->execute_sqlite_query(
 			"SELECT 1 FROM $tables_tables WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
@@ -1560,7 +1583,7 @@ class WP_SQLite_Driver {
 		$column_info = $this->execute_sqlite_query(
 			sprintf(
 				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? %s',
-				$this->information_schema_builder->get_table_name( 'columns' ),
+				$this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' ),
 				$condition ?? ''
 			),
 			array( $database, $table_name )
@@ -1598,7 +1621,9 @@ class WP_SQLite_Driver {
 			$this->translate( $node->get_first_child_node( 'tableRef' ) )
 		);
 
-		$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
 			"
 				SELECT
@@ -1684,7 +1709,8 @@ class WP_SQLite_Driver {
 						 * This corresponds to older MySQL OPTIMIZE TABLE behavior
 						 * and still applies to some storage engines in some cases.
 						 */
-						$this->recreate_table_from_information_schema( $table_name );
+						$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+						$this->recreate_table_from_information_schema( $table_is_temporary, $table_name );
 						$errors = array();
 						break;
 					default:
@@ -1766,8 +1792,6 @@ class WP_SQLite_Driver {
 					return implode( ' ', $parts );
 				}
 				return $this->translate_sequence( $node->get_children() );
-			case 'schemaRef':
-				return $this->translate_schema_identifier( $node );
 			case 'qualifiedIdentifier':
 			case 'tableRefWithWildcard':
 				$parts = $node->get_descendant_nodes( 'identifier' );
@@ -2121,7 +2145,7 @@ class WP_SQLite_Driver {
 				$object_name = $this->unquote_sqlite_identifier(
 					$this->translate_sequence( $object_node->get_children() )
 				);
-				$parts[]     = $this->information_schema_builder->get_table_name( $object_name );
+				$parts[]     = $this->information_schema_builder->get_table_name( false, $object_name );
 			} else {
 				$quoted_object_name = $this->translate( $object_node );
 				$object_name        = $this->unquote_sqlite_identifier( $quoted_object_name );
@@ -2454,15 +2478,20 @@ class WP_SQLite_Driver {
 	 * See:
 	 *   https://www.sqlite.org/lang_altertable.html#making_other_kinds_of_table_schema_changes
 	 *
-	 * @param  string $table_name The name of the table to recreate.
-	 * @param  array  $column_map Optional. A map of column names (old name -> new name)
-	 *                            to use when copying data from the original table.
-	 *                            When not provided, all columns are copied without renaming.
+	 * @param  bool   $table_is_temporary Whether the table is temporary.
+	 * @param  string $table_name         The name of the table to recreate.
+	 * @param  array  $column_map         Optional. A map of column names (old name -> new name)
+	 *                                    to use when copying data from the original table.
+	 *                                    When not provided, all columns are copied without renaming.
 	 * @throws WP_SQLite_Driver_Exception
 	 */
-	private function recreate_table_from_information_schema( string $table_name, array $column_map = null ): void {
+	private function recreate_table_from_information_schema(
+		bool $table_is_temporary,
+		string $table_name,
+		array $column_map = null
+	): void {
 		if ( null === $column_map ) {
-			$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+			$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 			$column_names  = $this->execute_sqlite_query(
 				"SELECT COLUMN_NAME FROM $columns_table WHERE table_schema = ? AND table_name = ?",
 				array( $this->db_name, $table_name )
@@ -2488,7 +2517,7 @@ class WP_SQLite_Driver {
 		$tmp_table_name        = self::RESERVED_PREFIX . "tmp_{$table_name}_" . uniqid();
 		$quoted_table_name     = $this->quote_sqlite_identifier( $table_name );
 		$quoted_tmp_table_name = $this->quote_sqlite_identifier( $tmp_table_name );
-		$queries               = $this->get_sqlite_create_table_statement( $table_name, $tmp_table_name );
+		$queries               = $this->get_sqlite_create_table_statement( $table_is_temporary, $table_name, $tmp_table_name );
 		$create_table_query    = $queries[0];
 		$constraint_queries    = array_slice( $queries, 1 );
 		$this->execute_sqlite_query( $create_table_query );
@@ -2567,14 +2596,19 @@ class WP_SQLite_Driver {
 	/**
 	 * Generate a SQLite CREATE TABLE statement from information schema data.
 	 *
-	 * @param  string      $table_name     The name of the table to create.
-	 * @param  string|null $new_table_name Override the original table name for ALTER TABLE emulation.
-	 * @return string[]                    Queries to create the table, indexes, and constraints.
-	 * @throws WP_SQLite_Driver_Exception  When the table information is missing.
+	 * @param  bool        $table_is_temporary Whether the table is temporary.
+	 * @param  string      $table_name         The name of the table to create.
+	 * @param  string|null $new_table_name     Override the original table name for ALTER TABLE emulation.
+	 * @return string[]                        Queries to create the table, indexes, and constraints.
+	 * @throws WP_SQLite_Driver_Exception      When the table information is missing.
 	 */
-	private function get_sqlite_create_table_statement( string $table_name, ?string $new_table_name = null ): array {
+	private function get_sqlite_create_table_statement(
+		bool $table_is_temporary = false,
+		string $table_name,
+		?string $new_table_name = null
+	): array {
 		// 1. Get table info.
-		$tables_table = $this->information_schema_builder->get_table_name( 'tables' );
+		$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_info   = $this->execute_sqlite_query(
 			"
 				SELECT *
@@ -2594,14 +2628,14 @@ class WP_SQLite_Driver {
 		}
 
 		// 2. Get column info.
-		$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
 			"SELECT * FROM $columns_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
-		$statistics_table = $this->information_schema_builder->get_table_name( 'statistics' );
+		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
 			"SELECT * FROM $statistics_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
@@ -2746,7 +2780,8 @@ class WP_SQLite_Driver {
 
 		// 6. Compose the CREATE TABLE statement.
 		$create_table_query  = sprintf(
-			"CREATE TABLE %s (\n",
+			"CREATE %sTABLE %s (\n",
+			$table_is_temporary ? 'TEMPORARY ' : '',
 			$this->quote_sqlite_identifier( $new_table_name ?? $table_name )
 		);
 		$create_table_query .= implode( ",\n", $rows );
@@ -2757,12 +2792,13 @@ class WP_SQLite_Driver {
 	/**
 	 * Generate a MySQL CREATE TABLE statement from information schema data.
 	 *
-	 * @param  string $table_name The name of the table to create.
-	 * @return string             The CREATE TABLE statement.
+	 * @param  bool   $table_is_temporary Whether the table is temporary.
+	 * @param  string $table_name         The name of the table to create.
+	 * @return string                     The CREATE TABLE statement.
 	 */
-	private function get_mysql_create_table_statement( string $table_name ): ?string {
+	private function get_mysql_create_table_statement( bool $table_is_temporary, string $table_name ): ?string {
 		// 1. Get table info.
-		$tables_table = $this->information_schema_builder->get_table_name( 'tables' );
+		$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_info   = $this->execute_sqlite_query(
 			"
 				SELECT *
@@ -2779,14 +2815,14 @@ class WP_SQLite_Driver {
 		}
 
 		// 2. Get column info.
-		$columns_table = $this->information_schema_builder->get_table_name( 'columns' );
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
 			"SELECT * FROM $columns_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
-		$statistics_table = $this->information_schema_builder->get_table_name( 'statistics' );
+		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
 			"SELECT * FROM $statistics_table WHERE table_schema = ? AND table_name = ?",
 			array( $this->db_name, $table_name )
@@ -2883,7 +2919,11 @@ class WP_SQLite_Driver {
 		$collation = $table_info['TABLE_COLLATION'];
 		$charset   = substr( $collation, 0, strpos( $collation, '_' ) );
 
-		$sql  = sprintf( "CREATE TABLE %s (\n", $this->quote_mysql_identifier( $table_name ) );
+		$sql  = sprintf(
+			"CREATE %sTABLE %s (\n",
+			$table_is_temporary ? 'TEMPORARY ' : '',
+			$this->quote_mysql_identifier( $table_name )
+		);
 		$sql .= implode( ",\n", $rows );
 		$sql .= "\n)";
 		$sql .= sprintf( ' ENGINE=%s', $table_info['ENGINE'] );
