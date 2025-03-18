@@ -1386,7 +1386,15 @@ class WP_SQLite_Driver {
 		$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
 
 		$this->execute_sqlite_query( "DELETE FROM $quoted_table_name" );
-		$this->execute_sqlite_query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $table_name ) );
+		try {
+			$this->execute_sqlite_query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $table_name ) );
+		} catch ( PDOException $e ) {
+			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
+				// The table might not exist if no sequences are used in the DB.
+			} else {
+				throw $e;
+			}
+		}
 		$this->set_result_from_affected_rows();
 	}
 
