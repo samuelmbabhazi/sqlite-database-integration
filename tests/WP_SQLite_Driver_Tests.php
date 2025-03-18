@@ -4040,4 +4040,90 @@ QUERY
 		$this->assertQuery( 'DROP TABLE t' );
 		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
 	}
+
+	public function testNonStrictSqlModeNullWithoutDefault(): void {
+		// No value saves NULL:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, value TEXT NULL)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on INSERT:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, value TEXT NULL)' );
+		$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NULL)' );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+	}
+
+	public function testNonStrictSqlModeNullWithDefault(): void {
+		// No value saves DEFAULT:
+		$this->assertQuery( "CREATE TABLE t1 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'd', $result[0]->value );
+
+		// NULL value saves NULL on INSERT:
+		$this->assertQuery( "CREATE TABLE t2 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+	}
+
+	public function testNonStrictSqlModeNotNullWithoutDefault(): void {
+		// No value saves IMPLICIT DEFAULT:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, value TEXT NOT NULL)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '', $result[0]->value );
+
+		// NULL value is rejected on INSERT.
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, value TEXT NOT NULL)' );
+		$exception = null;
+		try {
+			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t2.value',
+			$exception->getMessage()
+		);
+	}
+
+	public function testNonStrictSqlModeNotNullWithDefault(): void {
+		// No value saves DEFAULT:
+		$this->assertQuery( "CREATE TABLE t1 (id INT, value TEXT NOT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'd', $result[0]->value );
+
+		// NULL value is rejected on INSERT.
+		$this->assertQuery( "CREATE TABLE t2 (id INT, value TEXT NOT NULL DEFAULT 'd')" );
+		$exception = null;
+		try {
+			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t2.value',
+			$exception->getMessage()
+		);
+	}
 }

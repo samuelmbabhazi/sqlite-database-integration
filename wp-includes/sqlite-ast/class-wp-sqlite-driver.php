@@ -216,6 +216,74 @@ class WP_SQLite_Driver {
 	);
 
 	/**
+	 * A map of MySQL data types to implicit default values for non-strict mode.
+	 *
+	 * In MySQL, when STRICT_TRANS_TABLES and STRICT_ALL_TABLES modes are disabled,
+	 * columns get IMPLICIT DEFAULT values that are used under some circumstances.
+	 *
+	 * See:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
+	 */
+	const DATA_TYPE_IMPLICIT_DEFAULT_MAP = array(
+		// Numeric data types:
+		'bit'                => '0',
+		'bool'               => '0',
+		'boolean'            => '0',
+		'tinyint'            => '0',
+		'smallint'           => '0',
+		'mediumint'          => '0',
+		'int'                => '0',
+		'integer'            => '0',
+		'bigint'             => '0',
+		'float'              => '0',
+		'double'             => '0',
+		'real'               => '0',
+		'decimal'            => '0',
+		'dec'                => '0',
+		'fixed'              => '0',
+		'numeric'            => '0',
+
+		// String data types:
+		'char'               => '',
+		'varchar'            => '',
+		'nchar'              => '',
+		'nvarchar'           => '',
+		'tinytext'           => '',
+		'text'               => '',
+		'mediumtext'         => '',
+		'longtext'           => '',
+		'enum'               => '',     // TODO: Implement (first enum value).
+		'set'                => '',
+		'json'               => 'null', // String value 'null' (valid JSON)
+
+		// Date and time data types:
+		'date'               => '0000-00-00',
+		'time'               => '00:00:00',
+		'datetime'           => '0000-00-00 00:00:00',
+		'timestamp'          => '0000-00-00 00:00:00',
+		'year'               => '0000',
+
+		// Binary data types:
+		'binary'             => '',
+		'varbinary'          => '',
+		'tinyblob'           => '',
+		'blob'               => '',
+		'mediumblob'         => '',
+		'longblob'           => '',
+
+		// Spatial data types (no implicit defaults):
+		'geometry'           => null,
+		'point'              => null,
+		'linestring'         => null,
+		'polygon'            => null,
+		'multipoint'         => null,
+		'multilinestring'    => null,
+		'multipolygon'       => null,
+		'geomcollection'     => null,
+		'geometrycollection' => null,
+	);
+
+	/**
 	 * The SQLite engine version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
@@ -912,6 +980,14 @@ class WP_SQLite_Driver {
 			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
+			} elseif (
+				$child instanceof WP_Parser_Node &&
+				( 'insertFromConstructor' === $child->rule_name || 'insertQueryExpression' === $child->rule_name )
+			) {
+				// TODO: Use this only in non-strict mode.
+				$table_ref  = $node->get_first_child_node( 'tableRef' );
+				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+				$parts[]    = $this->translate_insert_or_replace_body_in_non_strict_mode( $table_name, $child );
 			} else {
 				$parts[] = $this->translate( $child );
 			}
@@ -2592,6 +2668,139 @@ class WP_SQLite_Driver {
 		return '';
 	}
 
+	/**
+	 * Translate INSERT body, emulating MySQL implicit defaults in non-strict mode.
+	 *
+	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
+	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
+	 *
+	 * By default, STRICT_TRANS_TABLES is enabled, which makes the InnoDB table
+	 * behavior correspond to the natural behavior of SQLite tables. However,
+	 * some applications, including WordPress, disable strict mode altogether.
+	 *
+	 * The strict SQL modes can be set per session, and can be changed at runtime.
+	 * In SQLite, we can emulate this using the knowledge of the table structure:
+	 *   1. Explicitly passed INSERT statement values are used without change.
+	 *   2. Values omitted from the INSERT statement are replaced with the column
+	 *      DEFAULT or an IMPLICIT DEFAULT value based on their data type.
+	 *
+	 * Here's a summary of the strict vs. non-strict behaviors in MySQL:
+	 *
+	 * When STRICT_TRANS_TABLES or STRICT_ALL_TABLES is enabled:
+	 *   1. NULL + NO DEFAULT:     No value saves NULL, NULL saves NULL, DEFAULT saves NULL.
+	 *   2. NULL + DEFAULT:        No value saves DEFAULT, NULL saves NULL, DEFAULT saves DEFAULT.
+	 *   3. NOT NULL + NO DEFAULT: No value is rejected, NULL is rejected, DEFAULT is rejected.
+	 *   4. NOT NULL + DEFAULT:    No value saves DEFAULT, NULL is rejected, DEFAULT saves DEFAULT.
+	 *
+	 * When STRICT_TRANS_TABLES and STRICT_ALL_TABLES are disabled:
+	 *   1. NULL + NO DEFAULT:     No value saves NULL, NULL saves NULL, DEFAULT saves NULL.
+	 *   2. NULL + DEFAULT:        No value saves DEFAULT, NULL saves NULL, DEFAULT saves DEFAULT.
+	 *   3. NOT NULL + NO DEFAULT: No value saves IMPLICIT DEFAULT.
+	 *                             NULL is rejected on INSERT, but saves IMPLICIT DEFAULT on UPDATE.
+	 *                             DEFAULT saves IMPLICIT DEFAULT.
+	 *   4. NOT NULL + DEFAULT:    No value saves DEFAULT.
+	 *                             NULL is rejected on INSERT, but saves IMPLICIT DEFAULT on UPDATE.
+	 *                             DEFAULT saves DEFAULT.
+	 *
+	 * For more information about IMPLICIT DEFAULT values in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
+	 *
+	 * @param  string         $table_name The name of the target table.
+	 * @param  WP_Parser_Node $node       The "insertQueryExpression" or "insertValues" AST node.
+	 * @return string                     The translated INSERT query body.
+	 */
+	private function translate_insert_or_replace_body_in_non_strict_mode(
+		string $table_name,
+		WP_Parser_Node $node
+	): string {
+		// 1. Get column metadata from information schema.
+		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
+		$columns       = $this->execute_sqlite_query(
+			"
+				SELECT column_name, is_nullable, column_default, data_type, extra
+				FROM $columns_table
+				WHERE table_schema = ?
+				AND table_name = ?
+				ORDER BY ordinal_position
+			",
+			array( $this->db_name, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		// 2. Get the list of fields explicitly defined in the INSERT statement.
+		$insert_list = array();
+		$fields_node = $node->get_first_child_node( 'fields' );
+		if ( $fields_node ) {
+			// This is the optional "INSERT INTO ... (field1, field2, ...)" list.
+			foreach ( $fields_node->get_child_nodes() as $field ) {
+				$insert_list[] = $this->unquote_sqlite_identifier( $this->translate( $field ) );
+			}
+		} else {
+			// When no explicit field list is provided, all columns are required.
+			foreach ( array_column( $columns, 'COLUMN_NAME' ) as $column_name ) {
+				$insert_list[] = $column_name;
+			}
+		}
+
+		// 3. Get the list of column names returned by VALUES or SELECT clause.
+		$select_list = array();
+		if ( 'insertQueryExpression' === $node->rule_name ) {
+			// When inserting from a SELECT query, we don't know the column names.
+			// Let's wrap the query with a SELECT (...) LIMIT 0 to get obtain them.
+			$expr = $node->get_first_child_node( 'queryExpressionOrParens' );
+			$stmt = $this->execute_sqlite_query(
+				'SELECT * FROM (' . $this->translate( $expr ) . ') LIMIT 1'
+			);
+			$stmt->execute();
+
+			for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
+				$select_list[] = $stmt->getColumnMeta( $i )['name'];
+			}
+		} else {
+			// When inserting from a VALUES list, SQLite uses "columnN" naming.
+			foreach ( array_keys( $insert_list ) as $position ) {
+				$select_list[] = 'column' . ( $position + 1 );
+			}
+		}
+
+		// 4. Compose a new INSERT field list with all columns from the table.
+		$fragment = '(';
+		foreach ( $columns as $i => $column ) {
+			$fragment .= $i > 0 ? ', ' : '';
+			$fragment .= $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+		}
+		$fragment .= ')';
+
+		// 5. Compose a wrapper SELECT statement emulating IMPLICIT DEFAULT values.
+		$fragment .= ' SELECT ';
+		foreach ( $columns as $i => $column ) {
+			$is_omitted = ! in_array( $column['COLUMN_NAME'], $insert_list, true );
+			$fragment  .= $i > 0 ? ', ' : '';
+			if ( $is_omitted ) {
+				// When a column value is omitted from the INSERT statement, we
+				// need to use the DEFAULT value or the IMPLICIT DEFAULT value.
+				$is_auto_inc = str_contains( $column['EXTRA'], 'auto_increment' );
+				$is_nullable = 'YES' === $column['IS_NULLABLE'];
+				$default     = $column['COLUMN_DEFAULT'];
+				if ( null === $default && ! $is_nullable && ! $is_auto_inc ) {
+					$default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
+				}
+				$fragment .= null === $default ? 'NULL' : $this->pdo->quote( $default );
+			} else {
+				// When a colum value is included, we can use it without change.
+				$position  = array_search( $column['COLUMN_NAME'], $insert_list, true );
+				$fragment .= $this->quote_sqlite_identifier( $select_list[ $position ] );
+			}
+		}
+
+		// 6. Wrap the original insert VALUES or SELECT expression in a FROM clause.
+		$values    = 'insertFromConstructor' === $node->rule_name
+			? $node->get_first_child_node( 'insertValues' )
+			: $node->get_first_child_node( 'queryExpressionOrParens' );
+		$fragment .= ' FROM (' . $this->translate( $values ) . ') WHERE true';
+
+		return $fragment;
+	}
 
 	/**
 	 * Generate a SQLite CREATE TABLE statement from information schema data.
