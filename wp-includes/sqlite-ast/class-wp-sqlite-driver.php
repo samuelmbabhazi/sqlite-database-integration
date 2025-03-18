@@ -1037,6 +1037,11 @@ class WP_SQLite_Driver {
 			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
+			} elseif ( $child instanceof WP_Parser_Node && 'updateList' === $child->rule_name ) {
+				$table_ref  = $node->get_first_child_node( 'tableReferenceList' )->get_first_child_node( 'tableReference' );
+				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+				// TODO: Use this only in non-strict mode.
+				$parts[] = $this->translate_update_list_in_non_strict_mode( $table_name, $child );
 			} else {
 				$parts[] = $this->translate( $child );
 			}
@@ -2799,6 +2804,70 @@ class WP_SQLite_Driver {
 			: $node->get_first_child_node( 'queryExpressionOrParens' );
 		$fragment .= ' FROM (' . $this->translate( $values ) . ') WHERE true';
 
+		return $fragment;
+	}
+
+	/**
+	 * Translate UPDATE list, emulating MySQL implicit defaults in non-strict mode.
+	 *
+	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
+	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
+	 *
+	 * When the strict mode is not enabled, executing an UPDATE statement that
+	 * sets a NOT NULL column value to NULL saves an IMPLICIT DEFAULT instead.
+	 *
+	 * @param  string         $table_name The name of the target table.
+	 * @param  WP_Parser_Node $node       The "updateList" AST node.
+	 * @return string                     The translated UPDATE list.
+	 */
+	private function translate_update_list_in_non_strict_mode( string $table_name, WP_Parser_Node $node ): string {
+		// 1. Get column metadata from information schema.
+		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
+		$columns       = $this->execute_sqlite_query(
+			"
+				SELECT column_name, is_nullable, data_type, column_default
+				FROM $columns_table
+				WHERE table_schema = ?
+				AND table_name = ?
+			",
+			array( $this->db_name, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$column_map    = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
+
+		// 2. Translate UPDATE list, emulating implicit defaults for NULLs values.
+		$fragment = '';
+		foreach ( $node->get_child_nodes() as $i => $update_element ) {
+			$column_ref = $update_element->get_first_child_node( 'columnRef' );
+			$expr       = $update_element->get_first_child_node( 'expr' );
+
+			// Get column info.
+			$column_name = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
+			$column_info = $column_map[ $column_name ];
+			$data_type   = $column_info['DATA_TYPE'];
+			$is_nullable = 'YES' === $column_info['IS_NULLABLE'];
+			$default     = $column_info['COLUMN_DEFAULT'];
+
+			// Get the UPDATE value. It's either an expression or a DEFAULT keyword.
+			if ( null === $expr ) {
+				// Emulate "column = DEFAULT".
+				$value = null === $default ? 'NULL' : $this->pdo->quote( $default );
+			} else {
+				$value = $this->translate( $expr );
+			}
+
+			// If the column is NOT NULL, a NULL value resolves to implicit default.
+			$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
+			if ( ! $is_nullable && null !== $implicit_default ) {
+				$value = sprintf( 'COALESCE(%s, %s)', $value, $this->pdo->quote( $implicit_default ) );
+			}
+
+			// Compose the UPDATE list item.
+			$fragment .= $i > 0 ? ', ' : '';
+			$fragment .= $this->translate( $column_ref );
+			$fragment .= ' = ';
+			$fragment .= $value;
+		}
 		return $fragment;
 	}
 

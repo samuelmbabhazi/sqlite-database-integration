@@ -4079,6 +4079,14 @@ QUERY
 		$result = $this->assertQuery( 'SELECT * FROM t2' );
 		$this->assertCount( 1, $result );
 		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on UPDATE:
+		$this->assertQuery( "CREATE TABLE t3 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
 	}
 
 	public function testNonStrictSqlModeNotNullWithoutDefault(): void {
@@ -4102,6 +4110,14 @@ QUERY
 			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t2.value',
 			$exception->getMessage()
 		);
+
+		// NULL value saves IMPLICIT DEFAULT on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NOT NULL)' );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '', $result[0]->value );
 	}
 
 	public function testNonStrictSqlModeNotNullWithDefault(): void {
@@ -4125,5 +4141,13 @@ QUERY
 			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t2.value',
 			$exception->getMessage()
 		);
+
+		// NULL value saves IMPLICIT DEFAULT on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NOT NULL DEFAULT "d")' );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '', $result[0]->value );
 	}
 }
