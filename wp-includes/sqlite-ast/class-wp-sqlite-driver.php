@@ -3085,7 +3085,7 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception      When the table information is missing.
 	 */
 	private function get_sqlite_create_table_statement(
-		bool $table_is_temporary = false,
+		bool $table_is_temporary,
 		string $table_name,
 		?string $new_table_name = null
 	): array {
