@@ -33,9 +33,6 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 
 	// Before each test, we create a new database
 	public function setUp(): void {
-		global $blog_tables;
-		$queries = explode( ';', $blog_tables );
-
 		$this->sqlite = new PDO( 'sqlite::memory:' );
 		$this->engine = new WP_SQLite_Driver(
 			array(
@@ -43,32 +40,6 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 				'database'   => 'wp',
 			)
 		);
-
-		$translator = $this->engine;
-
-		try {
-			$translator->begin_transaction();
-			foreach ( $queries as $query ) {
-				$query = trim( $query );
-				if ( empty( $query ) ) {
-					continue;
-				}
-
-				$translator->execute_sqlite_query( $query );
-			}
-			$translator->commit();
-		} catch ( PDOException $err ) {
-			$err_data =
-				$err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
-			$err_code = $err_data[1];
-			$translator->rollback();
-			$message  = sprintf(
-				'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
-				var_export( $query, true )
-			);
-			$message .= sprintf( 'Error message is: %s', $err_data[2] );
-			wp_die( $message, 'Database Error!' );
-		}
 	}
 
 	public function testCountTables() {
@@ -480,6 +451,9 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 	}
 
 	public function testTruncateTable() {
+		$this->assertQuery(
+			'CREATE TABLE wp_comments ( comment_author TEXT, comment_content TEXT )'
+		);
 
 		$this->assertQuery(
 			"INSERT INTO wp_comments ( comment_author, comment_content ) VALUES ( 'PhpUnit', 'Testing' )"
