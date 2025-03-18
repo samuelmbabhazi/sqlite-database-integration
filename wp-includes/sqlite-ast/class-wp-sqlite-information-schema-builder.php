@@ -715,6 +715,7 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_Parser_Node $node
 	): void {
 		$column_data = $this->extract_column_data( $table_name, $new_column_name, $node, 0 );
+		unset( $column_data['ordinal_position'] );
 		$this->update_values(
 			$this->get_table_name( $table_is_temporary, 'columns' ),
 			$column_data,
