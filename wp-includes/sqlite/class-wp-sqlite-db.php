@@ -71,13 +71,51 @@ class WP_SQLite_DB extends wpdb {
 	}
 
 	/**
-	 * Method to dummy out wpdb::set_sql_mode()
+	 * Changes the current SQL mode, and ensures its WordPress compatibility.
 	 *
-	 * @see wpdb::set_sql_mode()
+	 * If no modes are passed, it will ensure the current MySQL server modes are compatible.
 	 *
-	 * @param array $modes Optional. A list of SQL modes to set.
+	 * This overrides wpdb::set_sql_mode() while closely mirroring its implementation.
+	 *
+	 * @param array $modes Optional. A list of SQL modes to set. Default empty array.
 	 */
 	public function set_sql_mode( $modes = array() ) {
+		if ( ! $this->dbh instanceof WP_SQLite_Driver ) {
+			return;
+		}
+
+		if ( empty( $modes ) ) {
+			$result = $this->dbh->query( 'SELECT @@SESSION.sql_mode' );
+			if ( ! isset( $result[0] ) ) {
+				return;
+			}
+
+			$modes_str = $result[0]->{'@@SESSION.sql_mode'};
+			if ( empty( $modes_str ) ) {
+				return;
+			}
+			$modes = explode( ',', $modes_str );
+		}
+
+		$modes = array_change_key_case( $modes, CASE_UPPER );
+
+		/**
+		 * Filters the list of incompatible SQL modes to exclude.
+		 *
+		 * @since 3.9.0
+		 *
+		 * @param array $incompatible_modes An array of incompatible modes.
+		 */
+		$incompatible_modes = (array) apply_filters( 'incompatible_sql_modes', $this->incompatible_modes );
+
+		foreach ( $modes as $i => $mode ) {
+			if ( in_array( $mode, $incompatible_modes, true ) ) {
+				unset( $modes[ $i ] );
+			}
+		}
+		$modes_str = implode( ',', $modes );
+
+		$this->dbh->query( "SET SESSION sql_mode='$modes_str'" );
 	}
 
 	/**
@@ -288,6 +326,7 @@ class WP_SQLite_DB extends wpdb {
 		}
 		$GLOBALS['@pdo'] = $this->dbh->get_pdo();
 		$this->ready     = true;
+		$this->set_sql_mode();
 	}
 
 	/**
