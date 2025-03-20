@@ -396,6 +396,25 @@ class WP_SQLite_Driver {
 	private $pdo_fetch_mode;
 
 	/**
+	 * The currently active MySQL SQL modes.
+	 *
+	 * The default value reflects the default SQL modes for MySQL 8.0.
+	 *
+	 * TODO: This may be represented using a temporary table in the future,
+	 *       together with GLOBAL SQL mode (a non-temporary table).
+	 *
+	 * @var string[]
+	 */
+	private $active_sql_modes = array(
+		'ERROR_FOR_DIVISION_BY_ZERO',
+		'NO_ENGINE_SUBSTITUTION',
+		'NO_ZERO_DATE',
+		'NO_ZERO_IN_DATE',
+		'ONLY_FULL_GROUP_BY',
+		'STRICT_TRANS_TABLES',
+	);
+
+	/**
 	 * Constructor.
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
@@ -524,6 +543,16 @@ class WP_SQLite_Driver {
 	 */
 	public function get_sqlite_version(): string {
 		return $this->pdo->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
+	}
+
+	/**
+	 * Check if a specific SQL mode is active.
+	 *
+	 * @param  string $mode The SQL mode to check.
+	 * @return bool         True if the SQL mode is active, false otherwise.
+	 */
+	public function is_sql_mode_active( string $mode ): bool {
+		return in_array( strtoupper( $mode ), $this->active_sql_modes, true );
 	}
 
 	/**
@@ -850,11 +879,7 @@ class WP_SQLite_Driver {
 				$this->execute_truncate_table_statement( $node );
 				break;
 			case 'setStatement':
-				/*
-				 * It would be lovely to support at least SET autocommit,
-				 * but I don't think that is even possible with SQLite.
-				 */
-				$this->last_result = 0;
+				$this->execute_set_statement( $node );
 				break;
 			case 'showStatement':
 				$this->is_readonly = true;
@@ -975,16 +1000,22 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
+		// Check if strict mode is disabled.
+		$is_non_strict_mode = (
+			! $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
+
 		$parts = array();
 		foreach ( $node->get_children() as $child ) {
 			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
 			} elseif (
-				$child instanceof WP_Parser_Node &&
-				( 'insertFromConstructor' === $child->rule_name || 'insertQueryExpression' === $child->rule_name )
+				$is_non_strict_mode
+				&& $child instanceof WP_Parser_Node
+				&& ( 'insertFromConstructor' === $child->rule_name || 'insertQueryExpression' === $child->rule_name )
 			) {
-				// TODO: Use this only in non-strict mode.
 				$table_ref  = $node->get_first_child_node( 'tableRef' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 				$parts[]    = $this->translate_insert_or_replace_body_in_non_strict_mode( $table_name, $child );
@@ -1031,17 +1062,26 @@ class WP_SQLite_Driver {
 			);
 		}
 
+		// Check if strict mode is disabled.
+		$is_non_strict_mode = (
+			! $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
+
 		// Iterate and translate the update statement children.
 		$parts = array();
 		foreach ( $node->get_children() as $child ) {
 			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
-			} elseif ( $child instanceof WP_Parser_Node && 'updateList' === $child->rule_name ) {
+			} elseif (
+				$is_non_strict_mode
+				&& $child instanceof WP_Parser_Node
+				&& 'updateList' === $child->rule_name
+			) {
 				$table_ref  = $node->get_first_child_node( 'tableReferenceList' )->get_first_child_node( 'tableReference' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
-				// TODO: Use this only in non-strict mode.
-				$parts[] = $this->translate_update_list_in_non_strict_mode( $table_name, $child );
+				$parts[]    = $this->translate_update_list_in_non_strict_mode( $table_name, $child );
 			} else {
 				$parts[] = $this->translate( $child );
 			}
@@ -1748,6 +1788,137 @@ class WP_SQLite_Driver {
 				)
 			);
 		}
+	}
+
+	/**
+	 * Translate and execute a MySQL SET statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "setStatement" AST node.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_set_statement( WP_Parser_Node $node ): void {
+		/*
+		 * 1. Flatten the SET statement into a single array of definitions.
+		 *
+		 * The grammar is non-trivial, and supports multi-statements like:
+		 *   SET @var = '...', SESSION sql_mode = '...', @@GLOBAL.time_zone = '...', @@debug = '...', ...
+		 *
+		 * This will be flattened into a single array of grammar node lists:
+		 *   [
+		 *     [ <userVariable>, <equal>, <expr> ],
+		 *     [ <optionType>, <internalVariableName>, <equal>, <setExprOrDefault> ],
+		 *     [ <setSystemVariable>, <equal>, <setExprOrDefault> ],
+		 *     [ <setSystemVariable>, <equal>, <setExprOrDefault> ],
+		 *   ]
+		 */
+		$subnode = $node->get_first_child_node();
+		if ( $subnode->has_child_node( 'optionValueNoOptionType' ) ) {
+			$start_node  = $subnode->get_first_child_node( 'optionValueNoOptionType' );
+			$definitions = array( $start_node->get_children() );
+		} elseif ( $subnode->has_child_node( 'startOptionValueListFollowingOptionType' ) ) {
+			$start_node  = $subnode
+				->get_first_child_node( 'startOptionValueListFollowingOptionType' )
+				->get_first_child_node( 'optionValueFollowingOptionType' ) ?? $node;
+			$definitions = array(
+				array_merge(
+					array( $subnode->get_first_child_node( 'optionType' ) ),
+					$start_node->get_children()
+				),
+			);
+		} else {
+			$definitions = array( $subnode->get_children() );
+		}
+
+		$continue_node = $subnode->get_first_child_node( 'optionValueListContinued' );
+		if ( $continue_node ) {
+			foreach ( $continue_node->get_child_nodes( 'optionValue' ) as $child ) {
+				$node          = $child->get_first_child_node( 'optionValueNoOptionType' ) ?? $child;
+				$definitions[] = $node->get_child_nodes();
+			}
+		}
+
+		/*
+		 * 2. Iterate and process the SET definitions.
+		 *
+		 * When an "optionType" node is encountered (such as "SESSION var = ..."),
+		 * it's value is used for all following system variable assignments that
+		 * have no type keyword specified, until the next "optionType" is found.
+		 *
+		 * This doesn't apply to "@@" type prefixes (such as "@@SESSION.var_name"),
+		 * which always impact only the immediately following system variable.
+		 */
+		$default_type = WP_MySQL_Lexer::SESSION_SYMBOL;
+		foreach ( $definitions as $definition ) {
+			// Check if the definition starts with an "optionType" node with
+			// one of the SESSION, GLOBAL, PERSIST, or PERSIST_ONLY tokens.
+			$part = array_shift( $definition );
+			if ( $part instanceof WP_Parser_Node && 'optionType' === $part->rule_name ) {
+				$default_type = $part->get_first_child_token()->id;
+				$part         = array_shift( $definition );
+			}
+
+			if (
+				$part instanceof WP_Parser_Node
+				&& (
+					'internalVariableName' === $part->rule_name
+					|| 'setSystemVariable' === $part->rule_name
+				)
+			) {
+				array_shift( $definition ); // Remove the '='.
+				$value = array_shift( $definition );
+				$this->execute_set_system_variable_statement( $part, $value, $default_type );
+			}
+		}
+
+		// TODO: Support user variables (in-memory or a temporary table).
+		$this->last_result = 0;
+	}
+
+	/**
+	 * Translate and execute a MySQL SET statement for system variables.
+	 *
+	 * @param  WP_Parser_Node $set_var_node  The "internalVariableName" or "setSystemVariable" AST node.
+	 * @param  WP_Parser_Node $value_node    The "setExprOrDefault" AST node.
+	 * @param  int            $default_type  The currently active default variable type.
+	 *                                       One of the SESSION, GLOBAL, PERSIST, PERSIST_ONLY tokens.
+	 * @throws WP_SQLite_Driver_Exception    When the query execution fails.
+	 */
+	private function execute_set_system_variable_statement(
+		WP_Parser_Node $set_var_node,
+		WP_Parser_Node $value_node,
+		int $default_type
+	): void {
+		// Get the variable name.
+		$internal_variable_name = 'setSystemVariable' === $set_var_node->rule_name
+			? $set_var_node->get_first_child_node( 'internalVariableName' )
+			: $set_var_node;
+
+		$name = strtolower(
+			$this->unquote_sqlite_identifier(
+				$this->translate( $internal_variable_name )
+			)
+		);
+
+		// Get the type attribute (one of SESSION, GLOBAL, PERSIST, PERSIST_ONLY).
+		$type = $default_type;
+		if ( $set_var_node->has_child_node( 'setVarIdentType' ) ) {
+			$var_ident_type = $set_var_node->get_first_child_node( 'setVarIdentType' );
+			$type           = $var_ident_type->get_first_child_token()->id;
+		}
+
+		// Get the variable value.
+		$value = $this->translate( $value_node );
+		$value = str_replace( "''", "'", $value );
+		$value = substr( $value, 1, -1 );
+
+		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
+			if ( 'sql_mode' === $name ) {
+				$modes                  = explode( ',', strtoupper( $value ) );
+				$this->active_sql_modes = $modes;
+			}
+		}
+
+		// TODO: Handle GLOBAL, PERSIST, and PERSIST_ONLY types.
 	}
 
 	/**
