@@ -2094,9 +2094,9 @@ class WP_SQLite_Driver {
 					throw $this->new_invalid_input_exception();
 				}
 
-				$type = self::DATA_TYPE_MAP[ $child->id ] ?? null;
-				if ( null !== $type ) {
-					return $type;
+				$type_token = self::DATA_TYPE_MAP[ $child->id ] ?? null;
+				if ( null !== $type_token ) {
+					return $type_token;
 				}
 
 				// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
@@ -2136,12 +2136,37 @@ class WP_SQLite_Driver {
 			case 'functionCall':
 				return $this->translate_function_call( $node );
 			case 'systemVariable':
-				// @TODO: Emulate some system variables, or use reasonable defaults.
+				$var_ident_type = $node->get_first_child_node( 'varIdentType' );
+				$type_token     = $var_ident_type ? $var_ident_type->get_first_child_token() : null;
+				$original_name  = $this->unquote_sqlite_identifier(
+					$this->translate( $node->get_first_child_node( 'textOrIdentifier' ) )
+				);
+
+				$name = strtolower( $original_name );
+				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
+				if ( 'sql_mode' === $name ) {
+					$value = $this->pdo->quote( implode( ',', $this->active_sql_modes ) );
+				} else {
+					// When we have no value, it's reasonable to use NULL.
+					$value = 'NULL';
+				}
+
+				// @TODO: Emulate more system variables, or use reasonable defaults.
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variable-reference.html
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html
 
-				// When we have no value, it's reasonable to use NULL.
-				return 'NULL';
+				// TODO: Original name should come from the original MySQL input,
+				//       exactly as it was written by the user, and not translated.
+
+				// TODO: The '% AS %' syntax is compatible with SELECT lists only.
+				//       We need to translate it differently when used as a value.
+				return sprintf(
+					'%s AS %s',
+					$value,
+					$this->quote_sqlite_identifier(
+						'@@' . ( $type_token ? "$type_token->value." : '' ) . $original_name
+					)
+				);
 			case 'castType':
 				// Translate "CAST(... AS BINARY)" to "CAST(... AS BLOB)".
 				if ( $node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {

@@ -4297,4 +4297,31 @@ QUERY
 		$this->assertCount( 1, $result );
 		$this->assertSame( '', $result[0]->value );
 	}
+
+	public function testSessionSqlModes(): void {
+		// Syntax: "sql_mode" ("@@sql_mode" for SELECT)
+		$this->assertQuery( 'SET sql_mode = "ERROR_FOR_DIVISION_BY_ZERO"' );
+		$result = $this->assertQuery( 'SELECT @@sql_mode' );
+		$this->assertSame( 'ERROR_FOR_DIVISION_BY_ZERO', $result[0]->{'@@sql_mode'} );
+
+		// Syntax: "@@sql_mode"
+		$this->assertQuery( 'SET @@sql_mode = "NO_ENGINE_SUBSTITUTION"' );
+		$result = $this->assertQuery( 'SELECT @@sql_mode' );
+		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $result[0]->{'@@sql_mode'} );
+
+		// Syntax: "SESSION sql_mode" ("@@sql_mode" for SELECT)
+		$this->assertQuery( 'SET SESSION sql_mode = "NO_ZERO_DATE"' );
+		$result = $this->assertQuery( 'SELECT @@sql_mode' );
+		$this->assertSame( 'NO_ZERO_DATE', $result[0]->{'@@sql_mode'} );
+
+		// Syntax: "@@SESSION.sql_mode"
+		$this->assertQuery( 'SET @@SESSION.sql_mode = "NO_ZERO_IN_DATE"' );
+		$result = $this->assertQuery( 'SELECT @@SESSION.sql_mode' );
+		$this->assertSame( 'NO_ZERO_IN_DATE', $result[0]->{'@@SESSION.sql_mode'} );
+
+		// Mixed case
+		$this->assertQuery( 'SET @@session.SQL_mode = "only_full_group_by"' );
+		$result = $this->assertQuery( 'SELECT @@session.SQL_mode' );
+		$this->assertSame( 'ONLY_FULL_GROUP_BY', $result[0]->{'@@session.SQL_mode'} );
+	}
 }
