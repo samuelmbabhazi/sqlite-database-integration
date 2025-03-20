@@ -11,19 +11,12 @@ const fs = require( 'fs' );
 const path = require( 'path' );
 
 const expectedErrors = [
-	'Tests_Comment_WpComment::test_get_instance_should_succeed_for_float_that_is_equal_to_post_id',
-	'Tests_Cron_getCronArray::test_get_cron_array_output_validation with data set &quot;null&quot;',
 	'Tests_DB_Charset::test_strip_invalid_text',
 	'Tests_DB::test_db_reconnect',
 	'Tests_DB::test_get_col_info',
 	'Tests_DB::test_process_fields_value_too_long_for_field with data set &quot;invalid chars&quot;',
 	'Tests_DB::test_process_fields_value_too_long_for_field with data set &quot;too long&quot;',
 	'Tests_DB::test_process_fields',
-	'Tests_DB::test_set_allowed_incompatible_sql_mode',
-	'Tests_DB::test_set_incompatible_sql_mode',
-	'Tests_DB::test_set_sql_mode',
-	'Tests_Post_wpPost::test_get_instance_should_succeed_for_float_that_is_equal_to_post_id',
-	'Tests_Post::test_stick_post_with_unexpected_sticky_posts_option with data set &quot;null&quot;',
 ];
 
 const expectedFailures = [
