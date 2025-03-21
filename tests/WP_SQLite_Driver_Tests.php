@@ -4298,6 +4298,137 @@ QUERY
 		$this->assertSame( '', $result[0]->value );
 	}
 
+	public function testNonStrictSqlModeWithNoListedColumns(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// From VALUES() statement:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'A', 10, 'red')" );
+		$this->assertQuery( "INSERT INTO t1 VALUES (2, 'B', NULL, NULL)" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 2, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertNull( $result[1]->size );
+		$this->assertNull( $result[1]->color );
+
+		// From SELECT statement:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT NOT NULL, size INT DEFAULT 999, color TEXT)' );
+		$this->assertQuery( 'INSERT INTO t2 SELECT * FROM t1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 2, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertNull( $result[1]->size );
+		$this->assertNull( $result[1]->color );
+	}
+
+	public function testNonStrictSqlModeWithReorderedColumns(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// From VALUES() statement:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "INSERT INTO t1 (name, color, id, size) VALUES ('A', 'red', 1, 10)" );
+		$this->assertQuery( "INSERT INTO t1 (name, id) VALUES ('B', 2)" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 2, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertSame( '123', $result[1]->size );
+		$this->assertNull( $result[1]->color );
+
+		// From SELECT statement:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT NOT NULL, size INT DEFAULT 999, color TEXT)' );
+		$this->assertQuery( 'INSERT INTO t2 (name, color, id, size) SELECT name, color, id, size FROM t1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 2, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertSame( '123', $result[1]->size );
+		$this->assertNull( $result[1]->color );
+	}
+
+	public function testNonStrictModeWithTemporaryTable(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// Create a non-temporary table with the same name, but different columns.
+		// This should not be touched at all as temporary tables are prioritized.
+		$this->assertQuery( 'CREATE TABLE t1 (value TEXT)' );
+
+		// From VALUES() statement:
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t1 (id INT, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'A', 10, 'red')" );
+		$this->assertQuery( "INSERT INTO t1 (name, color, id, size) VALUES ('B', 'blue', 2, 20)" );
+		$this->assertQuery( "INSERT INTO t1 (name, id) VALUES ('C', 3)" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 3, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertSame( '20', $result[1]->size );
+		$this->assertSame( 'blue', $result[1]->color );
+		$this->assertSame( '3', $result[2]->id );
+		$this->assertSame( 'C', $result[2]->name );
+		$this->assertSame( '123', $result[2]->size );
+		$this->assertNull( $result[2]->color );
+
+		// From SELECT statement:
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t2 (id INT, name TEXT NOT NULL, size INT DEFAULT 999, color TEXT)' );
+		$this->assertQuery( 'INSERT INTO t2 (name, color, id, size) SELECT name, color, id, size FROM t1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 3, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertSame( '20', $result[1]->size );
+		$this->assertSame( 'blue', $result[1]->color );
+		$this->assertSame( '3', $result[2]->id );
+		$this->assertSame( 'C', $result[2]->name );
+		$this->assertSame( '123', $result[2]->size );
+		$this->assertNull( $result[2]->color );
+	}
+
+	public function testNonStrictModeWithOnDuplicateKeyUpdate(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'A', 10, 'red')" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'B', 20, 'blue') ON DUPLICATE KEY UPDATE name = 'B'" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'B', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+	}
+
 	public function testSessionSqlModes(): void {
 		// Syntax: "sql_mode" ("@@sql_mode" for SELECT)
 		$this->assertQuery( 'SET sql_mode = "ERROR_FOR_DIVISION_BY_ZERO"' );
