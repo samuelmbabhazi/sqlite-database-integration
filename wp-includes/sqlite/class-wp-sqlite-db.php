@@ -31,12 +31,14 @@ class WP_SQLite_DB extends wpdb {
 	private $allow_unsafe_unquoted_parameters = true;
 
 	/**
-	 * Constructor
+	 * Connects to the SQLite database.
 	 *
-	 * Unlike wpdb, no credentials are needed.
+	 * Unlike for MySQL, no credentials and host are needed.
+	 *
+	 * @param string $dbname Database name.
 	 */
-	public function __construct() {
-		parent::__construct( '', '', '', '' );
+	public function __construct( $dbname ) {
+		parent::__construct( '', '', $dbname, '' );
 		$this->charset = 'utf8mb4';
 	}
 

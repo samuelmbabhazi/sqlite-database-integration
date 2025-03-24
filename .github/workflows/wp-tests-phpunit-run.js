@@ -11,12 +11,6 @@ const fs = require( 'fs' );
 const path = require( 'path' );
 
 const expectedErrors = [
-	'Tests_Admin_wpSiteHealth::test_object_cache_default_thresholds_non_multisite',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #0',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #1',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #2',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #3',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #4',
 	'Tests_Comment_WpComment::test_get_instance_should_succeed_for_float_that_is_equal_to_post_id',
 	'Tests_Cron_getCronArray::test_get_cron_array_output_validation with data set &quot;null&quot;',
 	'Tests_DB_Charset::test_strip_invalid_text',
@@ -33,6 +27,8 @@ const expectedErrors = [
 ];
 
 const expectedFailures = [
+	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #2',
+	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #3',
 	'Tests_Comment::test_wp_new_comment_respects_comment_field_lengths',
 	'Tests_Comment::test_wp_update_comment',
 	'Tests_DB_dbDelta::test_spatial_indices',
