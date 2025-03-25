@@ -21,12 +21,24 @@ class WP_SQLite_DB extends wpdb {
 	protected $dbh;
 
 	/**
-	 * Constructor
+	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
 	 *
-	 * Unlike wpdb, no credentials are needed.
+	 * This property is mirroring "wpdb::$allow_unsafe_unquoted_parameters",
+	 * because some tests are accessing it externally using PHP reflection.
+	 *
+	 * @var
 	 */
-	public function __construct() {
-		parent::__construct( '', '', '', '' );
+	private $allow_unsafe_unquoted_parameters = true;
+
+	/**
+	 * Connects to the SQLite database.
+	 *
+	 * Unlike for MySQL, no credentials and host are needed.
+	 *
+	 * @param string $dbname Database name.
+	 */
+	public function __construct( $dbname ) {
+		parent::__construct( '', '', $dbname, '' );
 		$this->charset = 'utf8mb4';
 	}
 
@@ -287,6 +299,33 @@ class WP_SQLite_DB extends wpdb {
 	 */
 	public function check_connection( $allow_bail = true ) {
 		return true;
+	}
+
+	/**
+	 * Prepares a SQL query for safe execution.
+	 *
+	 * See "wpdb::prepare()". This override only fixes a WPDB test issue.
+	 *
+	 * @param string      $query   Query statement with `sprintf()`-like placeholders.
+	 * @param array|mixed $args    The array of variables or the first variable to substitute.
+	 * @param mixed       ...$args Further variables to substitute when using individual arguments.
+	 * @return string|void         Sanitized query string, if there is a query to prepare.
+	 */
+	public function prepare( $query, ...$args ) {
+		/*
+		 * Sync "$allow_unsafe_unquoted_parameters" with the WPDB parent property.
+		 * This is only needed because some WPDB tests are accessing the private
+		 * property externally via PHP reflection. This should be fixed WP tests.
+		 */
+		$wpdb_allow_unsafe_unquoted_parameters = $this->__get( 'allow_unsafe_unquoted_parameters' );
+		if ( $wpdb_allow_unsafe_unquoted_parameters !== $this->allow_unsafe_unquoted_parameters ) {
+			$property = new ReflectionProperty( 'wpdb', 'allow_unsafe_unquoted_parameters' );
+			$property->setAccessible( true );
+			$property->setValue( $this, $this->allow_unsafe_unquoted_parameters );
+			$property->setAccessible( false );
+		}
+
+		return parent::prepare( $query, ...$args );
 	}
 
 	/**

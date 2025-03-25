@@ -11,29 +11,11 @@ const fs = require( 'fs' );
 const path = require( 'path' );
 
 const expectedErrors = [
-	'Tests_Admin_wpSiteHealth::test_object_cache_default_thresholds_non_multisite',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #0',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #1',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #2',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #3',
-	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #4',
 	'Tests_Comment_WpComment::test_get_instance_should_succeed_for_float_that_is_equal_to_post_id',
 	'Tests_Cron_getCronArray::test_get_cron_array_output_validation with data set &quot;null&quot;',
 	'Tests_DB_Charset::test_strip_invalid_text',
 	'Tests_DB::test_db_reconnect',
 	'Tests_DB::test_get_col_info',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;escaped-false-1&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;escaped-false-2&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;escaped-true-1&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;escaped-true-2&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;format-false-1&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;format-false-2&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;format-true-1&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;format-true-2&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;numbered-false-1&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;numbered-false-2&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;numbered-true-1&quot;',
-	'Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property with data set &quot;numbered-true-2&quot;',
 	'Tests_DB::test_process_fields_value_too_long_for_field with data set &quot;invalid chars&quot;',
 	'Tests_DB::test_process_fields_value_too_long_for_field with data set &quot;too long&quot;',
 	'Tests_DB::test_process_fields',
@@ -45,6 +27,8 @@ const expectedErrors = [
 ];
 
 const expectedFailures = [
+	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #2',
+	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #3',
 	'Tests_Comment::test_wp_new_comment_respects_comment_field_lengths',
 	'Tests_Comment::test_wp_update_comment',
 	'Tests_DB_dbDelta::test_spatial_indices',
