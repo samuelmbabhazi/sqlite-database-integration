@@ -4429,6 +4429,32 @@ QUERY
 		$this->assertSame( 'red', $result[0]->color );
 	}
 
+	public function testNonStrictModeWithReplaceStatement(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// From VALUES() statement:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "REPLACE INTO t1 VALUES (1, 'A', 10, 'red')" );
+		$this->assertQuery( "REPLACE INTO t1 (color, id) VALUES ('blue', 1)" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( '', $result[0]->name ); // implicit default
+		$this->assertSame( '123', $result[0]->size );
+		$this->assertSame( 'blue', $result[0]->color );
+
+		// From SELECT statement:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT PRIMARY KEY, name TEXT NOT NULL, size INT DEFAULT 999, color TEXT)' );
+		$this->assertQuery( "REPLACE INTO t2 VALUES (1, 'A', 10, 'red')" );
+		$this->assertQuery( 'REPLACE INTO t2 (color, id, size) SELECT color, id, size FROM t1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( '', $result[0]->name ); // implicit default
+		$this->assertSame( '123', $result[0]->size );
+		$this->assertSame( 'blue', $result[0]->color );
+	}
+
 	public function testSessionSqlModes(): void {
 		// Syntax: "sql_mode" ("@@sql_mode" for SELECT)
 		$this->assertQuery( 'SET sql_mode = "ERROR_FOR_DIVISION_BY_ZERO"' );
