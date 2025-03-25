@@ -1220,17 +1220,17 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testSystemVariables(): void {
 		$this->assertQuery(
-			'SELECT NULL',
+			"SELECT 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES' AS `@@sql_mode`",
 			'SELECT @@sql_mode'
 		);
 
 		$this->assertQuery(
-			'SELECT NULL',
+			"SELECT 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES' AS `@@SESSION.sql_mode`",
 			'SELECT @@SESSION.sql_mode'
 		);
 
 		$this->assertQuery(
-			'SELECT NULL',
+			"SELECT 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES' AS `@@GLOBAL.sql_mode`",
 			'SELECT @@GLOBAL.sql_mode'
 		);
 	}

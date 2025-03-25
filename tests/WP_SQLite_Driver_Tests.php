@@ -4040,4 +4040,452 @@ QUERY
 		$this->assertQuery( 'DROP TABLE t' );
 		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
 	}
+
+	public function testStrictSqlModeNullWithoutDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = 'STRICT_ALL_TABLES'" );
+
+		// No value saves NULL:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, value TEXT NULL)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on INSERT:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, value TEXT NULL)' );
+		$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NULL)' );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+	}
+
+	public function testStrictSqlModeNullWithDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = 'STRICT_ALL_TABLES'" );
+
+		// No value saves DEFAULT:
+		$this->assertQuery( "CREATE TABLE t1 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'd', $result[0]->value );
+
+		// NULL value saves NULL on INSERT:
+		$this->assertQuery( "CREATE TABLE t2 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on UPDATE:
+		$this->assertQuery( "CREATE TABLE t3 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+	}
+
+	public function testStrictSqlModeNotNullWithoutDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = 'STRICT_ALL_TABLES'" );
+
+		// No value is rejected:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, value TEXT NOT NULL)' );
+		$exception = null;
+		try {
+			$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t1.value',
+			$exception->getMessage()
+		);
+
+		// NULL value is rejected on INSERT.
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, value TEXT NOT NULL)' );
+		$exception = null;
+		try {
+			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t2.value',
+			$exception->getMessage()
+		);
+
+		// NULL value is rejected on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NOT NULL)' );
+		$exception = null;
+		try {
+			$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+			$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t3.value',
+			$exception->getMessage()
+		);
+	}
+
+	public function testStrictSqlModeNotNullWithDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = 'STRICT_ALL_TABLES'" );
+
+		// No value saves DEFAULT:
+		$this->assertQuery( "CREATE TABLE t1 (id INT, value TEXT NOT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'd', $result[0]->value );
+
+		// NULL value is rejected on INSERT.
+		$this->assertQuery( "CREATE TABLE t2 (id INT, value TEXT NOT NULL DEFAULT 'd')" );
+		$exception = null;
+		try {
+			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t2.value',
+			$exception->getMessage()
+		);
+
+		// NULL value is rejected on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NOT NULL DEFAULT "d")' );
+		$exception = null;
+		try {
+			$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+			$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t3.value',
+			$exception->getMessage()
+		);
+	}
+
+	public function testNonStrictSqlModeNullWithoutDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// No value saves NULL:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, value TEXT NULL)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on INSERT:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, value TEXT NULL)' );
+		$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NULL)' );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+	}
+
+	public function testNonStrictSqlModeNullWithDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// No value saves DEFAULT:
+		$this->assertQuery( "CREATE TABLE t1 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'd', $result[0]->value );
+
+		// NULL value saves NULL on INSERT:
+		$this->assertQuery( "CREATE TABLE t2 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+
+		// NULL value saves NULL on UPDATE:
+		$this->assertQuery( "CREATE TABLE t3 (id INT, value TEXT NULL DEFAULT 'd')" );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+	}
+
+	public function testNonStrictSqlModeNotNullWithoutDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// No value saves IMPLICIT DEFAULT:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, value TEXT NOT NULL)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '', $result[0]->value );
+
+		// NULL value is rejected on INSERT.
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, value TEXT NOT NULL)' );
+		$exception = null;
+		try {
+			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t2.value',
+			$exception->getMessage()
+		);
+
+		// NULL value saves IMPLICIT DEFAULT on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NOT NULL)' );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '', $result[0]->value );
+	}
+
+	public function testNonStrictSqlModeNotNullWithDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// No value saves DEFAULT:
+		$this->assertQuery( "CREATE TABLE t1 (id INT, value TEXT NOT NULL DEFAULT 'd')" );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'd', $result[0]->value );
+
+		// NULL value is rejected on INSERT.
+		$this->assertQuery( "CREATE TABLE t2 (id INT, value TEXT NOT NULL DEFAULT 'd')" );
+		$exception = null;
+		try {
+			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t2.value',
+			$exception->getMessage()
+		);
+
+		// NULL value saves IMPLICIT DEFAULT on UPDATE:
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, value TEXT NOT NULL DEFAULT "d")' );
+		$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t3' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '', $result[0]->value );
+	}
+
+	public function testNonStrictSqlModeWithNoListedColumns(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// From VALUES() statement:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'A', 10, 'red')" );
+		$this->assertQuery( "INSERT INTO t1 VALUES (2, 'B', NULL, NULL)" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 2, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertNull( $result[1]->size );
+		$this->assertNull( $result[1]->color );
+
+		// From SELECT statement:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT NOT NULL, size INT DEFAULT 999, color TEXT)' );
+		$this->assertQuery( 'INSERT INTO t2 SELECT * FROM t1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 2, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertNull( $result[1]->size );
+		$this->assertNull( $result[1]->color );
+	}
+
+	public function testNonStrictSqlModeWithReorderedColumns(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// From VALUES() statement:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "INSERT INTO t1 (name, color, id, size) VALUES ('A', 'red', 1, 10)" );
+		$this->assertQuery( "INSERT INTO t1 (name, id) VALUES ('B', 2)" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 2, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertSame( '123', $result[1]->size );
+		$this->assertNull( $result[1]->color );
+
+		// From SELECT statement:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT NOT NULL, size INT DEFAULT 999, color TEXT)' );
+		$this->assertQuery( 'INSERT INTO t2 (name, color, id, size) SELECT name, color, id, size FROM t1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 2, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertSame( '123', $result[1]->size );
+		$this->assertNull( $result[1]->color );
+	}
+
+	public function testNonStrictModeWithTemporaryTable(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// Create a non-temporary table with the same name, but different columns.
+		// This should not be touched at all as temporary tables are prioritized.
+		$this->assertQuery( 'CREATE TABLE t1 (value TEXT)' );
+
+		// From VALUES() statement:
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t1 (id INT, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'A', 10, 'red')" );
+		$this->assertQuery( "INSERT INTO t1 (name, color, id, size) VALUES ('B', 'blue', 2, 20)" );
+		$this->assertQuery( "INSERT INTO t1 (name, id) VALUES ('C', 3)" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 3, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertSame( '20', $result[1]->size );
+		$this->assertSame( 'blue', $result[1]->color );
+		$this->assertSame( '3', $result[2]->id );
+		$this->assertSame( 'C', $result[2]->name );
+		$this->assertSame( '123', $result[2]->size );
+		$this->assertNull( $result[2]->color );
+
+		// From SELECT statement:
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t2 (id INT, name TEXT NOT NULL, size INT DEFAULT 999, color TEXT)' );
+		$this->assertQuery( 'INSERT INTO t2 (name, color, id, size) SELECT name, color, id, size FROM t1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 3, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+		$this->assertSame( '2', $result[1]->id );
+		$this->assertSame( 'B', $result[1]->name );
+		$this->assertSame( '20', $result[1]->size );
+		$this->assertSame( 'blue', $result[1]->color );
+		$this->assertSame( '3', $result[2]->id );
+		$this->assertSame( 'C', $result[2]->name );
+		$this->assertSame( '123', $result[2]->size );
+		$this->assertNull( $result[2]->color );
+	}
+
+	public function testNonStrictModeWithOnDuplicateKeyUpdate(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// Create table and insert a row:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'A', 10, 'red')" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'A', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+
+		// Ensure ON DUPLICATE KEY UPDATE works:
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'B', 20, 'blue') ON DUPLICATE KEY UPDATE name = 'B'" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'B', $result[0]->name );
+		$this->assertSame( '10', $result[0]->size );
+		$this->assertSame( 'red', $result[0]->color );
+
+		// In MySQL, ON DUPLICATE KEY UPDATE ignores non-strict mode UPDATE behavior:
+		$this->expectException( PDOException::class );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t1.name' );
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'C', 30, 'green') ON DUPLICATE KEY UPDATE name = NULL" );
+	}
+
+	public function testNonStrictModeWithReplaceStatement(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// From VALUES() statement:
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
+		$this->assertQuery( "REPLACE INTO t1 VALUES (1, 'A', 10, 'red')" );
+		$this->assertQuery( "REPLACE INTO t1 (color, id) VALUES ('blue', 1)" );
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( '', $result[0]->name ); // implicit default
+		$this->assertSame( '123', $result[0]->size );
+		$this->assertSame( 'blue', $result[0]->color );
+
+		// From SELECT statement:
+		$this->assertQuery( 'CREATE TABLE t2 (id INT PRIMARY KEY, name TEXT NOT NULL, size INT DEFAULT 999, color TEXT)' );
+		$this->assertQuery( "REPLACE INTO t2 VALUES (1, 'A', 10, 'red')" );
+		$this->assertQuery( 'REPLACE INTO t2 (color, id, size) SELECT color, id, size FROM t1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->id );
+		$this->assertSame( '', $result[0]->name ); // implicit default
+		$this->assertSame( '123', $result[0]->size );
+		$this->assertSame( 'blue', $result[0]->color );
+	}
+
+	public function testSessionSqlModes(): void {
+		// Syntax: "sql_mode" ("@@sql_mode" for SELECT)
+		$this->assertQuery( 'SET sql_mode = "ERROR_FOR_DIVISION_BY_ZERO"' );
+		$result = $this->assertQuery( 'SELECT @@sql_mode' );
+		$this->assertSame( 'ERROR_FOR_DIVISION_BY_ZERO', $result[0]->{'@@sql_mode'} );
+
+		// Syntax: "@@sql_mode"
+		$this->assertQuery( 'SET @@sql_mode = "NO_ENGINE_SUBSTITUTION"' );
+		$result = $this->assertQuery( 'SELECT @@sql_mode' );
+		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $result[0]->{'@@sql_mode'} );
+
+		// Syntax: "SESSION sql_mode" ("@@sql_mode" for SELECT)
+		$this->assertQuery( 'SET SESSION sql_mode = "NO_ZERO_DATE"' );
+		$result = $this->assertQuery( 'SELECT @@sql_mode' );
+		$this->assertSame( 'NO_ZERO_DATE', $result[0]->{'@@sql_mode'} );
+
+		// Syntax: "@@SESSION.sql_mode"
+		$this->assertQuery( 'SET @@SESSION.sql_mode = "NO_ZERO_IN_DATE"' );
+		$result = $this->assertQuery( 'SELECT @@SESSION.sql_mode' );
+		$this->assertSame( 'NO_ZERO_IN_DATE', $result[0]->{'@@SESSION.sql_mode'} );
+
+		// Mixed case
+		$this->assertQuery( 'SET @@session.SQL_mode = "only_full_group_by"' );
+		$result = $this->assertQuery( 'SELECT @@session.SQL_mode' );
+		$this->assertSame( 'ONLY_FULL_GROUP_BY', $result[0]->{'@@session.SQL_mode'} );
+	}
 }

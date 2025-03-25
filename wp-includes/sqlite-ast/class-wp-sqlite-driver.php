@@ -216,6 +216,74 @@ class WP_SQLite_Driver {
 	);
 
 	/**
+	 * A map of MySQL data types to implicit default values for non-strict mode.
+	 *
+	 * In MySQL, when STRICT_TRANS_TABLES and STRICT_ALL_TABLES modes are disabled,
+	 * columns get IMPLICIT DEFAULT values that are used under some circumstances.
+	 *
+	 * See:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
+	 */
+	const DATA_TYPE_IMPLICIT_DEFAULT_MAP = array(
+		// Numeric data types:
+		'bit'                => '0',
+		'bool'               => '0',
+		'boolean'            => '0',
+		'tinyint'            => '0',
+		'smallint'           => '0',
+		'mediumint'          => '0',
+		'int'                => '0',
+		'integer'            => '0',
+		'bigint'             => '0',
+		'float'              => '0',
+		'double'             => '0',
+		'real'               => '0',
+		'decimal'            => '0',
+		'dec'                => '0',
+		'fixed'              => '0',
+		'numeric'            => '0',
+
+		// String data types:
+		'char'               => '',
+		'varchar'            => '',
+		'nchar'              => '',
+		'nvarchar'           => '',
+		'tinytext'           => '',
+		'text'               => '',
+		'mediumtext'         => '',
+		'longtext'           => '',
+		'enum'               => '',     // TODO: Implement (first enum value).
+		'set'                => '',
+		'json'               => 'null', // String value 'null' (valid JSON)
+
+		// Date and time data types:
+		'date'               => '0000-00-00',
+		'time'               => '00:00:00',
+		'datetime'           => '0000-00-00 00:00:00',
+		'timestamp'          => '0000-00-00 00:00:00',
+		'year'               => '0000',
+
+		// Binary data types:
+		'binary'             => '',
+		'varbinary'          => '',
+		'tinyblob'           => '',
+		'blob'               => '',
+		'mediumblob'         => '',
+		'longblob'           => '',
+
+		// Spatial data types (no implicit defaults):
+		'geometry'           => null,
+		'point'              => null,
+		'linestring'         => null,
+		'polygon'            => null,
+		'multipoint'         => null,
+		'multilinestring'    => null,
+		'multipolygon'       => null,
+		'geomcollection'     => null,
+		'geometrycollection' => null,
+	);
+
+	/**
 	 * The SQLite engine version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
@@ -326,6 +394,25 @@ class WP_SQLite_Driver {
 	 * @var mixed
 	 */
 	private $pdo_fetch_mode;
+
+	/**
+	 * The currently active MySQL SQL modes.
+	 *
+	 * The default value reflects the default SQL modes for MySQL 8.0.
+	 *
+	 * TODO: This may be represented using a temporary table in the future,
+	 *       together with GLOBAL SQL mode (a non-temporary table).
+	 *
+	 * @var string[]
+	 */
+	private $active_sql_modes = array(
+		'ERROR_FOR_DIVISION_BY_ZERO',
+		'NO_ENGINE_SUBSTITUTION',
+		'NO_ZERO_DATE',
+		'NO_ZERO_IN_DATE',
+		'ONLY_FULL_GROUP_BY',
+		'STRICT_TRANS_TABLES',
+	);
 
 	/**
 	 * Constructor.
@@ -456,6 +543,16 @@ class WP_SQLite_Driver {
 	 */
 	public function get_sqlite_version(): string {
 		return $this->pdo->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
+	}
+
+	/**
+	 * Check if a specific SQL mode is active.
+	 *
+	 * @param  string $mode The SQL mode to check.
+	 * @return bool         True if the SQL mode is active, false otherwise.
+	 */
+	public function is_sql_mode_active( string $mode ): bool {
+		return in_array( strtoupper( $mode ), $this->active_sql_modes, true );
 	}
 
 	/**
@@ -782,11 +879,7 @@ class WP_SQLite_Driver {
 				$this->execute_truncate_table_statement( $node );
 				break;
 			case 'setStatement':
-				/*
-				 * It would be lovely to support at least SET autocommit,
-				 * but I don't think that is even possible with SQLite.
-				 */
-				$this->last_result = 0;
+				$this->execute_set_statement( $node );
 				break;
 			case 'showStatement':
 				$this->is_readonly = true;
@@ -907,11 +1000,25 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
+		// Check if strict mode is disabled.
+		$is_non_strict_mode = (
+			! $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
+
 		$parts = array();
 		foreach ( $node->get_children() as $child ) {
 			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
+			} elseif (
+				$is_non_strict_mode
+				&& $child instanceof WP_Parser_Node
+				&& ( 'insertFromConstructor' === $child->rule_name || 'insertQueryExpression' === $child->rule_name )
+			) {
+				$table_ref  = $node->get_first_child_node( 'tableRef' );
+				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+				$parts[]    = $this->translate_insert_or_replace_body_in_non_strict_mode( $table_name, $child );
 			} else {
 				$parts[] = $this->translate( $child );
 			}
@@ -955,12 +1062,26 @@ class WP_SQLite_Driver {
 			);
 		}
 
+		// Check if strict mode is disabled.
+		$is_non_strict_mode = (
+			! $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
+
 		// Iterate and translate the update statement children.
 		$parts = array();
 		foreach ( $node->get_children() as $child ) {
 			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
+			} elseif (
+				$is_non_strict_mode
+				&& $child instanceof WP_Parser_Node
+				&& 'updateList' === $child->rule_name
+			) {
+				$table_ref  = $node->get_first_child_node( 'tableReferenceList' )->get_first_child_node( 'tableReference' );
+				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+				$parts[]    = $this->translate_update_list_in_non_strict_mode( $table_name, $child );
 			} else {
 				$parts[] = $this->translate( $child );
 			}
@@ -1265,7 +1386,15 @@ class WP_SQLite_Driver {
 		$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
 
 		$this->execute_sqlite_query( "DELETE FROM $quoted_table_name" );
-		$this->execute_sqlite_query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $table_name ) );
+		try {
+			$this->execute_sqlite_query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $table_name ) );
+		} catch ( PDOException $e ) {
+			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
+				// The table might not exist if no sequences are used in the DB.
+			} else {
+				throw $e;
+			}
+		}
 		$this->set_result_from_affected_rows();
 	}
 
@@ -1670,6 +1799,147 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * Translate and execute a MySQL SET statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "setStatement" AST node.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_set_statement( WP_Parser_Node $node ): void {
+		/*
+		 * 1. Flatten the SET statement into a single array of definitions.
+		 *
+		 * The grammar is non-trivial, and supports multi-statements like:
+		 *   SET @var = '...', SESSION sql_mode = '...', @@GLOBAL.time_zone = '...', @@debug = '...', ...
+		 *
+		 * This will be flattened into a single array of grammar node lists:
+		 *   [
+		 *     [ <userVariable>, <equal>, <expr> ],
+		 *     [ <optionType>, <internalVariableName>, <equal>, <setExprOrDefault> ],
+		 *     [ <setSystemVariable>, <equal>, <setExprOrDefault> ],
+		 *     [ <setSystemVariable>, <equal>, <setExprOrDefault> ],
+		 *   ]
+		 */
+		$subnode = $node->get_first_child_node();
+		if ( $subnode->has_child_node( 'optionValueNoOptionType' ) ) {
+			$start_node  = $subnode->get_first_child_node( 'optionValueNoOptionType' );
+			$definitions = array( $start_node->get_children() );
+		} elseif ( $subnode->has_child_node( 'startOptionValueListFollowingOptionType' ) ) {
+			$start_node  = $subnode
+				->get_first_child_node( 'startOptionValueListFollowingOptionType' )
+				->get_first_child_node( 'optionValueFollowingOptionType' ) ?? $node;
+			$definitions = array(
+				array_merge(
+					array( $subnode->get_first_child_node( 'optionType' ) ),
+					$start_node->get_children()
+				),
+			);
+		} else {
+			$definitions = array( $subnode->get_children() );
+		}
+
+		$continue_node = $subnode->get_first_child_node( 'optionValueListContinued' );
+		if ( $continue_node ) {
+			foreach ( $continue_node->get_child_nodes( 'optionValue' ) as $child ) {
+				$node          = $child->get_first_child_node( 'optionValueNoOptionType' ) ?? $child;
+				$definitions[] = $node->get_child_nodes();
+			}
+		}
+
+		/*
+		 * 2. Iterate and process the SET definitions.
+		 *
+		 * When an "optionType" node is encountered (such as "SESSION var = ..."),
+		 * it's value is used for all following system variable assignments that
+		 * have no type keyword specified, until the next "optionType" is found.
+		 *
+		 * This doesn't apply to "@@" type prefixes (such as "@@SESSION.var_name"),
+		 * which always impact only the immediately following system variable.
+		 */
+		$default_type = WP_MySQL_Lexer::SESSION_SYMBOL;
+		foreach ( $definitions as $definition ) {
+			// Check if the definition starts with an "optionType" node with
+			// one of the SESSION, GLOBAL, PERSIST, or PERSIST_ONLY tokens.
+			$part = array_shift( $definition );
+			if ( $part instanceof WP_Parser_Node && 'optionType' === $part->rule_name ) {
+				$default_type = $part->get_first_child_token()->id;
+				$part         = array_shift( $definition );
+			}
+
+			if (
+				$part instanceof WP_Parser_Node
+				&& (
+					'internalVariableName' === $part->rule_name
+					|| 'setSystemVariable' === $part->rule_name
+				)
+			) {
+				array_shift( $definition ); // Remove the '='.
+				$value = array_shift( $definition );
+				$this->execute_set_system_variable_statement( $part, $value, $default_type );
+			} else {
+				// TODO: Support user variables (in-memory or a temporary table).
+				throw $this->new_not_supported_exception(
+					sprintf( 'SET statement: %s', $node->rule_name )
+				);
+			}
+		}
+
+		$this->last_result = 0;
+	}
+
+	/**
+	 * Translate and execute a MySQL SET statement for system variables.
+	 *
+	 * @param  WP_Parser_Node $set_var_node  The "internalVariableName" or "setSystemVariable" AST node.
+	 * @param  WP_Parser_Node $value_node    The "setExprOrDefault" AST node.
+	 * @param  int            $default_type  The currently active default variable type.
+	 *                                       One of the SESSION, GLOBAL, PERSIST, PERSIST_ONLY tokens.
+	 * @throws WP_SQLite_Driver_Exception    When the query execution fails.
+	 */
+	private function execute_set_system_variable_statement(
+		WP_Parser_Node $set_var_node,
+		WP_Parser_Node $value_node,
+		int $default_type
+	): void {
+		// Get the variable name.
+		$internal_variable_name = 'setSystemVariable' === $set_var_node->rule_name
+			? $set_var_node->get_first_child_node( 'internalVariableName' )
+			: $set_var_node;
+
+		$name = strtolower(
+			$this->unquote_sqlite_identifier(
+				$this->translate( $internal_variable_name )
+			)
+		);
+
+		// Get the type attribute (one of SESSION, GLOBAL, PERSIST, PERSIST_ONLY).
+		$type = $default_type;
+		if ( $set_var_node->has_child_node( 'setVarIdentType' ) ) {
+			$var_ident_type = $set_var_node->get_first_child_node( 'setVarIdentType' );
+			$type           = $var_ident_type->get_first_child_token()->id;
+		}
+
+		// Get the variable value.
+		$value = $this->translate( $value_node );
+		$value = str_replace( "''", "'", $value );
+		$value = substr( $value, 1, -1 );
+
+		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
+			if ( 'sql_mode' === $name ) {
+				$modes                  = explode( ',', strtoupper( $value ) );
+				$this->active_sql_modes = $modes;
+			}
+		} elseif ( WP_MySQL_Lexer::GLOBAL_SYMBOL === $type ) {
+			throw $this->new_not_supported_exception( "SET statement type: 'GLOBAL'" );
+		} elseif ( WP_MySQL_Lexer::PERSIST_SYMBOL === $type ) {
+			throw $this->new_not_supported_exception( "SET statement type: 'PERSIST'" );
+		} elseif ( WP_MySQL_Lexer::PERSIST_ONLY_SYMBOL === $type ) {
+			throw $this->new_not_supported_exception( "SET statement type: 'PERSIST_ONLY'" );
+		}
+
+		// TODO: Handle GLOBAL, PERSIST, and PERSIST_ONLY types.
+	}
+
+	/**
 	 * Translate and execute a MySQL administration statement in SQLite.
 	 *
 	 * This emulates the following MySQL statements:
@@ -1842,9 +2112,9 @@ class WP_SQLite_Driver {
 					throw $this->new_invalid_input_exception();
 				}
 
-				$type = self::DATA_TYPE_MAP[ $child->id ] ?? null;
-				if ( null !== $type ) {
-					return $type;
+				$type_token = self::DATA_TYPE_MAP[ $child->id ] ?? null;
+				if ( null !== $type_token ) {
+					return $type_token;
 				}
 
 				// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
@@ -1884,12 +2154,37 @@ class WP_SQLite_Driver {
 			case 'functionCall':
 				return $this->translate_function_call( $node );
 			case 'systemVariable':
-				// @TODO: Emulate some system variables, or use reasonable defaults.
+				$var_ident_type = $node->get_first_child_node( 'varIdentType' );
+				$type_token     = $var_ident_type ? $var_ident_type->get_first_child_token() : null;
+				$original_name  = $this->unquote_sqlite_identifier(
+					$this->translate( $node->get_first_child_node( 'textOrIdentifier' ) )
+				);
+
+				$name = strtolower( $original_name );
+				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
+				if ( 'sql_mode' === $name ) {
+					$value = $this->pdo->quote( implode( ',', $this->active_sql_modes ) );
+				} else {
+					// When we have no value, it's reasonable to use NULL.
+					$value = 'NULL';
+				}
+
+				// @TODO: Emulate more system variables, or use reasonable defaults.
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variable-reference.html
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html
 
-				// When we have no value, it's reasonable to use NULL.
-				return 'NULL';
+				// TODO: Original name should come from the original MySQL input,
+				//       exactly as it was written by the user, and not translated.
+
+				// TODO: The '% AS %' syntax is compatible with SELECT lists only.
+				//       We need to translate it differently when used as a value.
+				return sprintf(
+					'%s AS %s',
+					$value,
+					$this->quote_sqlite_identifier(
+						'@@' . ( $type_token ? "$type_token->value." : '' ) . $original_name
+					)
+				);
 			case 'castType':
 				// Translate "CAST(... AS BINARY)" to "CAST(... AS BLOB)".
 				if ( $node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
@@ -2592,6 +2887,215 @@ class WP_SQLite_Driver {
 		return '';
 	}
 
+	/**
+	 * Translate INSERT or REPLACE statement body to SQLite, while emulating
+	 * the behavior of MySQL implicit default values in non-strict mode.
+	 *
+	 * Rewrites a statement body in the following form:
+	 *   INSERT INTO table (optionally some columns) <select-or-values>
+	 * To a statement body with the following structure:
+	 *   INSERT INTO table (all table columns)
+	 *   SELECT <non-strict-mode-adjusted-values> FROM (<select-or-values>) WHERE true
+	 *
+	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
+	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
+	 *
+	 * By default, STRICT_TRANS_TABLES is enabled, which makes the InnoDB table
+	 * behavior correspond to the natural behavior of SQLite tables. However,
+	 * some applications, including WordPress, disable strict mode altogether.
+	 *
+	 * The strict SQL modes can be set per session, and can be changed at runtime.
+	 * In SQLite, we can emulate this using the knowledge of the table structure:
+	 *   1. Explicitly passed INSERT statement values are used without change.
+	 *   2. Values omitted from the INSERT statement are replaced with the column
+	 *      DEFAULT or an IMPLICIT DEFAULT value based on their data type.
+	 *
+	 * Here's a summary of the strict vs. non-strict behaviors in MySQL:
+	 *
+	 * When STRICT_TRANS_TABLES or STRICT_ALL_TABLES is enabled:
+	 *   1. NULL + NO DEFAULT:     No value saves NULL, NULL saves NULL, DEFAULT saves NULL.
+	 *   2. NULL + DEFAULT:        No value saves DEFAULT, NULL saves NULL, DEFAULT saves DEFAULT.
+	 *   3. NOT NULL + NO DEFAULT: No value is rejected, NULL is rejected, DEFAULT is rejected.
+	 *   4. NOT NULL + DEFAULT:    No value saves DEFAULT, NULL is rejected, DEFAULT saves DEFAULT.
+	 *
+	 * When STRICT_TRANS_TABLES and STRICT_ALL_TABLES are disabled:
+	 *   1. NULL + NO DEFAULT:     No value saves NULL, NULL saves NULL, DEFAULT saves NULL.
+	 *   2. NULL + DEFAULT:        No value saves DEFAULT, NULL saves NULL, DEFAULT saves DEFAULT.
+	 *   3. NOT NULL + NO DEFAULT: No value saves IMPLICIT DEFAULT.
+	 *                             NULL is rejected on INSERT, but saves IMPLICIT DEFAULT on UPDATE.
+	 *                             DEFAULT saves IMPLICIT DEFAULT.
+	 *   4. NOT NULL + DEFAULT:    No value saves DEFAULT.
+	 *                             NULL is rejected on INSERT, but saves IMPLICIT DEFAULT on UPDATE.
+	 *                             DEFAULT saves DEFAULT.
+	 *
+	 * For more information about IMPLICIT DEFAULT values in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
+	 *
+	 * @param  string         $table_name The name of the target table.
+	 * @param  WP_Parser_Node $node       The "insertQueryExpression" or "insertValues" AST node.
+	 * @return string                     The translated INSERT query body.
+	 */
+	private function translate_insert_or_replace_body_in_non_strict_mode(
+		string $table_name,
+		WP_Parser_Node $node
+	): string {
+		// 1. Get column metadata from information schema.
+		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
+		$columns       = $this->execute_sqlite_query(
+			"
+				SELECT column_name, is_nullable, column_default, data_type, extra
+				FROM $columns_table
+				WHERE table_schema = ?
+				AND table_name = ?
+				ORDER BY ordinal_position
+			",
+			array( $this->db_name, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		// 2. Get the list of fields explicitly defined in the INSERT statement.
+		$insert_list = array();
+		$fields_node = $node->get_first_child_node( 'fields' );
+		if ( $fields_node ) {
+			// This is the optional "INSERT INTO ... (field1, field2, ...)" list.
+			foreach ( $fields_node->get_child_nodes() as $field ) {
+				$insert_list[] = $this->unquote_sqlite_identifier( $this->translate( $field ) );
+			}
+		} else {
+			// When no explicit field list is provided, all columns are required.
+			foreach ( array_column( $columns, 'COLUMN_NAME' ) as $column_name ) {
+				$insert_list[] = $column_name;
+			}
+		}
+
+		// 3. Get the list of column names returned by VALUES or SELECT clause.
+		$select_list = array();
+		if ( 'insertQueryExpression' === $node->rule_name ) {
+			// When inserting from a SELECT query, we don't know the column names.
+			// Let's wrap the query with a SELECT (...) LIMIT 0 to get obtain them.
+			$expr = $node->get_first_child_node( 'queryExpressionOrParens' );
+			$stmt = $this->execute_sqlite_query(
+				'SELECT * FROM (' . $this->translate( $expr ) . ') LIMIT 1'
+			);
+			$stmt->execute();
+
+			for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
+				$select_list[] = $stmt->getColumnMeta( $i )['name'];
+			}
+		} else {
+			// When inserting from a VALUES list, SQLite uses "columnN" naming.
+			foreach ( array_keys( $insert_list ) as $position ) {
+				$select_list[] = 'column' . ( $position + 1 );
+			}
+		}
+
+		// 4. Compose a new INSERT field list with all columns from the table.
+		$fragment = '(';
+		foreach ( $columns as $i => $column ) {
+			$fragment .= $i > 0 ? ', ' : '';
+			$fragment .= $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+		}
+		$fragment .= ')';
+
+		// 5. Compose a wrapper SELECT statement emulating IMPLICIT DEFAULT values.
+		$fragment .= ' SELECT ';
+		foreach ( $columns as $i => $column ) {
+			$is_omitted = ! in_array( $column['COLUMN_NAME'], $insert_list, true );
+			$fragment  .= $i > 0 ? ', ' : '';
+			if ( $is_omitted ) {
+				// When a column value is omitted from the INSERT statement, we
+				// need to use the DEFAULT value or the IMPLICIT DEFAULT value.
+				$is_auto_inc = str_contains( $column['EXTRA'], 'auto_increment' );
+				$is_nullable = 'YES' === $column['IS_NULLABLE'];
+				$default     = $column['COLUMN_DEFAULT'];
+				if ( null === $default && ! $is_nullable && ! $is_auto_inc ) {
+					$default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
+				}
+				$fragment .= null === $default ? 'NULL' : $this->pdo->quote( $default );
+			} else {
+				// When a column value is included, we can use it without change.
+				$position  = array_search( $column['COLUMN_NAME'], $insert_list, true );
+				$fragment .= $this->quote_sqlite_identifier( $select_list[ $position ] );
+			}
+		}
+
+		// 6. Wrap the original insert VALUES or SELECT expression in a FROM clause.
+		$values    = 'insertFromConstructor' === $node->rule_name
+			? $node->get_first_child_node( 'insertValues' )
+			: $node->get_first_child_node( 'queryExpressionOrParens' );
+		$fragment .= ' FROM (' . $this->translate( $values ) . ') WHERE true';
+
+		return $fragment;
+	}
+
+	/**
+	 * Translate UPDATE list, emulating MySQL implicit defaults in non-strict mode.
+	 *
+	 * Rewrites an UPDATE statement list in the following form:
+	 *   UPDATE table SET <non-null-column> = <value>
+	 * To a list with the following structure:
+	 *   UPDATE table SET <non-null-column> = COALESCE(<value>, <implicit-default>)
+	 *
+	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
+	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
+	 *
+	 * When the strict mode is not enabled, executing an UPDATE statement that
+	 * sets a NOT NULL column value to NULL saves an IMPLICIT DEFAULT instead.
+	 *
+	 * @param  string         $table_name The name of the target table.
+	 * @param  WP_Parser_Node $node       The "updateList" AST node.
+	 * @return string                     The translated UPDATE list.
+	 */
+	private function translate_update_list_in_non_strict_mode( string $table_name, WP_Parser_Node $node ): string {
+		// 1. Get column metadata from information schema.
+		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
+		$columns       = $this->execute_sqlite_query(
+			"
+				SELECT column_name, is_nullable, data_type, column_default
+				FROM $columns_table
+				WHERE table_schema = ?
+				AND table_name = ?
+			",
+			array( $this->db_name, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$column_map    = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
+
+		// 2. Translate UPDATE list, emulating implicit defaults for NULLs values.
+		$fragment = '';
+		foreach ( $node->get_child_nodes() as $i => $update_element ) {
+			$column_ref = $update_element->get_first_child_node( 'columnRef' );
+			$expr       = $update_element->get_first_child_node( 'expr' );
+
+			// Get column info.
+			$column_name = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
+			$column_info = $column_map[ $column_name ];
+			$data_type   = $column_info['DATA_TYPE'];
+			$is_nullable = 'YES' === $column_info['IS_NULLABLE'];
+			$default     = $column_info['COLUMN_DEFAULT'];
+
+			// Get the UPDATE value. It's either an expression or a DEFAULT keyword.
+			if ( null === $expr ) {
+				// Emulate "column = DEFAULT".
+				$value = null === $default ? 'NULL' : $this->pdo->quote( $default );
+			} else {
+				$value = $this->translate( $expr );
+			}
+
+			// If the column is NOT NULL, a NULL value resolves to implicit default.
+			$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
+			if ( ! $is_nullable && null !== $implicit_default ) {
+				$value = sprintf( 'COALESCE(%s, %s)', $value, $this->pdo->quote( $implicit_default ) );
+			}
+
+			// Compose the UPDATE list item.
+			$fragment .= $i > 0 ? ', ' : '';
+			$fragment .= $this->translate( $column_ref );
+			$fragment .= ' = ';
+			$fragment .= $value;
+		}
+		return $fragment;
+	}
 
 	/**
 	 * Generate a SQLite CREATE TABLE statement from information schema data.
@@ -2603,7 +3107,7 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception      When the table information is missing.
 	 */
 	private function get_sqlite_create_table_statement(
-		bool $table_is_temporary = false,
+		bool $table_is_temporary,
 		string $table_name,
 		?string $new_table_name = null
 	): array {
