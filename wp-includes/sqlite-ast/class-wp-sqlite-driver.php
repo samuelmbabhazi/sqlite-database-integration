@@ -2888,7 +2888,14 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Translate INSERT body, emulating MySQL implicit defaults in non-strict mode.
+	 * Translate INSERT or REPLACE statement body to SQLite, while emulating
+	 * the behavior of MySQL implicit default values in non-strict mode.
+	 *
+	 * Rewrites a statement body in the following form:
+	 *   INSERT INTO table (optionally some columns) <select-or-values>
+	 * To a statement body with the following structure:
+	 *   INSERT INTO table (all table columns)
+	 *   SELECT <non-strict-mode-adjusted-values> FROM (<select-or-values>) WHERE true
 	 *
 	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
 	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
@@ -3023,6 +3030,11 @@ class WP_SQLite_Driver {
 
 	/**
 	 * Translate UPDATE list, emulating MySQL implicit defaults in non-strict mode.
+	 *
+	 * Rewrites an UPDATE statement list in the following form:
+	 *   UPDATE table SET <non-null-column> = <value>
+	 * To a list with the following structure:
+	 *   UPDATE table SET <non-null-column> = COALESCE(<value>, <implicit-default>)
 	 *
 	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
 	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
