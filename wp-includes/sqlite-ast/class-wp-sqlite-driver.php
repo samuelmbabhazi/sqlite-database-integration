@@ -1875,10 +1875,14 @@ class WP_SQLite_Driver {
 				array_shift( $definition ); // Remove the '='.
 				$value = array_shift( $definition );
 				$this->execute_set_system_variable_statement( $part, $value, $default_type );
+			} else {
+				// TODO: Support user variables (in-memory or a temporary table).
+				throw $this->new_not_supported_exception(
+					sprintf( 'SET statement: %s', $node->rule_name )
+				);
 			}
 		}
 
-		// TODO: Support user variables (in-memory or a temporary table).
 		$this->last_result = 0;
 	}
 
@@ -1924,6 +1928,12 @@ class WP_SQLite_Driver {
 				$modes                  = explode( ',', strtoupper( $value ) );
 				$this->active_sql_modes = $modes;
 			}
+		} elseif ( WP_MySQL_Lexer::GLOBAL_SYMBOL === $type ) {
+			throw $this->new_not_supported_exception( "SET statement type: 'GLOBAL'" );
+		} elseif ( WP_MySQL_Lexer::PERSIST_SYMBOL === $type ) {
+			throw $this->new_not_supported_exception( "SET statement type: 'PERSIST'" );
+		} elseif ( WP_MySQL_Lexer::PERSIST_ONLY_SYMBOL === $type ) {
+			throw $this->new_not_supported_exception( "SET statement type: 'PERSIST_ONLY'" );
 		}
 
 		// TODO: Handle GLOBAL, PERSIST, and PERSIST_ONLY types.
