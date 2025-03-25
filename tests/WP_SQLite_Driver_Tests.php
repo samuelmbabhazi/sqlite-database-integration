@@ -4413,6 +4413,7 @@ QUERY
 	public function testNonStrictModeWithOnDuplicateKeyUpdate(): void {
 		$this->assertQuery( "SET SESSION sql_mode = ''" );
 
+		// Create table and insert a row:
 		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name TEXT NOT NULL, size INT DEFAULT 123, color TEXT)' );
 		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'A', 10, 'red')" );
 		$result = $this->assertQuery( 'SELECT * FROM t1' );
@@ -4421,12 +4422,18 @@ QUERY
 		$this->assertSame( '10', $result[0]->size );
 		$this->assertSame( 'red', $result[0]->color );
 
+		// Ensure ON DUPLICATE KEY UPDATE works:
 		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'B', 20, 'blue') ON DUPLICATE KEY UPDATE name = 'B'" );
 		$result = $this->assertQuery( 'SELECT * FROM t1' );
 		$this->assertCount( 1, $result );
 		$this->assertSame( 'B', $result[0]->name );
 		$this->assertSame( '10', $result[0]->size );
 		$this->assertSame( 'red', $result[0]->color );
+
+		// In MySQL, ON DUPLICATE KEY UPDATE ignores non-strict mode UPDATE behavior:
+		$this->expectException( PDOException::class );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t1.name' );
+		$this->assertQuery( "INSERT INTO t1 VALUES (1, 'C', 30, 'green') ON DUPLICATE KEY UPDATE name = NULL" );
 	}
 
 	public function testNonStrictModeWithReplaceStatement(): void {
