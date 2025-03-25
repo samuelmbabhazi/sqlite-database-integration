@@ -3013,7 +3013,7 @@ class WP_SQLite_Driver {
 				}
 				$fragment .= null === $default ? 'NULL' : $this->pdo->quote( $default );
 			} else {
-				// When a colum value is included, we can use it without change.
+				// When a column value is included, we can use it without change.
 				$position  = array_search( $column['COLUMN_NAME'], $insert_list, true );
 				$fragment .= $this->quote_sqlite_identifier( $select_list[ $position ] );
 			}
