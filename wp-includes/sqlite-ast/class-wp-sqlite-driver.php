@@ -3020,9 +3020,17 @@ class WP_SQLite_Driver {
 		}
 
 		// 6. Wrap the original insert VALUES or SELECT expression in a FROM clause.
-		$values    = 'insertFromConstructor' === $node->rule_name
+		$values = 'insertFromConstructor' === $node->rule_name
 			? $node->get_first_child_node( 'insertValues' )
 			: $node->get_first_child_node( 'queryExpressionOrParens' );
+
+		/*
+		 * The "WHERE true" suffix is used to avoid parsing ambiguity in SQLite.
+		 * When an "ON CONFLICT" clause is used and there is no "WHERE", SQLite
+		 * doesn't know if "ON" belongs to a "JOIN" or an "ON CONFLICT" clause.
+		 *
+		 * See: https://www.sqlite.org/lang_insert.html
+		 */
 		$fragment .= ' FROM (' . $this->translate( $values ) . ') WHERE true';
 
 		return $fragment;
