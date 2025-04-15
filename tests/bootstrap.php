@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/wp-sqlite-schema.php';
+require_once __DIR__ . '/../version.php';
 require_once __DIR__ . '/../wp-includes/parser/class-wp-parser-grammar.php';
 require_once __DIR__ . '/../wp-includes/parser/class-wp-parser.php';
 require_once __DIR__ . '/../wp-includes/parser/class-wp-parser-node.php';
@@ -13,12 +14,6 @@ require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-token.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-translator.php';
-
-/*
- * The driver version needs to be defined and set to anything other than "0.0.0"
- * for the tests, so that the information schema and other tables are created.
- */
-define( 'SQLITE_DRIVER_VERSION', '2.0.0-tests' );
 
 /**
  * Polyfills for WordPress functions
