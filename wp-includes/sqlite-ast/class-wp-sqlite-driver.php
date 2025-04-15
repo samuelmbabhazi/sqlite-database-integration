@@ -41,6 +41,22 @@ class WP_SQLite_Driver {
 	const RESERVED_PREFIX = '_wp_sqlite_';
 
 	/**
+	 * The name of a global variables table.
+	 *
+	 * This special table is used to emulate MySQL global variables and to store
+	 * some internal configuration values.
+	 */
+	const GLOBAL_VARIABLES_TABLE_NAME = self::RESERVED_PREFIX . 'global_variables';
+
+	/**
+	 * The name of the SQLite driver version variable.
+	 *
+	 * This internal variable is used to store the latest version of the SQLite
+	 * driver that was used to initialize and configure the SQLite database.
+	 */
+	const DRIVER_VERSION_VARIABLE_NAME = self::RESERVED_PREFIX . 'driver_version';
+
+	/**
 	 * A map of MySQL tokens to SQLite data types.
 	 *
 	 * This is used to translate a MySQL data type to an SQLite data type.
@@ -524,7 +540,10 @@ class WP_SQLite_Driver {
 			self::RESERVED_PREFIX,
 			array( $this, 'execute_sqlite_query' )
 		);
-		$this->information_schema_builder->ensure_information_schema_tables();
+
+		// Ensure that the database is configured.
+		$migrator = new WP_SQLite_Configurator( $this, $this->information_schema_builder );
+		$migrator->ensure_database_configured();
 	}
 
 	/**
@@ -543,6 +562,31 @@ class WP_SQLite_Driver {
 	 */
 	public function get_sqlite_version(): string {
 		return $this->pdo->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
+	}
+
+	/**
+	 * Get the SQLite driver version saved in the database.
+	 *
+	 * The saved driver version corresponds to the latest version of the SQLite
+	 * driver that was used to initialize and configure the SQLite database.
+	 *
+	 * @return string       SQLite driver version as a string.
+	 * @throws PDOException When the query execution fails.
+	 */
+	public function get_saved_driver_version(): string {
+		$default_version = '0.0.0';
+		try {
+			$stmt = $this->execute_sqlite_query(
+				sprintf( 'SELECT value FROM %s WHERE name = ?', self::GLOBAL_VARIABLES_TABLE_NAME ),
+				array( self::DRIVER_VERSION_VARIABLE_NAME )
+			);
+			return $stmt->fetchColumn() ?? $default_version;
+		} catch ( PDOException $e ) {
+			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
+				return $default_version;
+			}
+			throw $e;
+		}
 	}
 
 	/**

@@ -12,6 +12,7 @@
  * @package wp-sqlite-integration
  */
 
+define( 'SQLITE_DRIVER_VERSION', '2.1.17-alpha' );
 define( 'SQLITE_MAIN_FILE', __FILE__ );
 
 require_once __DIR__ . '/php-polyfills.php';
