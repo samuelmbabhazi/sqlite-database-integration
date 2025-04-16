@@ -1,11 +1,5 @@
 <?php
 
-require_once __DIR__ . '/WP_SQLite_Translator_Tests.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-configurator.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver-exception.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-builder.php';
-
 use PHPUnit\Framework\TestCase;
 
 class WP_SQLite_Driver_Tests extends TestCase {
