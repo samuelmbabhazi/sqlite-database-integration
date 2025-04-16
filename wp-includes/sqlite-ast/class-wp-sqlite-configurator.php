@@ -26,6 +26,13 @@ class WP_SQLite_Configurator {
 	private $information_schema_builder;
 
 	/**
+	 * A service for reconstructing the MySQL INFORMATION_SCHEMA tables in SQLite.
+	 *
+	 * @var WP_SQLite_Information_Schema_Reconstructor
+	 */
+	private $information_schema_reconstructor;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param WP_SQLite_Driver                     $driver                     The SQLite driver instance.
@@ -35,8 +42,12 @@ class WP_SQLite_Configurator {
 		WP_SQLite_Driver $driver,
 		WP_SQLite_Information_Schema_Builder $information_schema_builder
 	) {
-		$this->driver                     = $driver;
-		$this->information_schema_builder = $information_schema_builder;
+		$this->driver                           = $driver;
+		$this->information_schema_builder       = $information_schema_builder;
+		$this->information_schema_reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
+			$driver,
+			$information_schema_builder
+		);
 	}
 
 	/**
@@ -64,6 +75,7 @@ class WP_SQLite_Configurator {
 	public function configure_database(): void {
 		$this->ensure_global_variables_table();
 		$this->information_schema_builder->ensure_information_schema_tables();
+		$this->information_schema_reconstructor->ensure_correct_information_schema();
 		$this->save_current_driver_version();
 	}
 

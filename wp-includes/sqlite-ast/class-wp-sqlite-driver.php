@@ -655,15 +655,7 @@ class WP_SQLite_Driver {
 
 		try {
 			// Parse the MySQL query.
-			$lexer  = new WP_MySQL_Lexer( $query );
-			$tokens = $lexer->remaining_tokens();
-
-			$parser = new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
-			$ast    = $parser->parse();
-
-			if ( null === $ast ) {
-				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
-			}
+			$ast = $this->parse_query( $query );
 
 			// Handle transaction commands.
 
@@ -733,6 +725,26 @@ class WP_SQLite_Driver {
 			$code = $e->getCode();
 			throw $this->new_driver_exception( $e->getMessage(), is_int( $code ) ? $code : 0, $e );
 		}
+	}
+
+	/**
+	 * Parse a MySQL query into an AST.
+	 *
+	 * @param  string         $query      The MySQL query to parse.
+	 * @return WP_Parser_Node             The AST representing the parsed query.
+	 * @throws WP_SQLite_Driver_Exception When the query parsing fails.
+	 */
+	public function parse_query( string $query ): WP_Parser_Node {
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer->remaining_tokens();
+
+		$parser = new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
+		$ast    = $parser->parse();
+
+		if ( null === $ast ) {
+			throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+		}
+		return $ast;
 	}
 
 	/**
