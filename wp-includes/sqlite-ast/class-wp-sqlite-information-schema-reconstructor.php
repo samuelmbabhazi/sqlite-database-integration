@@ -54,10 +54,38 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		$tables                    = $this->get_existing_table_names();
 		$information_schema_tables = $this->get_information_schema_table_names();
 
+		// In WordPress, use "wp_get_db_schema()" to reconstruct WordPress tables.
+		$wp_tables = array();
+		if ( defined( 'ABSPATH' ) ) {
+			if ( wp_installing() ) {
+				// Avoid interfering with WordPress installation.
+				return;
+			}
+			if ( file_exists( ABSPATH . 'wp-admin/includes/schema.php' ) ) {
+				require_once ABSPATH . 'wp-admin/includes/schema.php';
+			}
+			if ( function_exists( 'wp_get_db_schema' ) ) {
+				$schema = wp_get_db_schema();
+				$parts  = preg_split( '/(CREATE\s+TABLE)/', $schema, -1, PREG_SPLIT_NO_EMPTY );
+				foreach ( $parts as $part ) {
+					$name               = $this->unquote_mysql_identifier(
+						preg_split( '/\s+/', $part, 2, PREG_SPLIT_NO_EMPTY )[0]
+					);
+					$wp_tables[ $name ] = 'CREATE TABLE' . $part;
+				}
+			}
+		}
+
 		// Reconstruct information schema records for tables that don't have them.
 		foreach ( $tables as $table ) {
 			if ( ! in_array( $table, $information_schema_tables, true ) ) {
-				$sql = $this->generate_create_table_statement( $table );
+				if ( isset( $wp_tables[ $table ] ) ) {
+					// WordPress table.
+					$sql = $wp_tables[ $table ];
+				} else {
+					// Non-WordPress table.
+					$sql = $this->generate_create_table_statement( $table );
+				}
 				$ast = $this->driver->parse_query( $sql );
 				$this->information_schema_builder->record_create_table( $ast );
 			}
@@ -377,5 +405,23 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 */
 	private function quote_sqlite_identifier( string $unquoted_identifier ): string {
 		return '`' . str_replace( '`', '``', $unquoted_identifier ) . '`';
+	}
+
+	/**
+	 * Unquote a quoted MySQL identifier.
+	 *
+	 * Remove bounding quotes and replace escaped quotes with their values.
+	 *
+	 * @param  string $quoted_identifier The quoted identifier value.
+	 * @return string                    The unquoted identifier value.
+	 */
+	private function unquote_mysql_identifier( string $quoted_identifier ): string {
+		$first_byte = $quoted_identifier[0] ?? null;
+		if ( '"' === $first_byte || '`' === $first_byte ) {
+			$unquoted = substr( $quoted_identifier, 1, -1 );
+		} else {
+			$unquoted = $quoted_identifier;
+		}
+		return str_replace( $first_byte . $first_byte, $first_byte, $unquoted );
 	}
 }
