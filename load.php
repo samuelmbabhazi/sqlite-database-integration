@@ -14,7 +14,7 @@
 
 /**
  * Load the "SQLITE_DRIVER_VERSION" constant.
- * This constant needs to be updated whenever the plugin version changes!
+ * This constant needs to be updated on plugin release!
  */
 require_once __DIR__ . '/version.php';
 

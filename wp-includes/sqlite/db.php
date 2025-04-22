@@ -8,7 +8,6 @@
 
 /**
  * Load the "SQLITE_DRIVER_VERSION" constant.
- * This constant needs to be updated whenever the plugin version changes!
  */
 require_once dirname( __DIR__, 2 ) . '/version.php';
 

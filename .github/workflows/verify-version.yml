@@ -8,7 +8,7 @@ on:
 
 jobs:
   verify-version:
-    name: Verify plugin version
+    name: Verify that plugin version matches SQLITE_DRIVER_VERSION constant
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

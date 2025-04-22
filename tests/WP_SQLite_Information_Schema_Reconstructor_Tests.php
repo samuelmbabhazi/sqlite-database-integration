@@ -13,9 +13,6 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	private $sqlite;
 
 	public static function setUpBeforeClass(): void {
-		// if ( ! defined( 'PDO_DEBUG' )) {
-		// define( 'PDO_DEBUG', true );
-		// }
 		if ( ! defined( 'FQDB' ) ) {
 			define( 'FQDB', ':memory:' );
 			define( 'FQDBDIR', __DIR__ . '/../testdb' );
@@ -30,7 +27,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 			$GLOBALS['wpdb']->show_errors     = true;
 		}
 
-		// Mock symols that are used for WordPress table reconstruction.
+		// Mock symbols that are used for WordPress table reconstruction.
 		if ( ! defined( 'ABSPATH' ) ) {
 			define( 'ABSPATH', __DIR__ );
 		}

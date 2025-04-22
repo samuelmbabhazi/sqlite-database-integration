@@ -80,10 +80,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		foreach ( $tables as $table ) {
 			if ( ! in_array( $table, $information_schema_tables, true ) ) {
 				if ( isset( $wp_tables[ $table ] ) ) {
-					// WordPress table.
+					// WordPress core table (as returned by "wp_get_db_schema()").
 					$sql = $wp_tables[ $table ];
 				} else {
-					// Non-WordPress table.
+					// Other table (a WordPress plugin or unrelated to WordPress).
 					$sql = $this->generate_create_table_statement( $table );
 				}
 				$ast = $this->driver->parse_query( $sql );
@@ -139,10 +139,6 @@ class WP_SQLite_Information_Schema_Reconstructor {
 
 	/**
 	 * Generate a MySQL CREATE TABLE statement from an SQLite table definition.
-	 *
-	 * This method generates a MySQL CREATE TABLE statement for a given table name.
-	 * It retrieves the column information from the SQLite database and generates
-	 * a CREATE TABLE statement that can be used to create the table in MySQL.
 	 *
 	 * @param  string $table_name The name of the table.
 	 * @return string             The CREATE TABLE statement.
