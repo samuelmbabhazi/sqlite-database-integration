@@ -64,15 +64,16 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			if ( file_exists( ABSPATH . 'wp-admin/includes/schema.php' ) ) {
 				require_once ABSPATH . 'wp-admin/includes/schema.php';
 			}
-			if ( function_exists( 'wp_get_db_schema' ) ) {
-				$schema = wp_get_db_schema();
-				$parts  = preg_split( '/(CREATE\s+TABLE)/', $schema, -1, PREG_SPLIT_NO_EMPTY );
-				foreach ( $parts as $part ) {
-					$name               = $this->unquote_mysql_identifier(
-						preg_split( '/\s+/', $part, 2, PREG_SPLIT_NO_EMPTY )[0]
-					);
-					$wp_tables[ $name ] = 'CREATE TABLE' . $part;
-				}
+			if ( ! function_exists( 'wp_get_db_schema' ) ) {
+				throw new Exception( 'The "wp_get_db_schema()" function was not defined.' );
+			}
+			$schema = wp_get_db_schema();
+			$parts  = preg_split( '/(CREATE\s+TABLE)/', $schema, -1, PREG_SPLIT_NO_EMPTY );
+			foreach ( $parts as $part ) {
+				$name               = $this->unquote_mysql_identifier(
+					preg_split( '/\s+/', $part, 2, PREG_SPLIT_NO_EMPTY )[0]
+				);
+				$wp_tables[ $name ] = 'CREATE TABLE' . $part;
 			}
 		}
 
