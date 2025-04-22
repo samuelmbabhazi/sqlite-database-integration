@@ -162,17 +162,23 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// Primary key.
 		$pk_columns = array();
 		foreach ( $columns as $column ) {
-			if ( '0' !== $column['pk'] ) {
-				$pk_columns[ $column['pk'] ] = $column['name'];
+			// A position of the column in the primary key, starting from index 1.
+			// A value of 0 means that the column is not part of the primary key.
+			$pk_position = (int) $column['pk'];
+			if ( 0 !== $pk_position ) {
+				$pk_columns[ $pk_position ] = $column['name'];
 			}
 		}
+
+		// Sort the columns by their position in the primary key.
 		ksort( $pk_columns );
 
 		if ( count( $pk_columns ) > 0 ) {
-			$definitions[] = sprintf(
-				'PRIMARY KEY (%s)',
-				implode( ', ', array_map( array( $this, 'quote_sqlite_identifier' ), $pk_columns ) )
-			);
+			$quoted_pk_columns = array();
+			foreach ( $pk_columns as $pk_column ) {
+				$quoted_pk_columns[] = $this->quote_sqlite_identifier( $pk_column );
+			}
+			$definitions[] = sprintf( 'PRIMARY KEY (%s)', implode( ', ', $quoted_pk_columns ) );
 		}
 
 		// Indexes and keys.
