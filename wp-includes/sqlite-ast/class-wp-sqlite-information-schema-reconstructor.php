@@ -415,9 +415,8 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		$first_byte = $quoted_identifier[0] ?? null;
 		if ( '"' === $first_byte || '`' === $first_byte ) {
 			$unquoted = substr( $quoted_identifier, 1, -1 );
-		} else {
-			$unquoted = $quoted_identifier;
+			return str_replace( $first_byte . $first_byte, $first_byte, $unquoted );
 		}
-		return str_replace( $first_byte . $first_byte, $first_byte, $unquoted );
+		return $quoted_identifier;
 	}
 }
