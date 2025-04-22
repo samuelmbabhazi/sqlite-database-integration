@@ -108,22 +108,20 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @return string[] The names of tables in the SQLite database.
 	 */
 	private function get_existing_table_names(): array {
-		$all_tables = $this->driver->execute_sqlite_query(
-			'SELECT name FROM sqlite_schema WHERE type = "table" ORDER BY name'
+		return $this->driver->execute_sqlite_query(
+			"
+				SELECT name
+				FROM sqlite_schema
+				WHERE type = 'table'
+				AND name NOT LIKE ? ESCAPE '\'
+				AND name NOT LIKE ? ESCAPE '\'
+				ORDER BY name
+			",
+			array(
+				'sqlite\_%',
+				str_replace( '_', '\_', WP_SQLite_Driver::RESERVED_PREFIX ) . '%',
+			)
 		)->fetchAll( PDO::FETCH_COLUMN );
-
-		// Filter out internal tables.
-		$tables = array();
-		foreach ( $all_tables as $table ) {
-			if ( str_starts_with( $table, 'sqlite_' ) ) {
-				continue;
-			}
-			if ( str_starts_with( $table, WP_SQLite_Driver::RESERVED_PREFIX ) ) {
-				continue;
-			}
-			$tables[] = $table;
-		}
-		return $tables;
 	}
 
 	/**
