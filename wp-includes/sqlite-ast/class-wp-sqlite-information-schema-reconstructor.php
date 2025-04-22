@@ -370,15 +370,32 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 */
 	private function get_mysql_data_type( string $column_type ): string {
 		$type = strtoupper( $column_type );
+
+		/*
+		 * Following the rules of column affinity:
+		 *   https://sqlite.org/datatype3.html#determination_of_column_affinity
+		 */
+
+		// 1. If the declared type contains the string "INT" then it is assigned
+		//    INTEGER affinity.
 		if ( str_contains( $type, 'INT' ) ) {
 			return 'int';
 		}
+
+		// 2. If the declared type of the column contains any of the strings
+		//    "CHAR", "CLOB", or "TEXT" then that column has TEXT affinity.
 		if ( str_contains( $type, 'TEXT' ) || str_contains( $type, 'CHAR' ) || str_contains( $type, 'CLOB' ) ) {
 			return 'text';
 		}
+
+		// 3. If the declared type for a column contains the string "BLOB" or
+		//    if no type is specified then the column has affinity BLOB.
 		if ( str_contains( $type, 'BLOB' ) || '' === $type ) {
 			return 'blob';
 		}
+
+		// 4. If the declared type for a column contains any of the strings
+		//    "REAL", "FLOA", or "DOUB" then the column has REAL affinity.
 		if ( str_contains( $type, 'REAL' ) || str_contains( $type, 'FLOA' ) ) {
 			return 'float';
 		}
@@ -387,6 +404,8 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		}
 
 		/**
+		 * 5. Otherwise, the affinity is NUMERIC.
+		 *
 		 * While SQLite defaults to a NUMERIC column affinity, it's better to use
 		 * TEXT in this case, because numeric SQLite columns in non-strict tables
 		 * can contain any text data as well, when it is not a well-formed number.
