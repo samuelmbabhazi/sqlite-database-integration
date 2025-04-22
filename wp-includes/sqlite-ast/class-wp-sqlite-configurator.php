@@ -57,20 +57,11 @@ class WP_SQLite_Configurator {
 	 * driver version, and if it is not, it will configure the database.
 	 */
 	public function ensure_database_configured(): void {
-		// Use an EXCLUSIVE transaction to prevent multiple connections
-		// from attempting to configure the database at the same time.
-		$this->driver->execute_sqlite_query( 'BEGIN EXCLUSIVE TRANSACTION' );
-		try {
-			$version    = SQLITE_DRIVER_VERSION;
-			$db_version = $this->driver->get_saved_driver_version();
-			if ( version_compare( $version, $db_version ) > 0 ) {
-				$this->run_database_configuration();
-			}
-		} catch ( Throwable $e ) {
-			$this->driver->execute_sqlite_query( 'ROLLBACK' );
-			throw $e;
+		$version    = SQLITE_DRIVER_VERSION;
+		$db_version = $this->driver->get_saved_driver_version();
+		if ( version_compare( $version, $db_version ) > 0 ) {
+			$this->configure_database();
 		}
-		$this->driver->execute_sqlite_query( 'COMMIT' );
 	}
 
 	/**
@@ -86,25 +77,15 @@ class WP_SQLite_Configurator {
 		// from attempting to configure the database at the same time.
 		$this->driver->execute_sqlite_query( 'BEGIN EXCLUSIVE TRANSACTION' );
 		try {
-			$this->run_database_configuration();
+			$this->ensure_global_variables_table();
+			$this->information_schema_builder->ensure_information_schema_tables();
+			$this->information_schema_reconstructor->ensure_correct_information_schema();
+			$this->save_current_driver_version();
 		} catch ( Throwable $e ) {
 			$this->driver->execute_sqlite_query( 'ROLLBACK' );
 			throw $e;
 		}
 		$this->driver->execute_sqlite_query( 'COMMIT' );
-	}
-
-	/**
-	 * Run the SQLite database configuration.
-	 *
-	 * This method executes the database configuration steps, ensuring that all
-	 * tables required for MySQL emulation in SQLite are created and populated.
-	 */
-	private function run_database_configuration(): void {
-		$this->ensure_global_variables_table();
-		$this->information_schema_builder->ensure_information_schema_tables();
-		$this->information_schema_reconstructor->ensure_correct_information_schema();
-		$this->save_current_driver_version();
 	}
 
 	/**
