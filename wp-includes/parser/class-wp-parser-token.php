@@ -24,13 +24,36 @@ class WP_Parser_Token {
 	public $value;
 
 	/**
+	 * Byte offset in the input where the token begins.
+	 *
+	 * @var int
+	 */
+	public $start;
+
+	/**
+	 * Byte length of the token in the input.
+	 *
+	 * @var int
+	 */
+	public $length;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param int $id Token type.
-	 * @param string $value Token value.
+	 * @param int    $id      Token type.
+	 * @param string $value   Token value.
+	 * @param int    $start   Byte offset in the input where the token begins.
+	 * @param int    $length  Byte length of the token in the input.
 	 */
-	public function __construct( int $id, string $value ) {
-		$this->id    = $id;
-		$this->value = $value;
+	public function __construct(
+		int $id,
+		string $value,
+		int $start,
+		int $length
+	) {
+		$this->id     = $id;
+		$this->value  = $value;
+		$this->start  = $start;
+		$this->length = $length;
 	}
 }
