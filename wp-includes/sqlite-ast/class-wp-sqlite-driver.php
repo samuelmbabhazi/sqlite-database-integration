@@ -739,8 +739,8 @@ class WP_SQLite_Driver {
 		$tokens = $lexer->remaining_tokens();
 
 		$parser = new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
-		while ( $parser->next_ast() ) {
-			$ast = $parser->get_ast();
+		while ( $parser->next_query() ) {
+			$ast = $parser->get_query_ast();
 			if ( null === $ast ) {
 				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
 			}

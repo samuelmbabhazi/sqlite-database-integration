@@ -264,7 +264,7 @@ class WP_Parser_Node {
 	}
 
 	/**
-	 * Get the byte offset in the input where the node begins.
+	 * Get the byte offset in the input SQL string where this node begins.
 	 *
 	 * @return int
 	 */
@@ -273,7 +273,7 @@ class WP_Parser_Node {
 	}
 
 	/**
-	 * Get the byte length of the node in the input.
+	 * Get the byte length of this node in the input SQL string.
 	 *
 	 * @return int
 	 */

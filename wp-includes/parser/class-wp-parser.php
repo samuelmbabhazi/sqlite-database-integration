@@ -9,16 +9,9 @@
  *        satisfy in order to be supported by this parser (e.g., no left recursion).
  */
 class WP_Parser {
-	private $grammar;
-	private $tokens;
-	private $position;
-
-	/**
-	 * The current AST.
-	 *
-	 * @var WP_Parser_Node|null
-	 */
-	private $current_ast;
+	protected $grammar;
+	protected $tokens;
+	protected $position;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
 		$this->grammar  = $grammar;
@@ -31,37 +24,6 @@ class WP_Parser {
 		$query_rule_id = $this->grammar->get_rule_id( 'query' );
 		$ast           = $this->parse_recursive( $query_rule_id );
 		return false === $ast ? null : $ast;
-	}
-
-	/**
-	 * Parse the next AST from the input tokens.
-	 *
-	 * This method reads tokens from the input until an AST is successfully parsed.
-	 * It starts from "$this->tokens[ $this->position ]", advances the number of
-	 * tokens read, and returns a boolean indicating whether an AST was successfully
-	 * parsed. When the end of the input is reached or a query could not be parsed,
-	 * the method returns false.
-	 *
-	 * @return bool Whether an AST was successfully parsed.
-	 */
-	public function next_ast(): bool {
-		if ( $this->position >= count( $this->tokens ) ) {
-			return false;
-		}
-		$this->current_ast = $this->parse();
-		return true;
-	}
-
-	/**
-	 * Get the current AST.
-	 *
-	 * When no AST has been parsed yet, the parsing failed, or the end of the
-	 * input was reached, this method returns null.
-	 *
-	 * @return WP_Parser_Node|null The current AST, or null if no AST was parsed.
-	 */
-	public function get_ast(): ?WP_Parser_Node {
-		return $this->current_ast;
 	}
 
 	private function parse_recursive( $rule_id ) {
