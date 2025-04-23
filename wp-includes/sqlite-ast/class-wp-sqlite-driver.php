@@ -655,7 +655,13 @@ class WP_SQLite_Driver {
 
 		try {
 			// Parse the MySQL query.
-			$ast = $this->parse_query( $query )->current();
+			// TODO: Translate and execute all queries in the SQL input string.
+			$parser = $this->create_parser( $query );
+			$parser->next_query();
+			$ast = $parser->get_query_ast();
+			if ( null === $ast ) {
+				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+			}
 
 			// Handle transaction commands.
 
@@ -728,24 +734,15 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Parse a MySQL query into an array of ASTs.
+	 * Tokenize a MySQL query and initialize a parser.
 	 *
-	 * @param  string           $query    The MySQL query to parse.
-	 * @return Generator<WP_Parser_Node>  A generator of ASTs representing the queries parsed from the input.
-	 * @throws WP_SQLite_Driver_Exception When the query parsing fails.
+	 * @param  string          $query The MySQL query to parse.
+	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
 	 */
-	public function parse_query( string $query ): Generator {
+	public function create_parser( string $query ): WP_MySQL_Parser {
 		$lexer  = new WP_MySQL_Lexer( $query );
 		$tokens = $lexer->remaining_tokens();
-
-		$parser = new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
-		while ( $parser->next_query() ) {
-			$ast = $parser->get_query_ast();
-			if ( null === $ast ) {
-				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
-			}
-			yield $ast;
-		}
+		return new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
 	}
 
 	/**

@@ -64,8 +64,14 @@ class WP_SQLite_Information_Schema_Reconstructor {
 				throw new Exception( 'The "wp_get_db_schema()" function was not defined.' );
 			}
 			$schema = wp_get_db_schema();
-			foreach ( $this->driver->parse_query( $schema ) as $query ) {
-				$create_node = $query->get_first_descendant_node( 'createStatement' );
+			$parser = $this->driver->create_parser( $schema );
+			while ( $parser->next_query() ) {
+				$ast = $parser->get_query_ast();
+				if ( null === $ast ) {
+					throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+				}
+
+				$create_node = $ast->get_first_descendant_node( 'createStatement' );
 				if ( $create_node && $create_node->has_child_node( 'createTable' ) ) {
 					$name_node = $create_node->get_first_descendant_node( 'tableName' );
 					$name      = $this->unquote_mysql_identifier(
@@ -86,7 +92,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 				} else {
 					// Other table (a WordPress plugin or unrelated to WordPress).
 					$sql = $this->generate_create_table_statement( $table );
-					$ast = $this->driver->parse_query( $sql )->current();
+					$ast = $this->driver->create_parser( $sql )->parse();
+					if ( null === $ast ) {
+						throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+					}
 				}
 				$this->information_schema_builder->record_create_table( $ast );
 			}
@@ -96,7 +105,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		foreach ( $information_schema_tables as $table ) {
 			if ( ! in_array( $table, $tables, true ) ) {
 				$sql = sprintf( 'DROP %s', $this->quote_sqlite_identifier( $table ) );
-				$ast = $this->driver->parse_query( $sql )->current();
+				$ast = $this->driver->create_parser( $sql )->parse();
+				if ( null === $ast ) {
+					throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+				}
 				$this->information_schema_builder->record_drop_table( $ast );
 			}
 		}
