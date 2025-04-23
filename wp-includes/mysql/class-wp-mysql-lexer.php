@@ -2249,9 +2249,9 @@ class WP_MySQL_Lexer {
 		}
 		return new WP_MySQL_Token(
 			$this->token_type,
-			$this->get_current_token_bytes(),
 			$this->token_starts_at,
-			$this->bytes_already_read - $this->token_starts_at
+			$this->bytes_already_read - $this->token_starts_at,
+			$this->sql
 		);
 	}
 

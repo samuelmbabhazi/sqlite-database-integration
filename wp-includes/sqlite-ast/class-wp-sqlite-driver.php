@@ -1525,7 +1525,7 @@ class WP_SQLite_Driver {
 					sprintf(
 						'statement type: "%s" > "%s"',
 						$node->rule_name,
-						$keyword1->value
+						$keyword1->get_value()
 					)
 				);
 		}
@@ -2045,7 +2045,7 @@ class WP_SQLite_Driver {
 							sprintf(
 								'statement type: "%s" > "%s"',
 								$node->rule_name,
-								$first_token->value
+								$first_token->get_value()
 							)
 						);
 				}
@@ -2057,7 +2057,7 @@ class WP_SQLite_Driver {
 				}
 			}
 
-			$operation = strtolower( $first_token->value );
+			$operation = strtolower( $first_token->get_value() );
 			foreach ( $errors as $error ) {
 				$results[] = (object) array(
 					'Table'    => $this->db_name . '.' . $table_name,
@@ -2181,7 +2181,7 @@ class WP_SQLite_Driver {
 
 				// @TODO: Handle SET and JSON.
 				throw $this->new_not_supported_exception(
-					sprintf( 'data type: %s', $child->value )
+					sprintf( 'data type: %s', $child->get_value() )
 				);
 			case 'fromClause':
 				// FROM DUAL is MySQL-specific syntax that means "FROM no tables"
@@ -2239,7 +2239,7 @@ class WP_SQLite_Driver {
 					'%s AS %s',
 					$value,
 					$this->quote_sqlite_identifier(
-						'@@' . ( $type_token ? "$type_token->value." : '' ) . $original_name
+						'@@' . ( $type_token ? "{$type_token->get_value()}." : '' ) . $original_name
 					)
 				);
 			case 'castType':
@@ -2290,7 +2290,7 @@ class WP_SQLite_Driver {
 				 */
 				return null;
 			default:
-				return $token->value;
+				return $token->get_value();
 		}
 	}
 
@@ -2333,8 +2333,8 @@ class WP_SQLite_Driver {
 		/*
 		 * 1. Remove bounding quotes.
 		 */
-		$quote = $token->value[0];
-		$value = substr( $token->value, 1, -1 );
+		$quote = $token->get_value()[0];
+		$value = substr( $token->get_value(), 1, -1 );
 
 		/*
 		 * 2. Normalize escaping of "%" and "_" characters.
@@ -2420,13 +2420,13 @@ class WP_SQLite_Driver {
 		$token = $node->get_first_child_token();
 
 		if ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-			$value = substr( $token->value, 1, -1 );
+			$value = substr( $token->get_value(), 1, -1 );
 			$value = str_replace( '""', '"', $value );
 		} elseif ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
-			$value = substr( $token->value, 1, -1 );
+			$value = substr( $token->get_value(), 1, -1 );
 			$value = str_replace( '``', '`', $value );
 		} else {
-			$value = $token->value;
+			$value = $token->get_value();
 		}
 
 		return '`' . str_replace( '`', '``', $value ) . '`';

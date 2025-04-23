@@ -568,7 +568,7 @@ class WP_SQLite_Information_Schema_Builder {
 					continue;
 				}
 
-				throw new \Exception( sprintf( 'Unsupported ALTER TABLE ADD action: %s', $first_token->value ) );
+				throw new \Exception( sprintf( 'Unsupported ALTER TABLE ADD action: %s', $first_token->get_value() ) );
 			}
 
 			// CHANGE [COLUMN]
@@ -1353,7 +1353,7 @@ class WP_SQLite_Information_Schema_Builder {
 		) {
 			$type = 'mediumtext';
 		} else {
-			throw new \RuntimeException( 'Unknown data type: ' . $token->value );
+			throw new \RuntimeException( 'Unknown data type: ' . $token->get_value() );
 		}
 
 		// Get full type.
@@ -1619,8 +1619,8 @@ class WP_SQLite_Information_Schema_Builder {
 		$precision_node = $node->get_first_descendant_node( 'precision' );
 		if ( null !== $precision_node ) {
 			$values    = $precision_node->get_descendant_tokens( WP_MySQL_Lexer::INT_NUMBER );
-			$precision = (int) $values[0]->value;
-			$scale     = (int) $values[1]->value;
+			$precision = (int) $values[0]->get_value();
+			$scale     = (int) $values[1]->get_value();
 		}
 
 		if ( 'float' === $data_type ) {
@@ -1865,20 +1865,20 @@ class WP_SQLite_Information_Schema_Builder {
 			if ( $child instanceof WP_Parser_Node ) {
 				$value = $this->get_value( $child );
 			} elseif ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $child->id ) {
-				$value = substr( $child->value, 1, -1 );
+				$value = substr( $child->get_value(), 1, -1 );
 				$value = str_replace( '``', '`', $value );
 			} elseif ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $child->id ) {
-				$value = $child->value;
+				$value = $child->get_value();
 				$value = substr( $value, 1, -1 );
 				$value = str_replace( '\"', '"', $value );
 				$value = str_replace( '""', '"', $value );
 			} elseif ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $child->id ) {
-				$value = $child->value;
+				$value = $child->get_value();
 				$value = substr( $value, 1, -1 );
 				$value = str_replace( '\"', '"', $value );
 				$value = str_replace( '""', '"', $value );
 			} else {
-				$value = $child->value;
+				$value = $child->get_value();
 			}
 			$full_value .= $value;
 		}
