@@ -38,6 +38,20 @@ class WP_SQLite_DB extends wpdb {
 	 * @param string $dbname Database name.
 	 */
 	public function __construct( $dbname ) {
+		/**
+		 * We need to initialize the "$wpdb" global early, so that the SQLite
+		 * driver can configure the database. The call stack goes like this:
+		 *
+		 *   1. The "parent::__construct()" call executes "$this->db_connect()".
+		 *   2. The database connection call initializes the SQLite driver.
+		 *   3. The SQLite driver initializes and runs "WP_SQLite_Configurator".
+		 *   4. The configurator uses "WP_SQLite_Information_Schema_Reconstructor",
+		 *      which requires "wp-admin/includes/schema.php" when in WordPress.
+		 *   5. The "wp-admin/includes/schema.php" requires the "$wpdb" global,
+		 *      which creates a circular dependency.
+		 */
+		$GLOBALS['wpdb'] = $this;
+
 		parent::__construct( '', '', $dbname, '' );
 		$this->charset = 'utf8mb4';
 	}

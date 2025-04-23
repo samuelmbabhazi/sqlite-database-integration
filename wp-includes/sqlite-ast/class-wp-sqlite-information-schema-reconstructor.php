@@ -57,10 +57,6 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// In WordPress, use "wp_get_db_schema()" to reconstruct WordPress tables.
 		$wp_tables = array();
 		if ( defined( 'ABSPATH' ) ) {
-			if ( wp_installing() ) {
-				// Avoid interfering with WordPress installation.
-				return;
-			}
 			if ( file_exists( ABSPATH . 'wp-admin/includes/schema.php' ) ) {
 				require_once ABSPATH . 'wp-admin/includes/schema.php';
 			}
