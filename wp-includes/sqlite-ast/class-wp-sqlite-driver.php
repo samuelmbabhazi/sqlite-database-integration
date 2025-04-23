@@ -655,7 +655,7 @@ class WP_SQLite_Driver {
 
 		try {
 			// Parse the MySQL query.
-			$ast = $this->parse_query( $query );
+			$ast = $this->parse_query( $query )->current();
 
 			// Handle transaction commands.
 
@@ -728,23 +728,24 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Parse a MySQL query into an AST.
+	 * Parse a MySQL query into an array of ASTs.
 	 *
-	 * @param  string         $query      The MySQL query to parse.
-	 * @return WP_Parser_Node             The AST representing the parsed query.
+	 * @param  string           $query    The MySQL query to parse.
+	 * @return Generator<WP_Parser_Node>  A generator of ASTs representing the queries parsed from the input.
 	 * @throws WP_SQLite_Driver_Exception When the query parsing fails.
 	 */
-	public function parse_query( string $query ): WP_Parser_Node {
+	public function parse_query( string $query ): Generator {
 		$lexer  = new WP_MySQL_Lexer( $query );
 		$tokens = $lexer->remaining_tokens();
 
 		$parser = new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
-		$ast    = $parser->parse();
-
-		if ( null === $ast ) {
-			throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+		while ( $parser->next_ast() ) {
+			$ast = $parser->get_ast();
+			if ( null === $ast ) {
+				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+			}
+			yield $ast;
 		}
-		return $ast;
 	}
 
 	/**

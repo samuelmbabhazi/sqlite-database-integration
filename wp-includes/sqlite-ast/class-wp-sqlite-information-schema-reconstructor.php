@@ -64,12 +64,16 @@ class WP_SQLite_Information_Schema_Reconstructor {
 				throw new Exception( 'The "wp_get_db_schema()" function was not defined.' );
 			}
 			$schema = wp_get_db_schema();
-			$parts  = preg_split( '/(CREATE\s+TABLE)/', $schema, -1, PREG_SPLIT_NO_EMPTY );
-			foreach ( $parts as $part ) {
-				$name               = $this->unquote_mysql_identifier(
-					preg_split( '/\s+/', $part, 2, PREG_SPLIT_NO_EMPTY )[0]
-				);
-				$wp_tables[ $name ] = 'CREATE TABLE' . $part;
+			foreach ( $this->driver->parse_query( $schema ) as $query ) {
+				$create_node = $query->get_first_descendant_node( 'createStatement' );
+				if ( $create_node && $create_node->has_child_node( 'createTable' ) ) {
+					$name_node = $create_node->get_first_descendant_node( 'tableName' );
+					$name      = $this->unquote_mysql_identifier(
+						substr( $schema, $name_node->get_start(), $name_node->get_length() )
+					);
+
+					$wp_tables[ $name ] = $create_node;
+				}
 			}
 		}
 
@@ -78,12 +82,12 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			if ( ! in_array( $table, $information_schema_tables, true ) ) {
 				if ( isset( $wp_tables[ $table ] ) ) {
 					// WordPress core table (as returned by "wp_get_db_schema()").
-					$sql = $wp_tables[ $table ];
+					$ast = $wp_tables[ $table ];
 				} else {
 					// Other table (a WordPress plugin or unrelated to WordPress).
 					$sql = $this->generate_create_table_statement( $table );
+					$ast = $this->driver->parse_query( $sql )->current();
 				}
-				$ast = $this->driver->parse_query( $sql );
 				$this->information_schema_builder->record_create_table( $ast );
 			}
 		}
@@ -92,7 +96,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		foreach ( $information_schema_tables as $table ) {
 			if ( ! in_array( $table, $tables, true ) ) {
 				$sql = sprintf( 'DROP %s', $this->quote_sqlite_identifier( $table ) );
-				$ast = $this->driver->parse_query( $sql );
+				$ast = $this->driver->parse_query( $sql )->current();
 				$this->information_schema_builder->record_drop_table( $ast );
 			}
 		}
