@@ -277,8 +277,6 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @return string              The MySQL key definition.
 	 */
 	private function get_key_definition( array $key, array $key_columns, array $data_types ): string {
-		$key_length_limit = 100;
-
 		// Key definition.
 		$definition = array();
 		if ( $key['unique'] ) {
@@ -293,24 +291,40 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// Key columns.
 		$cols = array();
 		foreach ( $key_columns as $column ) {
-			// Get data type and length.
-			$data_type = strtolower( $data_types[ $column['name'] ] );
-			if ( 1 === preg_match( '/^(\w+)\s*\(\s*(\d+)\s*\)/', $data_type, $matches ) ) {
-				$data_type   = $matches[1]; // "varchar"
-				$data_length = min( $matches[2], $key_length_limit ); // "255"
-			}
+			/*
+			 * Extract type and length from column data type definition.
+			 *
+			 * This is required when the column data type is inferred from the
+			 * '_mysql_data_types_cache' table, which stores the data type in
+			 * the format "type(length)", such as "varchar(255)".
+			 */
+			$max_prefix_length = 100;
+			$type              = strtolower( $data_types[ $column['name'] ] );
+			$parts             = explode( '(', $type );
+			$column_type       = $parts[0];
+			$column_length     = isset( $parts[1] ) ? (int) $parts[1] : null;
 
-			// Apply max length if needed.
+			/*
+			 * Add an index column prefix length, if needed.
+			 *
+			 * This is required for "text" and "blob" types for columns inferred
+			 * directly from the SQLite schema, and for the following types for
+			 * columns inferred from the '_mysql_data_types_cache' table:
+			 *   char, varchar
+			 *   text, tinytext, mediumtext, longtext
+			 *   blob, tinyblob, mediumblob, longblob
+			 *   varbinary
+			 */
 			if (
-				str_contains( $data_type, 'char' )
-				|| str_starts_with( $data_type, 'var' )
-				|| str_ends_with( $data_type, 'text' )
-				|| str_ends_with( $data_type, 'blob' )
+				str_ends_with( $column_type, 'char' )
+				|| str_ends_with( $column_type, 'text' )
+				|| str_ends_with( $column_type, 'blob' )
+				|| str_starts_with( $column_type, 'var' )
 			) {
 				$cols[] = sprintf(
 					'%s(%d)',
 					$this->quote_sqlite_identifier( $column['name'] ),
-					$data_length ?? $key_length_limit
+					min( $column_length ?? $max_prefix_length, $max_prefix_length )
 				);
 			} else {
 				$cols[] = $this->quote_sqlite_identifier( $column['name'] );
