@@ -3,6 +3,14 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
+	const CREATE_DATA_TYPES_CACHE_TABLE_SQL = '
+		CREATE TABLE _mysql_data_types_cache (
+			`table` TEXT NOT NULL,
+			`column_or_index` TEXT NOT NULL,
+			`mysql_type` TEXT NOT NULL,
+			PRIMARY KEY(`table`, `column_or_index`)
+	)';
+
 	/** @var WP_SQLite_Driver */
 	private $engine;
 
@@ -107,8 +115,8 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 					'  PRIMARY KEY (`id`),',
 					'  KEY `idx_role_score` (`role`(100), `priority`),',
 					'  KEY `idx_score` (`score`),',
-					'  UNIQUE KEY `sqlite_autoindex_t_2` (`name`(100)),',
-					'  UNIQUE KEY `sqlite_autoindex_t_1` (`email`(100))',
+					'  UNIQUE KEY `name` (`name`(100)),',
+					'  UNIQUE KEY `email` (`email`(100))',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
 				)
 			),
@@ -160,6 +168,54 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 					'  KEY `type_status_date` (`post_type`, `post_status`, `post_date`, `ID`),',
 					'  KEY `post_parent` (`post_parent`),',
 					'  KEY `post_author` (`post_author`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
+	public function testReconstructInformationSchemaFromMysqlDataTypesCache(): void {
+		$pdo = $this->engine->get_pdo();
+
+		$pdo->exec( self::CREATE_DATA_TYPES_CACHE_TABLE_SQL );
+		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'id', 'int unsigned')" );
+		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'name', 'varchar(255)')" );
+		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'description', 'text')" );
+		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'shape', 'geomcollection')" );
+		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_name', 'KEY')" );
+		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_description', 'FULLTEXT')" );
+		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_shape', 'SPATIAL')" );
+
+		$this->engine->get_pdo()->exec(
+			'
+			CREATE TABLE t (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				name TEXT,
+				description TEXT,
+				shape TEXT NOT NULL
+			)
+		'
+		);
+		$this->engine->get_pdo()->exec( 'CREATE INDEX t__idx_name ON t (name)' );
+		$this->engine->get_pdo()->exec( 'CREATE INDEX t__idx_description ON t (description)' );
+		$this->engine->get_pdo()->exec( 'CREATE INDEX t__idx_shape ON t (shape)' );
+
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int unsigned NOT NULL AUTO_INCREMENT,',
+					'  `name` varchar(255) DEFAULT NULL,',
+					'  `description` text DEFAULT NULL,',
+					'  `shape` geomcollection NOT NULL,',
+					'  PRIMARY KEY (`id`),',
+					'  SPATIAL KEY `idx_shape` (`shape`(32)),',
+					'  FULLTEXT KEY `idx_description` (`description`(100)),',
+					'  KEY `idx_name` (`name`(100))',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
 				)
 			),

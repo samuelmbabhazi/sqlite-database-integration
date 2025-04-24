@@ -3459,7 +3459,12 @@ class WP_SQLite_Driver {
 			} else {
 				$is_unique = '0' === $info['NON_UNIQUE'];
 
-				$sql  = sprintf( '  %sKEY ', $is_unique ? 'UNIQUE ' : '' );
+				$sql  = sprintf(
+					'  %s%s%sKEY ',
+					$is_unique ? 'UNIQUE ' : '',
+					'FULLTEXT' === $info['INDEX_TYPE'] ? 'FULLTEXT ' : '',
+					'SPATIAL' === $info['INDEX_TYPE'] ? 'SPATIAL ' : ''
+				);
 				$sql .= $this->quote_mysql_identifier( $info['INDEX_NAME'] );
 				$sql .= ' (';
 				$sql .= implode(

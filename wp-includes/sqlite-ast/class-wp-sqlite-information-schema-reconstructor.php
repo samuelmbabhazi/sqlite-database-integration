@@ -125,11 +125,13 @@ class WP_SQLite_Information_Schema_Reconstructor {
 				SELECT name
 				FROM sqlite_schema
 				WHERE type = 'table'
+				AND name != ?
 				AND name NOT LIKE ? ESCAPE '\'
 				AND name NOT LIKE ? ESCAPE '\'
 				ORDER BY name
 			",
 			array(
+				'_mysql_data_types_cache',
 				'sqlite\_%',
 				str_replace( '_', '\_', WP_SQLite_Driver::RESERVED_PREFIX ) . '%',
 			)
@@ -160,15 +162,15 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			sprintf( 'PRAGMA table_xinfo("%s")', $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
-		$definitions = array();
-		$data_types  = array();
+		$definitions  = array();
+		$column_types = array();
 		foreach ( $columns as $column ) {
 			$mysql_type = $this->get_cached_mysql_data_type( $table_name, $column['name'] );
 			if ( null === $mysql_type ) {
 				$mysql_type = $this->get_mysql_data_type( $column['type'] );
 			}
-			$definitions[]                 = $this->get_column_definition( $table_name, $column );
-			$data_types[ $column['name'] ] = $mysql_type;
+			$definitions[]                   = $this->get_column_definition( $table_name, $column );
+			$column_types[ $column['name'] ] = $mysql_type;
 		}
 
 		// Primary key.
@@ -199,18 +201,12 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		foreach ( $keys as $key ) {
-			$key_columns = $this->driver->execute_sqlite_query(
-				'SELECT * FROM pragma_index_info("' . $key['name'] . '")'
-			)->fetchAll( PDO::FETCH_ASSOC );
-
-			// If the PK columns are the same as the UK columns, skip the key.
-			// This is because a primary key is already unique in MySQL.
-			$key_equals_pk = ! array_diff( $pk_columns, array_column( $key_columns, 'name' ) );
-			$is_auto_index = strpos( $key['name'], 'sqlite_autoindex_' ) === 0;
-			if ( $is_auto_index && $key['unique'] && $key_equals_pk ) {
+			// Skip the internal index that SQLite may create for a primary key.
+			// In MySQL, no explicit index needs to be defined for a primary key.
+			if ( 'pk' === $key['origin'] ) {
 				continue;
 			}
-			$definitions[] = $this->get_key_definition( $key, $key_columns, $data_types );
+			$definitions[] = $this->get_key_definition( $table_name, $key, $column_types );
 		}
 
 		return sprintf(
@@ -271,25 +267,52 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 *
 	 * This method generates a MySQL key definition from SQLite key data.
 	 *
-	 * @param  array  $key         The SQLite key information.
-	 * @param  array  $key_columns The SQLite key column information.
-	 * @param  array  $data_types  The MySQL data types of the columns.
-	 * @return string              The MySQL key definition.
+	 * @param  string $table_name   The name of the table.
+	 * @param  array  $key          The SQLite key information.
+	 * @param  array  $column_types The MySQL data types of the columns.
+	 * @return string               The MySQL key definition.
 	 */
-	private function get_key_definition( array $key, array $key_columns, array $data_types ): string {
-		// Key definition.
+	private function get_key_definition( string $table_name, array $key, array $column_types ): string {
 		$definition = array();
-		if ( $key['unique'] ) {
-			$definition[] = 'UNIQUE';
-		}
-		$definition[] = 'KEY';
 
-		// Remove the prefix from the index name if there is any. We use __ as a separator.
-		$index_name   = explode( '__', $key['name'], 2 )[1] ?? $key['name'];
-		$definition[] = $this->quote_sqlite_identifier( $index_name );
+		// Key type.
+		$cached_type = $this->get_cached_mysql_data_type( $table_name, $key['name'] );
+		if ( 'FULLTEXT' === $cached_type ) {
+			$definition[] = 'FULLTEXT KEY';
+		} elseif ( 'SPATIAL' === $cached_type ) {
+			$definition[] = 'SPATIAL KEY';
+		} elseif ( 'UNIQUE' === $cached_type || '1' === $key['unique'] ) {
+			$definition[] = 'UNIQUE KEY';
+		} else {
+			$definition[] = 'KEY';
+		}
+
+		// Key name.
+		$name = $key['name'];
+
+		/*
+		 * The SQLite driver prefixes index names with "{$table_name}__" to avoid
+		 * naming conflicts among tables in SQLite. We need to remove the prefix.
+		 */
+		if ( str_starts_with( $name, "{$table_name}__" ) ) {
+			$name = substr( $name, strlen( "{$table_name}__" ) );
+		}
+
+		/**
+		 * SQLite creates automatic internal indexes for primary and unique keys,
+		 * naming them in format "sqlite_autoindex_{$table_name}_{$index_id}".
+		 * For these internal indexes, we need to skip their name, so that in
+		 * the generated MySQL definition, they follow implicit MySQL naming.
+		 */
+		if ( ! str_starts_with( $name, 'sqlite_autoindex_' ) ) {
+			$definition[] = $this->quote_sqlite_identifier( $name );
+		}
 
 		// Key columns.
-		$cols = array();
+		$key_columns = $this->driver->execute_sqlite_query(
+			'SELECT * FROM pragma_index_info("' . $key['name'] . '")'
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$cols        = array();
 		foreach ( $key_columns as $column ) {
 			/*
 			 * Extract type and length from column data type definition.
@@ -299,7 +322,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			 * the format "type(length)", such as "varchar(255)".
 			 */
 			$max_prefix_length = 100;
-			$type              = strtolower( $data_types[ $column['name'] ] );
+			$type              = strtolower( $column_types[ $column['name'] ] );
 			$parts             = explode( '(', $type );
 			$column_type       = $parts[0];
 			$column_length     = isset( $parts[1] ) ? (int) $parts[1] : null;
@@ -362,6 +385,12 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * that was used by an old version of the SQLite driver and that is otherwise
 	 * no longer needed. This is more precise than direct inference from SQLite.
 	 *
+	 * For columns, it returns full column type, including prefix length, e.g.:
+	 *   int(11), bigint(20) unsigned, varchar(255), longtext
+	 *
+	 * For indexes, it returns one of:
+	 *   KEY, PRIMARY, UNIQUE, FULLTEXT, SPATIAL
+	 *
 	 * @param  string      $table_name           The table name.
 	 * @param  string      $column_or_index_name The column or index name.
 	 * @return string|null                       The MySQL definition, or null when not found.
@@ -378,6 +407,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			}
 			throw $e;
 		}
+
+		// Normalize index type for backward compatibility. Some older versions
+		// of the SQLite driver stored index types with a " KEY" suffix, e.g.,
+		// "PRIMARY KEY" or "UNIQUE KEY". More recent versions omit the suffix.
 		if ( str_ends_with( $mysql_type, ' KEY' ) ) {
 			$mysql_type = substr( $mysql_type, 0, strlen( $mysql_type ) - strlen( ' KEY' ) );
 		}
