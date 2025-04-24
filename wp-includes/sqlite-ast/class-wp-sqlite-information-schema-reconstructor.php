@@ -369,9 +369,27 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		if ( null === $default_value || '' === $default_value ) {
 			return false;
 		}
+		$mysql_type = strtolower( $mysql_type );
+
+		/*
+		 * In MySQL, geometry columns can't have a default value.
+		 *
+		 * Geometry columns are saved as TEXT in SQLite, and in an older version
+		 * of the SQLite driver, TEXT columns were assigned a default value of ''.
+		 */
+		if ( 'geomcollection' === $mysql_type || 'geometrycollection' === $mysql_type ) {
+			return false;
+		}
+
+		/*
+		 * In MySQL, date/time columns can't have a default value of ''.
+		 *
+		 * Date/time columns are saved as TEXT in SQLite, and in an older version
+		 * of the SQLite driver, TEXT columns were assigned a default value of ''.
+		 */
 		if (
 			"''" === $default_value
-			&& in_array( strtolower( $mysql_type ), array( 'datetime', 'date', 'time', 'timestamp', 'year' ), true )
+			&& in_array( $mysql_type, array( 'datetime', 'date', 'time', 'timestamp', 'year' ), true )
 		) {
 			return false;
 		}
