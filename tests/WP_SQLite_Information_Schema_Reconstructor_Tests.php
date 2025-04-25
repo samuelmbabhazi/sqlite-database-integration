@@ -30,9 +30,9 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 			$GLOBALS['table_prefix'] = 'wptests_';
 		}
 		if ( ! isset( $GLOBALS['wpdb'] ) ) {
-			$GLOBALS['wpdb']                  = new stdClass();
-			$GLOBALS['wpdb']->suppress_errors = false;
-			$GLOBALS['wpdb']->show_errors     = true;
+			$GLOBALS['wpdb'] = new class() {
+				public function set_prefix( string $prefix ): void {}
+			};
 		}
 
 		// Mock symbols that are used for WordPress table reconstruction.

@@ -145,20 +145,33 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			throw new Exception( 'The "wp_get_db_schema()" function was not defined.' );
 		}
 
-		// Get schema for global tables and the main site.
-		$schema = wp_get_db_schema();
+		/*
+		 * At this point, WPDB may not yet be initialized, as we're configuring
+		 * the database connection. Let's only populate the table names using
+		 * the "$table_prefix" global so we can get correct table names.
+		 */
+		global $wpdb, $table_prefix;
+		$wpdb->set_prefix( $table_prefix );
+
+		// Get schema for global tables.
+		$schema = wp_get_db_schema( 'global' );
 
 		// For multisite installs, add schema definitions for all sites.
 		if ( is_multisite() ) {
-			$site_ids = get_sites(
-				array(
-					'fields' => 'ids',
-					'number' => PHP_INT_MAX,
-				)
-			);
-			foreach ( $site_ids as $site_id ) {
-				$schema .= wp_get_db_schema( 'blog', $site_id );
+			/*
+			 * We need to use a database query over the "get_sites()" function,
+			 * as WPDB may not yet initialized. Moreover, we need to get the IDs
+			 * of all existing blogs, independent of any filters and actions that
+			 * could possibly alter the results of a "get_sites()" call.
+			 */
+			$stmt     = $this->driver->execute_sqlite_query( "SELECT blog_id FROM {$wpdb->blogs}" );
+			$blog_ids = $stmt->fetchAll( PDO::FETCH_COLUMN );
+			foreach ( $blog_ids as $blog_id ) {
+				$schema .= wp_get_db_schema( 'blog', (int) $blog_id );
 			}
+		} else {
+			// For single site installs, add schema for the main site.
+			$schema .= wp_get_db_schema( 'blog' );
 		}
 
 		// Parse the schema.
