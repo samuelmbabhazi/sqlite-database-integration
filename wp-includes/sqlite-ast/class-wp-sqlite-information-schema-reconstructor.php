@@ -267,6 +267,23 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		if ( null === $mysql_type ) {
 			$mysql_type = $this->get_mysql_column_type( $column_info['type'] );
 		}
+
+		/**
+		 * Correct some column types based on their default values:
+		 *   1. In MySQL, non-datetime columns can't have a timestamp default.
+		 *      Let's use DATETIME when default is set to CURRENT_TIMESTAMP.
+		 *   2. In MySQL, TEXT and BLOB columns can't have a default value.
+		 *      Let's use VARCHAR(65535) and VARBINARY(65535) when default is set.
+		 */
+		$default = $this->generate_column_default( $mysql_type, $column_info['dflt_value'] );
+		if ( 'CURRENT_TIMESTAMP' === $default ) {
+			$mysql_type = 'datetime';
+		} elseif ( 'text' === $mysql_type && null !== $default ) {
+			$mysql_type = 'varchar(65535)';
+		} elseif ( 'blob' === $mysql_type && null !== $default ) {
+			$mysql_type = 'varbinary(65535)';
+		}
+
 		$definition[] = $mysql_type;
 
 		// NULL/NOT NULL.
@@ -288,8 +305,8 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		}
 
 		// Default value.
-		if ( $this->column_has_default( $mysql_type, $column_info['dflt_value'] ) && ! $is_auto_increment ) {
-			$definition[] = 'DEFAULT ' . $column_info['dflt_value'];
+		if ( null !== $default && ! $is_auto_increment ) {
+			$definition[] = 'DEFAULT ' . $default;
 		}
 
 		return implode( ' ', $definition );
@@ -392,15 +409,15 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	}
 
 	/**
-	 * Determine if a column has a default value.
+	 * Generate a MySQL default value from an SQLite default value.
 	 *
 	 * @param  string      $mysql_type    The MySQL data type of the column.
 	 * @param  string|null $default_value The default value of the SQLite column.
-	 * @return bool                       True if the column has a default value, false otherwise.
+	 * @return string|null                The default value, or null if the column has no default value.
 	 */
-	private function column_has_default( string $mysql_type, ?string $default_value ): bool {
+	private function generate_column_default( string $mysql_type, ?string $default_value ): ?string {
 		if ( null === $default_value || '' === $default_value ) {
-			return false;
+			return null;
 		}
 		$mysql_type = strtolower( $mysql_type );
 
@@ -411,7 +428,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		 * of the SQLite driver, TEXT columns were assigned a default value of ''.
 		 */
 		if ( 'geomcollection' === $mysql_type || 'geometrycollection' === $mysql_type ) {
-			return false;
+			return null;
 		}
 
 		/*
@@ -424,9 +441,69 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			"''" === $default_value
 			&& in_array( $mysql_type, array( 'datetime', 'date', 'time', 'timestamp', 'year' ), true )
 		) {
-			return false;
+			return null;
 		}
-		return true;
+
+		/**
+		 * Convert SQLite default values to MySQL default values.
+		 *
+		 * See:
+		 *   - https://www.sqlite.org/syntax/column-constraint.html
+		 *   - https://www.sqlite.org/syntax/literal-value.html
+		 *   - https://www.sqlite.org/lang_expr.html#literal_values_constants_
+		 */
+
+		// Quoted string literal. E.g.: 'abc', "abc", `abc`
+		$first_byte = $default_value[0] ?? null;
+		if ( '"' === $first_byte || "'" === $first_byte || '`' === $first_byte ) {
+			return $this->escape_mysql_string_literal( substr( $default_value, 1, -1 ) );
+		}
+
+		// Normalize the default value to for easier comparison.
+		$uppercase_default_value = strtoupper( $default_value );
+
+		// NULL, TRUE, FALSE.
+		if ( 'NULL' === $uppercase_default_value ) {
+			// DEFAULT NULL is the same as no default value.
+			return null;
+		} elseif ( 'TRUE' === $uppercase_default_value ) {
+			return '1';
+		} elseif ( 'FALSE' === $uppercase_default_value ) {
+			return '0';
+		}
+
+		// Date/time values.
+		if ( 'CURRENT_TIMESTAMP' === $uppercase_default_value ) {
+			return 'CURRENT_TIMESTAMP';
+		} elseif ( 'CURRENT_DATE' === $uppercase_default_value ) {
+			return null; // Not supported in MySQL.
+		} elseif ( 'CURRENT_TIME' === $uppercase_default_value ) {
+			return null; // Not supported in MySQL.
+		}
+
+		// SQLite supports underscores in all numeric literals.
+		$no_underscore_default_value = str_replace( '_', '', $default_value );
+
+		// Numeric literals. E.g.: 123, 1.23, -1.23, 1e3, 1.2e-3
+		if ( is_numeric( $no_underscore_default_value ) ) {
+			return $no_underscore_default_value;
+		}
+
+		// HEX literals (numeric). E.g.: 0x1a2f, 0X1A2F
+		$value = filter_var( $no_underscore_default_value, FILTER_VALIDATE_INT, FILTER_FLAG_ALLOW_HEX );
+		if ( false !== $value ) {
+			return $value;
+		}
+
+		// BLOB literals (string). E.g.: x'1a2f', X'1A2F'
+		// Checking the prefix is enough as SQLite doesn't allow malformed values.
+		if ( str_starts_with( $uppercase_default_value, "X'" ) ) {
+			// Convert the hex string to ASCII bytes.
+			return "'" . pack( 'H*', substr( $default_value, 2, -1 ) ) . "'";
+		}
+
+		// Unquoted string literal. E.g.: abc
+		return $this->escape_mysql_string_literal( $default_value );
 	}
 
 	/**
@@ -523,6 +600,17 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		 * See: https://sqlite.org/datatype3.html#type_affinity
 		 */
 		return 'text';
+	}
+
+	/**
+	 * Escape a string literal for MySQL DEFAULT values.
+	 *
+	 * @param  string $literal The string literal to escape.
+	 * @return string          The escaped string literal.
+	 */
+	private function escape_mysql_string_literal( string $literal ): string {
+		// See: https://www.php.net/manual/en/mysqli.real-escape-string.php
+		return "'" . addcslashes( $literal, "\0\n\r'\"\Z" ) . "'";
 	}
 
 	/**

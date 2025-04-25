@@ -223,6 +223,64 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
+	public function testDefaultValues(): void {
+		$this->engine->get_pdo()->exec(
+			"
+			CREATE TABLE t (
+				col1 text DEFAULT abc,
+				col2 text DEFAULT 'abc',
+				col3 text DEFAULT \"abc\",
+				col4 text DEFAULT NULL,
+				col5 int DEFAULT TRUE,
+				col6 int DEFAULT FALSE,
+				col7 int DEFAULT 123,
+				col8 real DEFAULT 1.23,
+				col9 real DEFAULT -1.23,
+				col10 real DEFAULT 1e3,
+				col11 real DEFAULT 1.2e-3,
+				col12 int DEFAULT 0x1a2f,
+				col13 int DEFAULT 0X1A2f,
+				col14 blob DEFAULT x'4142432E',
+				col15 blob DEFAULT x'4142432E',
+				col16 text DEFAULT CURRENT_TIMESTAMP,
+				col17 text DEFAULT CURRENT_DATE,
+				col18 text DEFAULT CURRENT_TIME
+			)
+		"
+		);
+
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					"  `col1` varchar(65535) DEFAULT 'abc',",
+					"  `col2` varchar(65535) DEFAULT 'abc',",
+					"  `col3` varchar(65535) DEFAULT 'abc',",
+					'  `col4` text DEFAULT NULL,',
+					"  `col5` int DEFAULT '1',",
+					"  `col6` int DEFAULT '0',",
+					"  `col7` int DEFAULT '123',",
+					"  `col8` float DEFAULT '1.23',",
+					"  `col9` float DEFAULT '-1.23',",
+					"  `col10` float DEFAULT '1e3',",
+					"  `col11` float DEFAULT '1.2e-3',",
+					"  `col12` int DEFAULT '6703',",
+					"  `col13` int DEFAULT '6703',",
+					"  `col14` varbinary(65535) DEFAULT 'ABC.',",
+					"  `col15` varbinary(65535) DEFAULT 'ABC.',",
+					'  `col16` datetime DEFAULT CURRENT_TIMESTAMP,',
+					'  `col17` text DEFAULT NULL,',
+					'  `col18` text DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
 	private function assertQuery( $sql ) {
 		$retval = $this->engine->query( $sql );
 		$this->assertNotFalse( $retval );
