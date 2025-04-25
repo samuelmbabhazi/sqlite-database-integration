@@ -23,30 +23,30 @@ class WP_SQLite_Configurator {
 	 *
 	 * @var WP_SQLite_Information_Schema_Builder
 	 */
-	private $information_schema_builder;
+	private $schema_builder;
 
 	/**
 	 * A service for reconstructing the MySQL INFORMATION_SCHEMA tables in SQLite.
 	 *
 	 * @var WP_SQLite_Information_Schema_Reconstructor
 	 */
-	private $information_schema_reconstructor;
+	private $schema_reconstructor;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param WP_SQLite_Driver                     $driver                     The SQLite driver instance.
-	 * @param WP_SQLite_Information_Schema_Builder $information_schema_builder The information schema builder instance.
+	 * @param WP_SQLite_Driver                     $driver         The SQLite driver instance.
+	 * @param WP_SQLite_Information_Schema_Builder $schema_builder The information schema builder instance.
 	 */
 	public function __construct(
 		WP_SQLite_Driver $driver,
-		WP_SQLite_Information_Schema_Builder $information_schema_builder
+		WP_SQLite_Information_Schema_Builder $schema_builder
 	) {
-		$this->driver                           = $driver;
-		$this->information_schema_builder       = $information_schema_builder;
-		$this->information_schema_reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
+		$this->driver               = $driver;
+		$this->schema_builder       = $schema_builder;
+		$this->schema_reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
 			$driver,
-			$information_schema_builder
+			$schema_builder
 		);
 	}
 
@@ -78,8 +78,8 @@ class WP_SQLite_Configurator {
 		$this->driver->execute_sqlite_query( 'BEGIN EXCLUSIVE TRANSACTION' );
 		try {
 			$this->ensure_global_variables_table();
-			$this->information_schema_builder->ensure_information_schema_tables();
-			$this->information_schema_reconstructor->ensure_correct_information_schema();
+			$this->schema_builder->ensure_information_schema_tables();
+			$this->schema_reconstructor->ensure_correct_information_schema();
 			$this->save_current_driver_version();
 		} catch ( Throwable $e ) {
 			$this->driver->execute_sqlite_query( 'ROLLBACK' );

@@ -75,7 +75,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
-	public function testReconstructInformationSchemaTable(): void {
+	public function testReconstructTable(): void {
 		$this->engine->get_pdo()->exec(
 			'
 			CREATE TABLE t (
@@ -124,7 +124,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
-	public function testReconstructInformationSchemaTableWithWpTables(): void {
+	public function testReconstructWpTable(): void {
 		// Create a WP table with any columns.
 		$this->engine->get_pdo()->exec( 'CREATE TABLE wp_posts ( id INTEGER )' );
 
@@ -175,7 +175,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
-	public function testReconstructInformationSchemaFromMysqlDataTypesCache(): void {
+	public function testReconstructTableFromMysqlDataTypesCache(): void {
 		$pdo = $this->engine->get_pdo();
 
 		$pdo->exec( self::CREATE_DATA_TYPES_CACHE_TABLE_SQL );

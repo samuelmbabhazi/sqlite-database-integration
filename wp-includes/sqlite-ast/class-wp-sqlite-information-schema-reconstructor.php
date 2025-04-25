@@ -28,63 +28,37 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 *
 	 * @var WP_SQLite_Information_Schema_Builder
 	 */
-	private $information_schema_builder;
+	private $schema_builder;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param WP_SQLite_Driver                     $driver                     The SQLite driver instance.
-	 * @param WP_SQLite_Information_Schema_Builder $information_schema_builder The information schema builder instance.
+	 * @param WP_SQLite_Driver                     $driver         The SQLite driver instance.
+	 * @param WP_SQLite_Information_Schema_Builder $schema_builder The information schema builder instance.
 	 */
 	public function __construct(
 		WP_SQLite_Driver $driver,
-		WP_SQLite_Information_Schema_Builder $information_schema_builder
+		WP_SQLite_Information_Schema_Builder $schema_builder
 	) {
-		$this->driver                     = $driver;
-		$this->information_schema_builder = $information_schema_builder;
+		$this->driver         = $driver;
+		$this->schema_builder = $schema_builder;
 	}
 
 	/**
 	 * Ensure that the MySQL INFORMATION_SCHEMA data in SQLite is correct.
 	 *
 	 * This method checks if the MySQL INFORMATION_SCHEMA data in SQLite is correct,
-	 * and if it is not, it will reconstruct the data.
+	 * and if it is not, it will reconstruct missing data and remove stale values.
 	 */
 	public function ensure_correct_information_schema(): void {
-		$tables                    = $this->get_existing_table_names();
+		$sqlite_tables             = $this->get_sqlite_table_names();
 		$information_schema_tables = $this->get_information_schema_table_names();
 
 		// In WordPress, use "wp_get_db_schema()" to reconstruct WordPress tables.
-		$wp_tables = array();
-		if ( defined( 'ABSPATH' ) ) {
-			if ( file_exists( ABSPATH . 'wp-admin/includes/schema.php' ) ) {
-				require_once ABSPATH . 'wp-admin/includes/schema.php';
-			}
-			if ( ! function_exists( 'wp_get_db_schema' ) ) {
-				throw new Exception( 'The "wp_get_db_schema()" function was not defined.' );
-			}
-			$schema = wp_get_db_schema();
-			$parser = $this->driver->create_parser( $schema );
-			while ( $parser->next_query() ) {
-				$ast = $parser->get_query_ast();
-				if ( null === $ast ) {
-					throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
-				}
-
-				$create_node = $ast->get_first_descendant_node( 'createStatement' );
-				if ( $create_node && $create_node->has_child_node( 'createTable' ) ) {
-					$name_node = $create_node->get_first_descendant_node( 'tableName' );
-					$name      = $this->unquote_mysql_identifier(
-						substr( $schema, $name_node->get_start(), $name_node->get_length() )
-					);
-
-					$wp_tables[ $name ] = $create_node;
-				}
-			}
-		}
+		$wp_tables = $this->get_wp_create_table_statements();
 
 		// Reconstruct information schema records for tables that don't have them.
-		foreach ( $tables as $table ) {
+		foreach ( $sqlite_tables as $table ) {
 			if ( ! in_array( $table, $information_schema_tables, true ) ) {
 				if ( isset( $wp_tables[ $table ] ) ) {
 					// WordPress core table (as returned by "wp_get_db_schema()").
@@ -97,19 +71,19 @@ class WP_SQLite_Information_Schema_Reconstructor {
 						throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 					}
 				}
-				$this->information_schema_builder->record_create_table( $ast );
+				$this->schema_builder->record_create_table( $ast );
 			}
 		}
 
 		// Remove information schema records for tables that don't exist.
 		foreach ( $information_schema_tables as $table ) {
-			if ( ! in_array( $table, $tables, true ) ) {
+			if ( ! in_array( $table, $sqlite_tables, true ) ) {
 				$sql = sprintf( 'DROP %s', $this->quote_sqlite_identifier( $table ) );
 				$ast = $this->driver->create_parser( $sql )->parse();
 				if ( null === $ast ) {
 					throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 				}
-				$this->information_schema_builder->record_drop_table( $ast );
+				$this->schema_builder->record_drop_table( $ast );
 			}
 		}
 	}
@@ -119,7 +93,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 *
 	 * @return string[] The names of tables in the SQLite database.
 	 */
-	private function get_existing_table_names(): array {
+	private function get_sqlite_table_names(): array {
 		return $this->driver->execute_sqlite_query(
 			"
 				SELECT name
@@ -144,10 +118,53 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @return string[] The names of tables in the information schema.
 	 */
 	private function get_information_schema_table_names(): array {
-		$tables_table = $this->information_schema_builder->get_table_name( false, 'tables' );
+		$tables_table = $this->schema_builder->get_table_name( false, 'tables' );
 		return $this->driver->execute_sqlite_query(
 			"SELECT table_name FROM $tables_table ORDER BY table_name"
 		)->fetchAll( PDO::FETCH_COLUMN );
+	}
+
+	/**
+	 * Get a map of parsed CREATE TABLE statements for WordPress tables.
+	 *
+	 * When reconstructing the information schema data for WordPress tables, we
+	 * can use the "wp_get_db_schema()" function to get accurate CREATE TABLE
+	 * statements. This method parses the result of "wp_get_db_schema()" into
+	 * an array of parsed CREATE TABLE statements indexed by the table names.
+	 *
+	 * @return array<string, WP_Parser_Node> The WordPress CREATE TABLE statements.
+	 */
+	private function get_wp_create_table_statements(): array {
+		if ( ! defined( 'ABSPATH' ) ) {
+			return array();
+		}
+		if ( file_exists( ABSPATH . 'wp-admin/includes/schema.php' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/schema.php';
+		}
+		if ( ! function_exists( 'wp_get_db_schema' ) ) {
+			throw new Exception( 'The "wp_get_db_schema()" function was not defined.' );
+		}
+
+		$schema    = wp_get_db_schema();
+		$parser    = $this->driver->create_parser( $schema );
+		$wp_tables = array();
+		while ( $parser->next_query() ) {
+			$ast = $parser->get_query_ast();
+			if ( null === $ast ) {
+				throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+			}
+
+			$create_node = $ast->get_first_descendant_node( 'createStatement' );
+			if ( $create_node && $create_node->has_child_node( 'createTable' ) ) {
+				$name_node = $create_node->get_first_descendant_node( 'tableName' );
+				$name      = $this->unquote_mysql_identifier(
+					substr( $schema, $name_node->get_start(), $name_node->get_length() )
+				);
+
+				$wp_tables[ $name ] = $create_node;
+			}
+		}
+		return $wp_tables;
 	}
 
 	/**
@@ -167,9 +184,9 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		foreach ( $columns as $column ) {
 			$mysql_type = $this->get_cached_mysql_data_type( $table_name, $column['name'] );
 			if ( null === $mysql_type ) {
-				$mysql_type = $this->get_mysql_data_type( $column['type'] );
+				$mysql_type = $this->get_mysql_column_type( $column['type'] );
 			}
-			$definitions[]                   = $this->get_column_definition( $table_name, $column );
+			$definitions[]                   = $this->generate_column_definition( $table_name, $column );
 			$column_types[ $column['name'] ] = $mysql_type;
 		}
 
@@ -206,7 +223,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			if ( 'pk' === $key['origin'] ) {
 				continue;
 			}
-			$definitions[] = $this->get_key_definition( $table_name, $key, $column_types );
+			$definitions[] = $this->generate_key_definition( $table_name, $key, $column_types );
 		}
 
 		return sprintf(
@@ -225,14 +242,14 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @param  array  $column_info The SQLite column information.
 	 * @return string              The MySQL column definition.
 	 */
-	private function get_column_definition( string $table_name, array $column_info ): string {
+	private function generate_column_definition( string $table_name, array $column_info ): string {
 		$definition   = array();
 		$definition[] = $this->quote_sqlite_identifier( $column_info['name'] );
 
 		// Data type.
 		$mysql_type = $this->get_cached_mysql_data_type( $table_name, $column_info['name'] );
 		if ( null === $mysql_type ) {
-			$mysql_type = $this->get_mysql_data_type( $column_info['type'] );
+			$mysql_type = $this->get_mysql_column_type( $column_info['type'] );
 		}
 		$definition[] = $mysql_type;
 
@@ -268,27 +285,27 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * This method generates a MySQL key definition from SQLite key data.
 	 *
 	 * @param  string $table_name   The name of the table.
-	 * @param  array  $key          The SQLite key information.
+	 * @param  array  $key_info     The SQLite key information.
 	 * @param  array  $column_types The MySQL data types of the columns.
 	 * @return string               The MySQL key definition.
 	 */
-	private function get_key_definition( string $table_name, array $key, array $column_types ): string {
+	private function generate_key_definition( string $table_name, array $key_info, array $column_types ): string {
 		$definition = array();
 
 		// Key type.
-		$cached_type = $this->get_cached_mysql_data_type( $table_name, $key['name'] );
+		$cached_type = $this->get_cached_mysql_data_type( $table_name, $key_info['name'] );
 		if ( 'FULLTEXT' === $cached_type ) {
 			$definition[] = 'FULLTEXT KEY';
 		} elseif ( 'SPATIAL' === $cached_type ) {
 			$definition[] = 'SPATIAL KEY';
-		} elseif ( 'UNIQUE' === $cached_type || '1' === $key['unique'] ) {
+		} elseif ( 'UNIQUE' === $cached_type || '1' === $key_info['unique'] ) {
 			$definition[] = 'UNIQUE KEY';
 		} else {
 			$definition[] = 'KEY';
 		}
 
 		// Key name.
-		$name = $key['name'];
+		$name = $key_info['name'];
 
 		/*
 		 * The SQLite driver prefixes index names with "{$table_name}__" to avoid
@@ -310,7 +327,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 
 		// Key columns.
 		$key_columns = $this->driver->execute_sqlite_query(
-			'SELECT * FROM pragma_index_info("' . $key['name'] . '")'
+			'SELECT * FROM pragma_index_info("' . $key_info['name'] . '")'
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$cols        = array();
 		foreach ( $key_columns as $column ) {
@@ -445,7 +462,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @param  string $column_type The SQLite column type.
 	 * @return string              The MySQL column type.
 	 */
-	private function get_mysql_data_type( string $column_type ): string {
+	private function get_mysql_column_type( string $column_type ): string {
 		$type = strtoupper( $column_type );
 
 		/*
