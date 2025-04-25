@@ -78,12 +78,14 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// Remove information schema records for tables that don't exist.
 		foreach ( $information_schema_tables as $table ) {
 			if ( ! in_array( $table, $sqlite_tables, true ) ) {
-				$sql = sprintf( 'DROP %s', $this->quote_sqlite_identifier( $table ) );
+				$sql = sprintf( 'DROP TABLE %s', $this->quote_sqlite_identifier( $table ) );
 				$ast = $this->driver->create_parser( $sql )->parse();
 				if ( null === $ast ) {
 					throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 				}
-				$this->schema_builder->record_drop_table( $ast );
+				$this->schema_builder->record_drop_table(
+					$ast->get_first_descendant_node( 'dropStatement' )
+				);
 			}
 		}
 	}
