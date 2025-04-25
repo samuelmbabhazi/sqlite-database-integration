@@ -145,7 +145,23 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			throw new Exception( 'The "wp_get_db_schema()" function was not defined.' );
 		}
 
-		$schema    = wp_get_db_schema();
+		// Get schema for global tables and the main site.
+		$schema = wp_get_db_schema();
+
+		// For multisite installs, add schema definitions for all sites.
+		if ( is_multisite() ) {
+			$site_ids = get_sites(
+				array(
+					'fields' => 'ids',
+					'number' => PHP_INT_MAX,
+				)
+			);
+			foreach ( $site_ids as $site_id ) {
+				$schema .= wp_get_db_schema( 'blog', $site_id );
+			}
+		}
+
+		// Parse the schema.
 		$parser    = $this->driver->create_parser( $schema );
 		$wp_tables = array();
 		while ( $parser->next_query() ) {

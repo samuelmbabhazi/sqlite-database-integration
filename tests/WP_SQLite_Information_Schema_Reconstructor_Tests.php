@@ -39,8 +39,8 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		if ( ! defined( 'ABSPATH' ) ) {
 			define( 'ABSPATH', __DIR__ );
 		}
-		if ( ! function_exists( 'wp_installing' ) ) {
-			function wp_installing() {
+		if ( ! function_exists( 'is_multisite' ) ) {
+			function is_multisite() {
 				return false;
 			}
 		}
