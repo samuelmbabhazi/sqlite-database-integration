@@ -8,7 +8,7 @@ on:
 
 jobs:
   verify-version:
-    name: Verify that plugin version matches SQLITE_DRIVER_VERSION constant
+    name: Assert the WordPress plugin header declares the same version as the SQLITE_DRIVER_VERSION constant
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
