@@ -14,6 +14,7 @@ require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-token.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-translator.php';
+require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-connection.php';
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-configurator.php';
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver.php';
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver-exception.php';

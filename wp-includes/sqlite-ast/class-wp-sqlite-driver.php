@@ -29,11 +29,6 @@ class WP_SQLite_Driver {
 	const MINIMUM_SQLITE_VERSION = '3.37.0';
 
 	/**
-	 * The default timeout in seconds for SQLite to wait for a writable lock.
-	 */
-	const DEFAULT_SQLITE_TIMEOUT = 10;
-
-	/**
 	 * An identifier prefix for internal database objects.
 	 *
 	 * @TODO: Do not allow accessing objects with this prefix.
@@ -342,11 +337,11 @@ class WP_SQLite_Driver {
 	private $db_name;
 
 	/**
-	 * An instance of the PDO object.
+	 * An instance of the SQLite connection.
 	 *
-	 * @var PDO
+	 * @var WP_SQLite_Connection
 	 */
-	private $pdo;
+	private $connection;
 
 	/**
 	 * A service for managing MySQL INFORMATION_SCHEMA tables in SQLite.
@@ -435,66 +430,15 @@ class WP_SQLite_Driver {
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
 	 *
-	 * @param array $options {
-	 *     An array of options.
-	 *
-	 *     @type string      $database            Database name.
-	 *                                            The name of the emulated MySQL database.
-	 *     @type string|null $path                Optional. SQLite database path.
-	 *                                            For in-memory database, use ':memory:'.
-	 *                                            Must be set when PDO instance is not provided.
-	 *     @type PDO|null    $connection          Optional. PDO instance with SQLite connection.
-	 *                                            If not provided, a new PDO instance will be created.
-	 *     @type int|null    $timeout             Optional. SQLite timeout in seconds.
-	 *                                            The time to wait for a writable lock.
-	 *     @type string|null $sqlite_journal_mode Optional. SQLite journal mode.
-	 * }
+	 * @param WP_SQLite_Connection $connection A SQLite database connection.
+	 * @param string               $database   The database name.
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
 	 */
-	public function __construct( array $options ) {
-		// Database name.
-		if ( ! isset( $options['database'] ) || ! is_string( $options['database'] ) ) {
-			throw $this->new_driver_exception( 'Option "database" is required.' );
-		}
-		$this->main_db_name = $options['database'];
-		$this->db_name      = $this->main_db_name;
-
-		// Database connection.
-		if ( isset( $options['connection'] ) && $options['connection'] instanceof PDO ) {
-			$this->pdo = $options['connection'];
-		}
-
-		// Create a PDO connection if it is not provided.
-		if ( ! $this->pdo ) {
-			if ( ! isset( $options['path'] ) || ! is_string( $options['path'] ) ) {
-				throw $this->new_driver_exception(
-					'Option "path" is required when "connection" is not provided.'
-				);
-			}
-			$path = $options['path'];
-
-			try {
-				$this->pdo = new PDO( 'sqlite:' . $path );
-			} catch ( PDOException $e ) {
-				$code = $e->getCode();
-				throw $this->new_driver_exception( $e->getMessage(), is_int( $code ) ? $code : 0, $e );
-			}
-		}
-
-		// Throw exceptions on error.
-		$this->pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
-
-		// Configure SQLite timeout.
-		if ( isset( $options['timeout'] ) && is_int( $options['timeout'] ) ) {
-			$timeout = $options['timeout'];
-		} else {
-			$timeout = self::DEFAULT_SQLITE_TIMEOUT;
-		}
-		$this->pdo->setAttribute( PDO::ATTR_TIMEOUT, $timeout );
-
-		// Return all values (except null) as strings.
-		$this->pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+	public function __construct( WP_SQLite_Connection $connection, string $database ) {
+		$this->connection   = $connection;
+		$this->main_db_name = $database;
+		$this->db_name      = $database;
 
 		// Check the SQLite version.
 		$sqlite_version = $this->get_sqlite_version();
@@ -512,22 +456,10 @@ class WP_SQLite_Driver {
 		$this->client_info = $sqlite_version;
 
 		// Enable foreign keys. By default, they are off.
-		$this->pdo->query( 'PRAGMA foreign_keys = ON' );
-
-		// Configure SQLite journal mode.
-		if (
-			isset( $options['sqlite_journal_mode'] )
-			&& in_array(
-				$options['sqlite_journal_mode'],
-				array( 'DELETE', 'TRUNCATE', 'PERSIST', 'MEMORY', 'WAL', 'OFF' ),
-				true
-			)
-		) {
-			$this->pdo->query( 'PRAGMA journal_mode = ' . $options['sqlite_journal_mode'] );
-		}
+		$this->connection->query( 'PRAGMA foreign_keys = ON' );
 
 		// Register SQLite functions.
-		WP_SQLite_PDO_User_Defined_Functions::register_for( $this->pdo );
+		WP_SQLite_PDO_User_Defined_Functions::register_for( $this->connection->get_pdo() );
 
 		// Load MySQL grammar.
 		if ( null === self::$mysql_grammar ) {
@@ -538,21 +470,30 @@ class WP_SQLite_Driver {
 		$this->information_schema_builder = new WP_SQLite_Information_Schema_Builder(
 			$this->main_db_name,
 			self::RESERVED_PREFIX,
-			array( $this, 'execute_sqlite_query' )
+			$this->connection
 		);
 
 		// Ensure that the database is configured.
 		$migrator = new WP_SQLite_Configurator( $this, $this->information_schema_builder );
 		$migrator->ensure_database_configured();
+
+		$this->connection->set_query_logger(
+			function ( string $sql, array $params ) {
+				$this->last_sqlite_queries[] = array(
+					'sql'    => $sql,
+					'params' => $params,
+				);
+			}
+		);
 	}
 
 	/**
-	 * Get the PDO object.
+	 * Get the SQLite connection instance.
 	 *
-	 * @return PDO
+	 * @return WP_SQLite_Connection
 	 */
-	public function get_pdo(): PDO {
-		return $this->pdo;
+	public function get_connection(): WP_SQLite_Connection {
+		return $this->connection;
 	}
 
 	/**
@@ -561,7 +502,7 @@ class WP_SQLite_Driver {
 	 * @return string SQLite engine version as a string.
 	 */
 	public function get_sqlite_version(): string {
-		return $this->pdo->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
+		return $this->connection->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
 	}
 
 	/**
@@ -626,7 +567,7 @@ class WP_SQLite_Driver {
 	 * @return int|string
 	 */
 	public function get_insert_id() {
-		$last_insert_id = $this->pdo->lastInsertId();
+		$last_insert_id = $this->connection->get_last_insert_id();
 		if ( is_numeric( $last_insert_id ) ) {
 			$last_insert_id = (int) $last_insert_id;
 		}
@@ -775,13 +716,7 @@ class WP_SQLite_Driver {
 	 * @return PDOStatement The PDO statement object.
 	 */
 	public function execute_sqlite_query( string $sql, array $params = array() ): PDOStatement {
-		$this->last_sqlite_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-		$stmt                        = $this->pdo->prepare( $sql );
-		$stmt->execute( $params );
-		return $stmt;
+		return $this->connection->query( $sql, $params );
 	}
 
 	/**
@@ -2238,7 +2173,7 @@ class WP_SQLite_Driver {
 				$name = strtolower( $original_name );
 				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
 				if ( 'sql_mode' === $name ) {
-					$value = $this->pdo->quote( implode( ',', $this->active_sql_modes ) );
+					$value = $this->connection->quote( implode( ',', $this->active_sql_modes ) );
 				} else {
 					// When we have no value, it's reasonable to use NULL.
 					$value = 'NULL';
@@ -3089,7 +3024,7 @@ class WP_SQLite_Driver {
 				if ( null === $default && ! $is_nullable && ! $is_auto_inc ) {
 					$default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
 				}
-				$fragment .= null === $default ? 'NULL' : $this->pdo->quote( $default );
+				$fragment .= null === $default ? 'NULL' : $this->connection->quote( $default );
 			} else {
 				// When a column value is included, we can use it without change.
 				$position  = array_search( $column['COLUMN_NAME'], $insert_list, true );
@@ -3163,7 +3098,7 @@ class WP_SQLite_Driver {
 			// Get the UPDATE value. It's either an expression or a DEFAULT keyword.
 			if ( null === $expr ) {
 				// Emulate "column = DEFAULT".
-				$value = null === $default ? 'NULL' : $this->pdo->quote( $default );
+				$value = null === $default ? 'NULL' : $this->connection->quote( $default );
 			} else {
 				$value = $this->translate( $expr );
 			}
@@ -3171,7 +3106,7 @@ class WP_SQLite_Driver {
 			// If the column is NOT NULL, a NULL value resolves to implicit default.
 			$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
 			if ( ! $is_nullable && null !== $implicit_default ) {
-				$value = sprintf( 'COALESCE(%s, %s)', $value, $this->pdo->quote( $implicit_default ) );
+				$value = sprintf( 'COALESCE(%s, %s)', $value, $this->connection->quote( $implicit_default ) );
 			}
 
 			// Compose the UPDATE list item.
@@ -3304,7 +3239,7 @@ class WP_SQLite_Driver {
 				) {
 					$query .= ' DEFAULT CURRENT_TIMESTAMP';
 				} else {
-					$query .= ' DEFAULT ' . $this->pdo->quote( $column['COLUMN_DEFAULT'] );
+					$query .= ' DEFAULT ' . $this->connection->quote( $column['COLUMN_DEFAULT'] );
 				}
 			}
 			$rows[] = $query;
@@ -3461,7 +3396,7 @@ class WP_SQLite_Driver {
 			) {
 				$sql .= ' DEFAULT CURRENT_TIMESTAMP';
 			} elseif ( null !== $column['COLUMN_DEFAULT'] ) {
-				$sql .= ' DEFAULT ' . $this->pdo->quote( $column['COLUMN_DEFAULT'] );
+				$sql .= ' DEFAULT ' . $this->connection->quote( $column['COLUMN_DEFAULT'] );
 			} elseif ( 'YES' === $column['IS_NULLABLE'] ) {
 				$sql .= ' DEFAULT NULL';
 			}

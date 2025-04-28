@@ -57,16 +57,14 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	public function setUp(): void {
 		$this->sqlite = new PDO( 'sqlite::memory:' );
 		$this->engine = new WP_SQLite_Driver(
-			array(
-				'connection' => $this->sqlite,
-				'database'   => 'wp',
-			)
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			'wp'
 		);
 
 		$builder = new WP_SQLite_Information_Schema_Builder(
 			'wp',
 			WP_SQLite_Driver::RESERVED_PREFIX,
-			array( $this->engine, 'execute_sqlite_query' )
+			$this->engine->get_connection()
 		);
 
 		$this->reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
@@ -76,7 +74,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	}
 
 	public function testReconstructTable(): void {
-		$this->engine->get_pdo()->exec(
+		$this->engine->get_connection()->query(
 			'
 			CREATE TABLE t (
 			  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,8 +88,8 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 			)
 		'
 		);
-		$this->engine->get_pdo()->exec( 'CREATE INDEX idx_score ON t (score)' );
-		$this->engine->get_pdo()->exec( 'CREATE INDEX idx_role_score ON t (role, priority)' );
+		$this->engine->get_connection()->query( 'CREATE INDEX idx_score ON t (score)' );
+		$this->engine->get_connection()->query( 'CREATE INDEX idx_role_score ON t (role, priority)' );
 		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables WHERE table_name = "t"' );
 		$this->assertEquals( 0, count( $result ) );
 
@@ -126,7 +124,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 
 	public function testReconstructWpTable(): void {
 		// Create a WP table with any columns.
-		$this->engine->get_pdo()->exec( 'CREATE TABLE wp_posts ( id INTEGER )' );
+		$this->engine->get_connection()->query( 'CREATE TABLE wp_posts ( id INTEGER )' );
 
 		// Reconstruct the information schema.
 		$this->reconstructor->ensure_correct_information_schema();
@@ -176,18 +174,18 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	}
 
 	public function testReconstructTableFromMysqlDataTypesCache(): void {
-		$pdo = $this->engine->get_pdo();
+		$connection = $this->engine->get_connection();
 
-		$pdo->exec( self::CREATE_DATA_TYPES_CACHE_TABLE_SQL );
-		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'id', 'int unsigned')" );
-		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'name', 'varchar(255)')" );
-		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'description', 'text')" );
-		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'shape', 'geomcollection')" );
-		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_name', 'KEY')" );
-		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_description', 'FULLTEXT')" );
-		$pdo->exec( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_shape', 'SPATIAL')" );
+		$connection->query( self::CREATE_DATA_TYPES_CACHE_TABLE_SQL );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'id', 'int unsigned')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'name', 'varchar(255)')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'description', 'text')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'shape', 'geomcollection')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_name', 'KEY')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_description', 'FULLTEXT')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 't__idx_shape', 'SPATIAL')" );
 
-		$this->engine->get_pdo()->exec(
+		$connection->query(
 			'
 			CREATE TABLE t (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -197,9 +195,9 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 			)
 		'
 		);
-		$this->engine->get_pdo()->exec( 'CREATE INDEX t__idx_name ON t (name)' );
-		$this->engine->get_pdo()->exec( 'CREATE INDEX t__idx_description ON t (description)' );
-		$this->engine->get_pdo()->exec( 'CREATE INDEX t__idx_shape ON t (shape)' );
+		$connection->query( 'CREATE INDEX t__idx_name ON t (name)' );
+		$connection->query( 'CREATE INDEX t__idx_description ON t (description)' );
+		$connection->query( 'CREATE INDEX t__idx_shape ON t (shape)' );
 
 		$this->reconstructor->ensure_correct_information_schema();
 		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
@@ -224,7 +222,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	}
 
 	public function testDefaultValues(): void {
-		$this->engine->get_pdo()->exec(
+		$this->engine->get_connection()->query(
 			"
 			CREATE TABLE t (
 				col1 text DEFAULT abc,

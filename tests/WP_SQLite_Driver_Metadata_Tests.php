@@ -31,10 +31,8 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 	public function setUp(): void {
 		$this->sqlite = new PDO( 'sqlite::memory:' );
 		$this->engine = new WP_SQLite_Driver(
-			array(
-				'connection' => $this->sqlite,
-				'database'   => 'wp',
-			)
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			'wp'
 		);
 	}
 

@@ -43,10 +43,8 @@ class WP_SQLite_Driver_Query_Tests extends TestCase {
 
 		$this->sqlite = new PDO( 'sqlite::memory:' );
 		$this->engine = new WP_SQLite_Driver(
-			array(
-				'connection' => $this->sqlite,
-				'database'   => 'wp',
-			)
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			'wp'
 		);
 
 		$translator = $this->engine;
@@ -458,7 +456,7 @@ QUERY;
 		);
 		$option_name          = 'serialized_option';
 		$option_value         = serialize( $obj );
-		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
+		$option_value_escaped = $this->engine->get_connection()->quote( $option_value );
 		/* Note well: this is heredoc not nowdoc */
 		$insert = <<<QUERY
 		INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
@@ -484,7 +482,7 @@ QUERY;
 		++$obj ['two'];
 		$obj ['pi']          *= 2;
 		$option_value         = serialize( $obj );
-		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
+		$option_value_escaped = $this->engine->get_connection()->quote( $option_value );
 		/* Note well: this is heredoc not nowdoc */
 		$insert = <<<QUERY
 		INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)

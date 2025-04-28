@@ -32,10 +32,8 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->sqlite = new PDO( 'sqlite::memory:' );
 
 		$this->engine = new WP_SQLite_Driver(
-			array(
-				'connection' => $this->sqlite,
-				'database'   => 'wp',
-			)
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			'wp'
 		);
 		$this->engine->query(
 			"CREATE TABLE _options (

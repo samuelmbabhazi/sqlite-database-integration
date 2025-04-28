@@ -314,6 +314,7 @@ class WP_SQLite_DB extends wpdb {
 			require_once __DIR__ . '/../../wp-includes/mysql/class-wp-mysql-token.php';
 			require_once __DIR__ . '/../../wp-includes/mysql/class-wp-mysql-lexer.php';
 			require_once __DIR__ . '/../../wp-includes/mysql/class-wp-mysql-parser.php';
+			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-connection.php';
 			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-configurator.php';
 			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-driver.php';
 			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-driver-exception.php';
@@ -322,26 +323,27 @@ class WP_SQLite_DB extends wpdb {
 			$this->ensure_database_directory( FQDB );
 
 			try {
-				$this->dbh = new WP_SQLite_Driver(
+				$connection      = new WP_SQLite_Connection(
 					array(
-						'connection'          => $pdo,
-						'path'                => FQDB,
-						'database'            => $this->dbname,
-						'sqlite_journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+						'pdo'          => $pdo,
+						'path'         => FQDB,
+						'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
 					)
 				);
+				$this->dbh       = new WP_SQLite_Driver( $connection, $this->dbname );
+				$GLOBALS['@pdo'] = $this->dbh->get_connection()->get_pdo();
 			} catch ( Throwable $e ) {
 				$this->last_error = $this->format_error_message( $e );
 			}
 		} else {
 			$this->dbh        = new WP_SQLite_Translator( $pdo );
 			$this->last_error = $this->dbh->get_error_message();
+			$GLOBALS['@pdo']  = $this->dbh->get_pdo();
 		}
 		if ( $this->last_error ) {
 			return false;
 		}
-		$GLOBALS['@pdo'] = $this->dbh->get_pdo();
-		$this->ready     = true;
+		$this->ready = true;
 		$this->set_sql_mode();
 	}
 

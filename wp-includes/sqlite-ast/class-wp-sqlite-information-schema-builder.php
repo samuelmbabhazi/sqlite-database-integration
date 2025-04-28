@@ -358,25 +358,22 @@ class WP_SQLite_Information_Schema_Builder {
 	private $temporary_information_schema_exists = false;
 
 	/**
-	 * Query callback.
+	 * An instance of the SQLite connection.
 	 *
-	 * @TODO: Consider extracting a part of the WP_SQLite_Driver class
-	 *        to a class like "WP_SQLite_Connection" and reuse it in both.
-	 *
-	 * @var callable(string, array): PDOStatement
+	 * @var WP_SQLite_Connection
 	 */
-	private $query_callback;
+	private $connection;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param string                                $database        Database name.
-	 * @param string                                $reserved_prefix An identifier prefix for internal database objects.
-	 * @param callable(string, array): PDOStatement $query_callback  A callback that executes an SQLite query.
+	 * @param string               $database        Database name.
+	 * @param string               $reserved_prefix An identifier prefix for internal database objects.
+	 * @param WP_SQLite_Connection $connection      An instance of the SQLite connection.
 	 */
-	public function __construct( string $database, string $reserved_prefix, callable $query_callback ) {
+	public function __construct( string $database, string $reserved_prefix, WP_SQLite_Connection $connection ) {
 		$this->db_name                = $database;
-		$this->query_callback         = $query_callback;
+		$this->connection             = $connection;
 		$this->table_prefix           = $reserved_prefix . 'mysql_information_schema_';
 		$this->temporary_table_prefix = $reserved_prefix . 'mysql_information_schema_tmp_';
 	}
@@ -404,7 +401,7 @@ class WP_SQLite_Information_Schema_Builder {
 		 * We could search in the "{$this->temporary_table_prefix}tables" table,
 		 * but it may not exist yet, so using "sqlite_temp_schema" is simpler.
 		 */
-		$stmt = $this->query(
+		$stmt = $this->connection->query(
 			"SELECT 1 FROM sqlite_temp_schema WHERE type = 'table' AND name = ?",
 			array( $table_name )
 		);
@@ -417,7 +414,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	public function ensure_information_schema_tables(): void {
 		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
-			$this->query( str_replace( '<prefix>', $this->table_prefix, $query ) );
+			$this->connection->query( str_replace( '<prefix>', $this->table_prefix, $query ) );
 		}
 	}
 
@@ -428,7 +425,7 @@ class WP_SQLite_Information_Schema_Builder {
 	public function ensure_temporary_information_schema_tables(): void {
 		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
 			$query = str_replace( 'CREATE TABLE', 'CREATE TEMPORARY TABLE', $query );
-			$this->query( str_replace( '<prefix>', $this->temporary_table_prefix, $query ) );
+			$this->connection->query( str_replace( '<prefix>', $this->temporary_table_prefix, $query ) );
 		}
 		$this->temporary_information_schema_exists = true;
 	}
@@ -673,7 +670,7 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_Parser_Node $node
 	): void {
 		$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
-		$position           = $this->query(
+		$position           = $this->connection->query(
 			"
 				SELECT MAX(ordinal_position)
 				FROM $columns_table_name
@@ -893,7 +890,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$column_names = array_filter( $key_part_column_names );
 		if ( count( $column_names ) > 0 ) {
 			$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
-			$column_info        = $this->query(
+			$column_info        = $this->connection->query(
 				"
 					SELECT column_name, data_type, is_nullable, character_maximum_length
 					FROM $columns_table_name
@@ -1078,7 +1075,7 @@ class WP_SQLite_Information_Schema_Builder {
 		// @TODO: Consider listing only affected columns.
 		$columns_table_name    = $this->get_table_name( $table_is_temporary, 'columns' );
 		$statistics_table_name = $this->get_table_name( $table_is_temporary, 'statistics' );
-		$this->query(
+		$this->connection->query(
 			"
 				WITH s AS (
 					SELECT
@@ -1892,7 +1889,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param array<string, string> $data       The data to insert (key is column name, value is column value).
 	 */
 	private function insert_values( string $table_name, array $data ): void {
-		$this->query(
+		$this->connection->query(
 			'
 				INSERT INTO ' . $table_name . ' (' . implode( ', ', array_keys( $data ) ) . ')
 				VALUES (' . implode( ', ', array_fill( 0, count( $data ), '?' ) ) . ')
@@ -1919,7 +1916,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$where_clause[] = $column . ' = ?';
 		}
 
-		$this->query(
+		$this->connection->query(
 			'
 				UPDATE ' . $table_name . '
 				SET ' . implode( ', ', $set ) . '
@@ -1941,24 +1938,12 @@ class WP_SQLite_Information_Schema_Builder {
 			$where_clause[] = $column . ' = ?';
 		}
 
-		$this->query(
+		$this->connection->query(
 			'
 				DELETE FROM ' . $table_name . '
 				WHERE ' . implode( ' AND ', $where_clause ) . '
 			',
 			array_values( $where )
 		);
-	}
-
-	/**
-	 * Execute an SQLite query.
-	 *
-	 * @param  string $query  The query to execute.
-	 * @param  array  $params The query parameters.
-	 *
-	 * @return PDOStatement
-	 */
-	private function query( string $query, array $params = array() ) {
-		return ( $this->query_callback )( $query, $params );
 	}
 }
