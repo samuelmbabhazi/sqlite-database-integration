@@ -122,7 +122,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	private function get_information_schema_table_names(): array {
 		$tables_table = $this->schema_builder->get_table_name( false, 'tables' );
 		return $this->driver->execute_sqlite_query(
-			"SELECT table_name FROM $tables_table ORDER BY table_name"
+			sprintf(
+				'SELECT table_name FROM %s ORDER BY table_name',
+				$this->quote_sqlite_identifier( $tables_table )
+			)
 		)->fetchAll( PDO::FETCH_COLUMN );
 	}
 
@@ -207,7 +210,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	private function generate_create_table_statement( string $table_name ): string {
 		// Columns.
 		$columns = $this->driver->execute_sqlite_query(
-			sprintf( 'PRAGMA table_xinfo("%s")', $table_name )
+			sprintf(
+				'PRAGMA table_xinfo(%s)',
+				$this->quote_sqlite_identifier( $table_name )
+			)
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$definitions  = array();
@@ -245,7 +251,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 
 		// Indexes and keys.
 		$keys = $this->driver->execute_sqlite_query(
-			'SELECT * FROM pragma_index_list("' . $table_name . '")'
+			sprintf(
+				'PRAGMA index_list(%s)',
+				$this->quote_sqlite_identifier( $table_name )
+			)
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		foreach ( $keys as $key ) {
@@ -375,7 +384,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 
 		// Key columns.
 		$key_columns = $this->driver->execute_sqlite_query(
-			'SELECT * FROM pragma_index_info("' . $key_info['name'] . '")'
+			sprintf(
+				'PRAGMA index_info(%s)',
+				$this->quote_sqlite_identifier( $key_info['name'] )
+			)
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$cols        = array();
 		foreach ( $key_columns as $column ) {

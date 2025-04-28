@@ -577,7 +577,10 @@ class WP_SQLite_Driver {
 		$default_version = '0.0.0';
 		try {
 			$stmt = $this->execute_sqlite_query(
-				sprintf( 'SELECT value FROM %s WHERE name = ?', self::GLOBAL_VARIABLES_TABLE_NAME ),
+				sprintf(
+					'SELECT value FROM %s WHERE name = ?',
+					$this->quote_sqlite_identifier( self::GLOBAL_VARIABLES_TABLE_NAME )
+				),
 				array( self::DRIVER_VERSION_VARIABLE_NAME )
 			);
 			return $stmt->fetchColumn() ?? $default_version;
@@ -1212,7 +1215,11 @@ class WP_SQLite_Driver {
 
 			$select_list = array();
 			foreach ( $table_aliases as $table ) {
-				$select_list[] = "\"$table\".rowid AS \"{$table}_rowid\"";
+				$select_list[] = sprintf(
+					'%s.rowid AS %s',
+					$this->quote_sqlite_identifier( $table ),
+					$this->quote_sqlite_identifier( $table . '_rowid' )
+				);
 			}
 
 			$ids = $this->execute_sqlite_query(
@@ -1288,7 +1295,10 @@ class WP_SQLite_Driver {
 		if ( $subnode->has_child_node( 'ifNotExists' ) ) {
 			$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 			$table_exists = $this->execute_sqlite_query(
-				"SELECT 1 FROM $tables_table WHERE table_schema = ? AND table_name = ?",
+				sprintf(
+					'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->quote_sqlite_identifier( $tables_table )
+				),
 				array( $this->db_name, $table_name )
 			)->fetchColumn();
 
@@ -1329,7 +1339,10 @@ class WP_SQLite_Driver {
 		// Save all column names from the original table.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_names  = $this->execute_sqlite_query(
-			"SELECT COLUMN_NAME FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT COLUMN_NAME FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_COLUMN );
 
@@ -1437,9 +1450,9 @@ class WP_SQLite_Driver {
 			$this->translate( $node->get_first_child_node( 'tableRef' ) )
 		);
 
-		$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
-
-		$this->execute_sqlite_query( "DELETE FROM $quoted_table_name" );
+		$this->execute_sqlite_query(
+			sprintf( 'DELETE FROM %s', $this->quote_sqlite_identifier( $table_name ) )
+		);
 		try {
 			$this->execute_sqlite_query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $table_name ) );
 		} catch ( PDOException $e ) {
@@ -1576,7 +1589,7 @@ class WP_SQLite_Driver {
 					INDEX_COMMENT AS `Index_comment`,
 					IS_VISIBLE AS `Visible`,
 					EXPRESSION AS `Expression`
-				FROM ' . $statistics_table . '
+				FROM ' . $this->quote_sqlite_identifier( $statistics_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
 				ORDER BY
@@ -1620,7 +1633,8 @@ class WP_SQLite_Driver {
 		);
 		$table_info    = $this->execute_sqlite_query(
 			sprintf(
-				"SELECT * FROM $tables_tables WHERE table_schema = ? %s",
+				'SELECT * FROM %s WHERE table_schema = ? %s',
+				$this->quote_sqlite_identifier( $tables_tables ),
 				$condition ?? ''
 			),
 			array( $database )
@@ -1688,7 +1702,8 @@ class WP_SQLite_Driver {
 		);
 		$table_info   = $this->execute_sqlite_query(
 			sprintf(
-				"SELECT * FROM $table_tables WHERE table_schema = ? %s",
+				'SELECT * FROM %s WHERE table_schema = ? %s',
+				$this->quote_sqlite_identifier( $table_tables ),
 				$condition ?? ''
 			),
 			array( $database )
@@ -1745,7 +1760,10 @@ class WP_SQLite_Driver {
 		// Check if the table exists.
 		$tables_tables = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_exists  = $this->execute_sqlite_query(
-			"SELECT 1 FROM $tables_tables WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $tables_tables )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchColumn();
 
@@ -1763,10 +1781,11 @@ class WP_SQLite_Driver {
 		}
 
 		// Fetch column information.
-		$column_info = $this->execute_sqlite_query(
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
+		$column_info   = $this->execute_sqlite_query(
 			sprintf(
 				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? %s',
-				$this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' ),
+				$this->quote_sqlite_identifier( $columns_table ),
 				$condition ?? ''
 			),
 			array( $database, $table_name )
@@ -1808,7 +1827,7 @@ class WP_SQLite_Driver {
 
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
-			"
+			'
 				SELECT
 					column_name AS `Field`,
 					column_type AS `Type`,
@@ -1816,10 +1835,10 @@ class WP_SQLite_Driver {
 					column_key AS `Key`,
 					column_default AS `Default`,
 					extra AS Extra
-				FROM $columns_table
+				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
-			",
+			',
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
@@ -2015,11 +2034,13 @@ class WP_SQLite_Driver {
 			try {
 				switch ( $first_token->id ) {
 					case WP_MySQL_Lexer::ANALYZE_SYMBOL:
-						$stmt   = $this->execute_sqlite_query( "ANALYZE $quoted_table_name" );
+						$stmt   = $this->execute_sqlite_query( sprintf( 'ANALYZE %s', $quoted_table_name ) );
 						$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );
 						break;
 					case WP_MySQL_Lexer::CHECK_SYMBOL:
-						$stmt   = $this->execute_sqlite_query( "PRAGMA integrity_check($quoted_table_name)" );
+						$stmt   = $this->execute_sqlite_query(
+							sprintf( 'PRAGMA integrity_check(%s)', $quoted_table_name )
+						);
 						$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );
 						if ( 'ok' === $errors[0] ) {
 							array_shift( $errors );
@@ -2842,7 +2863,10 @@ class WP_SQLite_Driver {
 		if ( null === $column_map ) {
 			$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 			$column_names  = $this->execute_sqlite_query(
-				"SELECT COLUMN_NAME FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+				sprintf(
+					'SELECT COLUMN_NAME FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->quote_sqlite_identifier( $columns_table )
+				),
 				array( $this->db_name, $table_name )
 			)->fetchAll( PDO::FETCH_COLUMN );
 			$column_map    = array_combine( $column_names, $column_names );
@@ -2997,13 +3021,13 @@ class WP_SQLite_Driver {
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
-			"
+			'
 				SELECT column_name, is_nullable, column_default, data_type, extra
-				FROM $columns_table
+				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
 				ORDER BY ordinal_position
-			",
+			',
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -3113,12 +3137,12 @@ class WP_SQLite_Driver {
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
-			"
+			'
 				SELECT column_name, is_nullable, data_type, column_default
-				FROM $columns_table
+				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
-			",
+			',
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$column_map    = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
@@ -3176,9 +3200,9 @@ class WP_SQLite_Driver {
 		// 1. Get table info.
 		$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_info   = $this->execute_sqlite_query(
-			"
+			'
 				SELECT *
-				FROM $tables_table
+				FROM ' . $this->quote_sqlite_identifier( $tables_table ) . "
 				WHERE table_type = 'BASE TABLE'
 				AND table_schema = ?
 				AND table_name = ?
@@ -3196,14 +3220,20 @@ class WP_SQLite_Driver {
 		// 2. Get column info.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
-			"SELECT * FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
-			"SELECT * FROM $statistics_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $statistics_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -3366,9 +3396,9 @@ class WP_SQLite_Driver {
 		// 1. Get table info.
 		$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_info   = $this->execute_sqlite_query(
-			"
+			'
 				SELECT *
-				FROM $tables_table
+				FROM ' . $this->quote_sqlite_identifier( $tables_table ) . "
 				WHERE table_type = 'BASE TABLE'
 				AND table_schema = ?
 				AND table_name = ?
@@ -3383,14 +3413,20 @@ class WP_SQLite_Driver {
 		// 2. Get column info.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
-			"SELECT * FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
-			"SELECT * FROM $statistics_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $statistics_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -3518,14 +3554,20 @@ class WP_SQLite_Driver {
 		// but currently that can't happen as we're not creating such tables.
 		// See: https://www.sqlite.org/rowidtable.html
 		$trigger_name = self::RESERVED_PREFIX . "{$table}_{$column}_on_update";
-		return "
-			CREATE TRIGGER \"$trigger_name\"
-			AFTER UPDATE ON \"$table\"
-			FOR EACH ROW
-			BEGIN
-			  UPDATE \"$table\" SET \"$column\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
-			END
-		";
+		return sprintf(
+			'
+				CREATE TRIGGER %s
+				AFTER UPDATE ON %s
+				FOR EACH ROW
+				BEGIN
+				  UPDATE %s SET %s = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
+				END
+			',
+			$this->quote_sqlite_identifier( $trigger_name ),
+			$this->quote_sqlite_identifier( $table ),
+			$this->quote_sqlite_identifier( $table ),
+			$this->quote_sqlite_identifier( $column )
+		);
 	}
 
 	/**
