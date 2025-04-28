@@ -138,6 +138,47 @@ class WP_SQLite_Connection {
 	}
 
 	/**
+	 * Quote an SQLite identifier.
+	 *
+	 * Wraps the identifier in backticks and escapes backtick characters within.
+	 *
+	 * ---
+	 *
+	 * Quoted identifiers in SQLite are represented by string constants:
+	 *
+	 *   A string constant is formed by enclosing the string in single quotes (').
+	 *   A single quote within the string can be encoded by putting two single
+	 *   quotes in a row - as in Pascal. C-style escapes using the backslash
+	 *   character are not supported because they are not standard SQL.
+	 *
+	 * See: https://www.sqlite.org/lang_expr.html#literal_values_constants_
+	 *
+	 * Although sparsely documented, this applies to backtick and double quoted
+	 * string constants as well, so only the quote character needs to be escaped.
+	 *
+	 * For more details, see the grammar for SQLite table and column names:
+	 *
+	 *   - https://github.com/sqlite/sqlite/blob/873fc5dff2a781251f2c9bd2c791a5fac45b7a2b/src/tokenize.c#L395-L419
+	 *   - https://github.com/sqlite/sqlite/blob/873fc5dff2a781251f2c9bd2c791a5fac45b7a2b/src/parse.y#L321-L338
+	 *
+	 * ---
+	 *
+	 * We use backtick quotes instead of the SQL standard double quotes, due to
+	 * an SQLite quirk causing double-quoted strings to be accepted as literals:
+	 *
+	 *   This misfeature means that a misspelled double-quoted identifier will
+	 *   be interpreted as a string literal, rather than generating an error.
+	 *
+	 * See: https://www.sqlite.org/quirks.html#double_quoted_string_literals_are_accepted
+	 *
+	 * @param  string $unquoted_identifier The unquoted identifier value.
+	 * @return string                      The quoted identifier value.
+	 */
+	public function quote_identifier( string $unquoted_identifier ): string {
+		return '`' . str_replace( '`', '``', $unquoted_identifier ) . '`';
+	}
+
+	/**
 	 * Get the PDO object.
 	 *
 	 * @return PDO

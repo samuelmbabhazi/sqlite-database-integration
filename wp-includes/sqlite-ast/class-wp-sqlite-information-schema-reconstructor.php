@@ -24,6 +24,13 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	private $driver;
 
 	/**
+	 * An instance of the SQLite connection.
+	 *
+	 * @var WP_SQLite_Connection
+	 */
+	private $connection;
+
+	/**
 	 * A service for managing MySQL INFORMATION_SCHEMA tables in SQLite.
 	 *
 	 * @var WP_SQLite_Information_Schema_Builder
@@ -41,6 +48,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		WP_SQLite_Information_Schema_Builder $schema_builder
 	) {
 		$this->driver         = $driver;
+		$this->connection     = $driver->get_connection();
 		$this->schema_builder = $schema_builder;
 	}
 
@@ -78,7 +86,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// Remove information schema records for tables that don't exist.
 		foreach ( $information_schema_tables as $table ) {
 			if ( ! in_array( $table, $sqlite_tables, true ) ) {
-				$sql = sprintf( 'DROP TABLE %s', $this->quote_sqlite_identifier( $table ) );
+				$sql = sprintf( 'DROP TABLE %s', $this->connection->quote_identifier( $table ) ); // TODO: mysql quote
 				$ast = $this->driver->create_parser( $sql )->parse();
 				if ( null === $ast ) {
 					throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
@@ -124,7 +132,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		return $this->driver->execute_sqlite_query(
 			sprintf(
 				'SELECT table_name FROM %s ORDER BY table_name',
-				$this->quote_sqlite_identifier( $tables_table )
+				$this->connection->quote_identifier( $tables_table )
 			)
 		)->fetchAll( PDO::FETCH_COLUMN );
 	}
@@ -212,7 +220,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		$columns = $this->driver->execute_sqlite_query(
 			sprintf(
 				'PRAGMA table_xinfo(%s)',
-				$this->quote_sqlite_identifier( $table_name )
+				$this->connection->quote_identifier( $table_name )
 			)
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -244,7 +252,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		if ( count( $pk_columns ) > 0 ) {
 			$quoted_pk_columns = array();
 			foreach ( $pk_columns as $pk_column ) {
-				$quoted_pk_columns[] = $this->quote_sqlite_identifier( $pk_column );
+				$quoted_pk_columns[] = $this->connection->quote_identifier( $pk_column );
 			}
 			$definitions[] = sprintf( 'PRIMARY KEY (%s)', implode( ', ', $quoted_pk_columns ) );
 		}
@@ -253,7 +261,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		$keys = $this->driver->execute_sqlite_query(
 			sprintf(
 				'PRAGMA index_list(%s)',
-				$this->quote_sqlite_identifier( $table_name )
+				$this->connection->quote_identifier( $table_name )
 			)
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -268,7 +276,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 
 		return sprintf(
 			"CREATE TABLE %s (\n  %s\n)",
-			$this->quote_sqlite_identifier( $table_name ),
+			$this->connection->quote_identifier( $table_name ),
 			implode( ",\n  ", $definitions )
 		);
 	}
@@ -284,7 +292,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 */
 	private function generate_column_definition( string $table_name, array $column_info ): string {
 		$definition   = array();
-		$definition[] = $this->quote_sqlite_identifier( $column_info['name'] );
+		$definition[] = $this->connection->quote_identifier( $column_info['name'] );
 
 		// Data type.
 		$mysql_type = $this->get_cached_mysql_data_type( $table_name, $column_info['name'] );
@@ -379,14 +387,14 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		 * the generated MySQL definition, they follow implicit MySQL naming.
 		 */
 		if ( ! str_starts_with( $name, 'sqlite_autoindex_' ) ) {
-			$definition[] = $this->quote_sqlite_identifier( $name );
+			$definition[] = $this->connection->quote_identifier( $name );
 		}
 
 		// Key columns.
 		$key_columns = $this->driver->execute_sqlite_query(
 			sprintf(
 				'PRAGMA index_info(%s)',
-				$this->quote_sqlite_identifier( $key_info['name'] )
+				$this->connection->quote_identifier( $key_info['name'] )
 			)
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$cols        = array();
@@ -423,11 +431,11 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			) {
 				$cols[] = sprintf(
 					'%s(%d)',
-					$this->quote_sqlite_identifier( $column['name'] ),
+					$this->connection->quote_identifier( $column['name'] ),
 					min( $column_length ?? $max_prefix_length, $max_prefix_length )
 				);
 			} else {
-				$cols[] = $this->quote_sqlite_identifier( $column['name'] );
+				$cols[] = $this->connection->quote_identifier( $column['name'] );
 			}
 		}
 
@@ -638,18 +646,6 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	private function escape_mysql_string_literal( string $literal ): string {
 		// See: https://www.php.net/manual/en/mysqli.real-escape-string.php
 		return "'" . addcslashes( $literal, "\0\n\r'\"\Z" ) . "'";
-	}
-
-	/**
-	 * Quote an SQLite identifier.
-	 *
-	 * Wrap the identifier in backticks and escape backtick values within.
-	 *
-	 * @param  string $unquoted_identifier The unquoted identifier value.
-	 * @return string                      The quoted identifier value.
-	 */
-	private function quote_sqlite_identifier( string $unquoted_identifier ): string {
-		return '`' . str_replace( '`', '``', $unquoted_identifier ) . '`';
 	}
 
 	/**

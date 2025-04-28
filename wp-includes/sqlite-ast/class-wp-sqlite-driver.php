@@ -3525,13 +3525,11 @@ class WP_SQLite_Driver {
 	/**
 	 * Quote an SQLite identifier.
 	 *
-	 * Wrap the identifier in backticks and escape backtick values within.
-	 *
 	 * @param  string $unquoted_identifier The unquoted identifier value.
 	 * @return string                      The quoted identifier value.
 	 */
 	private function quote_sqlite_identifier( string $unquoted_identifier ): string {
-		return '`' . str_replace( '`', '``', $unquoted_identifier ) . '`';
+		return $this->connection->quote_identifier( $unquoted_identifier );
 	}
 
 
