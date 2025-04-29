@@ -177,8 +177,12 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			 * of all existing blogs, independent of any filters and actions that
 			 * could possibly alter the results of a "get_sites()" call.
 			 */
-			$stmt     = $this->driver->execute_sqlite_query( "SELECT blog_id FROM {$wpdb->blogs}" );
-			$blog_ids = $stmt->fetchAll( PDO::FETCH_COLUMN );
+			$blog_ids = $this->driver->execute_sqlite_query(
+				sprintf(
+					'SELECT blog_id FROM %s',
+					$this->connection->quote_identifier( $wpdb->blogs )
+				)
+			)->fetchAll( PDO::FETCH_COLUMN );
 			foreach ( $blog_ids as $blog_id ) {
 				$schema .= wp_get_db_schema( 'blog', (int) $blog_id );
 			}
