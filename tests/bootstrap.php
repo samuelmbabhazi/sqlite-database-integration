@@ -21,6 +21,17 @@ require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver-except
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-builder.php';
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-reconstructor.php';
 
+// Configure the test environment.
+error_reporting( E_ALL & ~E_DEPRECATED );
+define( 'FQDB', ':memory:' );
+define( 'FQDBDIR', __DIR__ . '/../testdb' );
+
+// Polyfill WPDB globals.
+$GLOBALS['table_prefix'] = 'wptests_';
+$GLOBALS['wpdb']         = new class() {
+	public function set_prefix( string $prefix ): void {}
+};
+
 /**
  * Polyfills for WordPress functions
  */

@@ -21,20 +21,6 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	private $sqlite;
 
 	public static function setUpBeforeClass(): void {
-		if ( ! defined( 'FQDB' ) ) {
-			define( 'FQDB', ':memory:' );
-			define( 'FQDBDIR', __DIR__ . '/../testdb' );
-		}
-		error_reporting( E_ALL & ~E_DEPRECATED );
-		if ( ! isset( $GLOBALS['table_prefix'] ) ) {
-			$GLOBALS['table_prefix'] = 'wptests_';
-		}
-		if ( ! isset( $GLOBALS['wpdb'] ) ) {
-			$GLOBALS['wpdb'] = new class() {
-				public function set_prefix( string $prefix ): void {}
-			};
-		}
-
 		// Mock symbols that are used for WordPress table reconstruction.
 		if ( ! defined( 'ABSPATH' ) ) {
 			define( 'ABSPATH', __DIR__ );
