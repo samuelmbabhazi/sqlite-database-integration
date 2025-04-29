@@ -599,12 +599,15 @@ class WP_SQLite_Driver {
 
 		try {
 			// Parse the MySQL query.
-			// TODO: Translate and execute all queries in the SQL input string.
 			$parser = $this->create_parser( $query );
 			$parser->next_query();
 			$ast = $parser->get_query_ast();
 			if ( null === $ast ) {
 				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+			}
+
+			if ( $parser->next_query() ) {
+				throw $this->new_driver_exception( 'Multi-query is not supported.' );
 			}
 
 			// Handle transaction commands.

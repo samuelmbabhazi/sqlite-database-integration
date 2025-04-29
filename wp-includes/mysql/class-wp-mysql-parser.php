@@ -33,9 +33,6 @@ class WP_MySQL_Parser extends WP_Parser {
 			return false;
 		}
 		$this->current_ast = $this->parse();
-		if ( ! $this->current_ast ) {
-			return false;
-		}
 		return true;
 	}
 

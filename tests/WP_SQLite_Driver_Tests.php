@@ -4463,4 +4463,10 @@ QUERY
 		$result = $this->assertQuery( 'SELECT @@session.SQL_mode' );
 		$this->assertSame( 'ONLY_FULL_GROUP_BY', $result[0]->{'@@session.SQL_mode'} );
 	}
+
+	public function testMultiQueryNotSupported(): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Multi-query is not supported.' );
+		$this->assertQuery( 'SELECT 1; SELECT 2' );
+	}
 }
