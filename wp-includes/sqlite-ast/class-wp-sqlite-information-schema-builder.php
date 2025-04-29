@@ -671,12 +671,12 @@ class WP_SQLite_Information_Schema_Builder {
 	): void {
 		$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
 		$position           = $this->connection->query(
-			"
+			'
 				SELECT MAX(ordinal_position)
-				FROM $columns_table_name
+				FROM ' . $this->connection->quote_identifier( $columns_table_name ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
-			",
+			',
 			array( $this->db_name, $table_name )
 		)->fetchColumn();
 
@@ -891,12 +891,12 @@ class WP_SQLite_Information_Schema_Builder {
 		if ( count( $column_names ) > 0 ) {
 			$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
 			$column_info        = $this->connection->query(
-				"
+				'
 					SELECT column_name, data_type, is_nullable, character_maximum_length
-					FROM $columns_table_name
+					FROM ' . $this->connection->quote_identifier( $columns_table_name ) . '
 					WHERE table_schema = ?
 					AND table_name = ?
-					AND column_name IN (" . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
+					AND column_name IN (' . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
 				',
 				array_merge( array( $this->db_name, $table_name ), $column_names )
 			)->fetchAll(
@@ -1086,12 +1086,12 @@ class WP_SQLite_Information_Schema_Builder {
 							WHEN MAX(seq_in_index = 1) THEN 'MUL'
 							ELSE ''
 						END AS column_key
-					FROM $statistics_table_name
+					FROM " . $this->connection->quote_identifier( $statistics_table_name ) . '
 					WHERE table_schema = ?
 					AND table_name = ?
 					GROUP BY column_name
 				)
-				UPDATE $columns_table_name AS c
+				UPDATE ' . $this->connection->quote_identifier( $columns_table_name ) . " AS c
 				SET
 					column_key = s.column_key,
 					is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable)
@@ -1889,11 +1889,18 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param array<string, string> $data       The data to insert (key is column name, value is column value).
 	 */
 	private function insert_values( string $table_name, array $data ): void {
+		$insert_columns = array();
+		foreach ( $data as $column => $value ) {
+			$insert_columns[] = $this->connection->quote_identifier( $column );
+		}
+
 		$this->connection->query(
-			'
-				INSERT INTO ' . $table_name . ' (' . implode( ', ', array_keys( $data ) ) . ')
-				VALUES (' . implode( ', ', array_fill( 0, count( $data ), '?' ) ) . ')
-			',
+			sprintf(
+				'INSERT INTO %s (%s) VALUES (%s)',
+				$this->connection->quote_identifier( $table_name ),
+				implode( ', ', $insert_columns ),
+				implode( ', ', array_fill( 0, count( $data ), '?' ) )
+			),
 			array_values( $data )
 		);
 	}
@@ -1906,22 +1913,23 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param array<string, string> $where      The WHERE clause conditions (key is column name, value is column value).
 	 */
 	private function update_values( string $table_name, array $data, array $where ): void {
-		$set = array();
+		$set_statements = array();
 		foreach ( $data as $column => $value ) {
-			$set[] = $column . ' = ?';
+			$set_statements[] = $this->connection->quote_identifier( $column ) . ' = ?';
 		}
 
-		$where_clause = array();
+		$where_statements = array();
 		foreach ( $where as $column => $value ) {
-			$where_clause[] = $column . ' = ?';
+			$where_statements[] = $this->connection->quote_identifier( $column ) . ' = ?';
 		}
 
 		$this->connection->query(
-			'
-				UPDATE ' . $table_name . '
-				SET ' . implode( ', ', $set ) . '
-				WHERE ' . implode( ' AND ', $where_clause ) . '
-			',
+			sprintf(
+				'UPDATE %s SET %s WHERE %s',
+				$this->connection->quote_identifier( $table_name ),
+				implode( ', ', $set_statements ),
+				implode( ' AND ', $where_statements )
+			),
 			array_merge( array_values( $data ), array_values( $where ) )
 		);
 	}
@@ -1933,16 +1941,17 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param array<string, string> $where      The WHERE clause conditions (key is column name, value is column value).
 	 */
 	private function delete_values( string $table_name, array $where ): void {
-		$where_clause = array();
+		$where_statements = array();
 		foreach ( $where as $column => $value ) {
-			$where_clause[] = $column . ' = ?';
+			$where_statements[] = $this->connection->quote_identifier( $column ) . ' = ?';
 		}
 
 		$this->connection->query(
-			'
-				DELETE FROM ' . $table_name . '
-				WHERE ' . implode( ' AND ', $where_clause ) . '
-			',
+			sprintf(
+				'DELETE FROM %s WHERE %s',
+				$this->connection->quote_identifier( $table_name ),
+				implode( ' AND ', $where_statements )
+			),
 			array_values( $where )
 		);
 	}
