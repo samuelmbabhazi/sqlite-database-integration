@@ -2783,7 +2783,7 @@ class WP_SQLite_Driver {
 	private function recreate_table_from_information_schema(
 		bool $table_is_temporary,
 		string $table_name,
-		array $column_map = null
+		?array $column_map = null
 	): void {
 		if ( null === $column_map ) {
 			$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
@@ -3538,7 +3538,7 @@ class WP_SQLite_Driver {
 	 *
 	 * @param int|null $override Override the affected rows.
 	 */
-	private function set_result_from_affected_rows( int $override = null ): void {
+	private function set_result_from_affected_rows( ?int $override = null ): void {
 		/*
 		 * SELECT CHANGES() is a workaround for the fact that $stmt->rowCount()
 		 * returns "0" (zero) with the SQLite driver at all times.
@@ -3564,7 +3564,7 @@ class WP_SQLite_Driver {
 	private function new_driver_exception(
 		string $message,
 		$code = 0,
-		Throwable $previous = null
+		?Throwable $previous = null
 	): WP_SQLite_Driver_Exception {
 		return new WP_SQLite_Driver_Exception( $this, $message, $code, $previous );
 	}

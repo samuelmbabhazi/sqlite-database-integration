@@ -20,7 +20,7 @@ class WP_SQLite_Driver_Exception extends PDOException {
 		WP_SQLite_Driver $driver,
 		string $message,
 		$code = 0,
-		Throwable $previous = null
+		?Throwable $previous = null
 	) {
 		parent::__construct( $message, 0, $previous );
 		$this->code   = $code;
