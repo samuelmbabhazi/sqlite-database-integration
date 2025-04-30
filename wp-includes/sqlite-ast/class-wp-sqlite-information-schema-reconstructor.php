@@ -495,10 +495,12 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// Quoted string literal. E.g.: 'abc', "abc", `abc`
 		$first_byte = $default_value[0] ?? null;
 		if ( '"' === $first_byte || "'" === $first_byte || '`' === $first_byte ) {
-			return $this->escape_mysql_string_literal( substr( $default_value, 1, -1 ) );
+			$value = substr( $default_value, 1, -1 );
+			$value = str_replace( $first_byte . $first_byte, $first_byte, $value );
+			return $this->format_mysql_string_literal( $value );
 		}
 
-		// Normalize the default value to for easier comparison.
+		// Normalize the default value for easier comparison.
 		$uppercase_default_value = strtoupper( $default_value );
 
 		// NULL, TRUE, FALSE.
@@ -542,7 +544,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		}
 
 		// Unquoted string literal. E.g.: abc
-		return $this->escape_mysql_string_literal( $default_value );
+		return $this->format_mysql_string_literal( $default_value );
 	}
 
 	/**
@@ -642,14 +644,32 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	}
 
 	/**
-	 * Escape a string literal for MySQL DEFAULT values.
+	 * Format a MySQL string literal for output in a SHOW statement.
+	 *
+	 * We expect UTF-8 strings coming from SQLite. The only characters that need
+	 * to be escaped in a single-quoted string for a UTF-8 MySQL dump are ' and \.
+	 *
+	 * MySQL's SHOW command also escapes \0 (for the mysql CLI), \n (for logs and
+	 * readability), and \r (for readability). Let's these characters as well.
+	 *
+	 * See:
+	 *  - https://github.com/mysql/mysql-server/blob/ff05628a530696bc6851ba6540ac250c7a059aa7/sql/sql_show.cc#L1799
+	 *  - https://github.com/mysql/mysql-server/blob/ff05628a530696bc6851ba6540ac250c7a059aa7/sql/table.cc#L3525
+	 *
+	 * Unfortunately, SQLite doesn't validate the UTF-8 encoding of strings, so
+	 * other byte sequences may come from SQLite as well.
+	 *
+	 * See: https://www.sqlite.org/invalidutf.html
+	 *
+	 * TODO: We may consider stripping invalid UTF-8 characters, but that's likely
+	 *       to be a bigger project, as these can appear also in other contexts.
 	 *
 	 * @param  string $literal The string literal to escape.
 	 * @return string          The escaped string literal.
 	 */
-	private function escape_mysql_string_literal( string $literal ): string {
-		// See: https://www.php.net/manual/en/mysqli.real-escape-string.php
-		return "'" . addcslashes( $literal, "\0\n\r'\"\Z" ) . "'";
+	private function format_mysql_string_literal( string $literal ): string {
+		$value = addcslashes( $literal, "\0\n\r\\" );
+		return "'" . str_replace( "'", "''", $value ) . "'";
 	}
 
 	/**

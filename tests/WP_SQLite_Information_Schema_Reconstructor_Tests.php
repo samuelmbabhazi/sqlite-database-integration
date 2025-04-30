@@ -265,6 +265,47 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
+	public function testDefaultValueEscaping(): void {
+		//$this->assertSame("abc". chr( 8 ) . "xyz", "" );
+		$this->engine->get_connection()->query(
+			"
+			CREATE TABLE t (
+				col1 text DEFAULT 'abc''xyz',
+				col2 text DEFAULT 'abc\"xyz',
+				col3 text DEFAULT 'abc`xyz',
+				col4 text DEFAULT 'abc\\xyz',
+				col5 text DEFAULT 'abc\nxyz',
+				col6 text DEFAULT 'abc\rxyz',
+				col7 text DEFAULT 'abc\txyz',
+				col8 text DEFAULT 'abc" . chr( 8 ) . "xyz', -- backspace
+				col9 text DEFAULT 'abc" . chr( 26 ) . "xyz' -- control-Z
+			)
+		"
+		);
+
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					"  `col1` varchar(65535) DEFAULT 'abc''xyz',",
+					"  `col2` varchar(65535) DEFAULT 'abc\"xyz',",
+					"  `col3` varchar(65535) DEFAULT 'abc`xyz',",
+					"  `col4` varchar(65535) DEFAULT 'abc\\\\xyz',",
+					"  `col5` varchar(65535) DEFAULT 'abc\\nxyz',",
+					"  `col6` varchar(65535) DEFAULT 'abc\\rxyz',",
+					"  `col7` varchar(65535) DEFAULT 'abc	xyz',",              // tab is preserved
+					"  `col8` varchar(65535) DEFAULT 'abc" . chr( 8 ) . "xyz',", // backspace is preserved
+					"  `col9` varchar(65535) DEFAULT 'abc" . chr( 26 ) . "xyz'", // control-Z is preserved
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
 	private function assertQuery( $sql ) {
 		$retval = $this->engine->query( $sql );
 		$this->assertNotFalse( $retval );

@@ -1867,8 +1867,8 @@ class WP_SQLite_Information_Schema_Builder {
 			} elseif ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $child->id ) {
 				$value = $child->get_value();
 				$value = substr( $value, 1, -1 );
-				$value = str_replace( '\"', '"', $value );
-				$value = str_replace( '""', '"', $value );
+				$value = str_replace( "\'", "'", $value );
+				$value = str_replace( "''", "'", $value );
 			} elseif ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $child->id ) {
 				$value = $child->get_value();
 				$value = substr( $value, 1, -1 );
