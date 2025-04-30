@@ -211,8 +211,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -234,8 +234,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'score', 3, '0.0', 'YES', 'float', null, null, 12, null, null, null, null, 'float', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -255,8 +255,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_statistics` (`table_schema`, `table_name`, `non_unique`, `index_schema`, `index_name`, `seq_in_index`, `column_name`, `collation`, `cardinality`, `sub_part`, `packed`, `nullable`, `index_type`, `comment`, `index_comment`, `is_visible`, `expression`)'
 					. " VALUES ('wp', 't', 0, 'wp', 'PRIMARY', 1, 'id', 'A', 0, null, null, '', 'BTREE', '', '', 'YES', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -275,8 +275,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -295,8 +295,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -325,8 +325,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_statistics` (`table_schema`, `table_name`, `non_unique`, `index_schema`, `index_name`, `seq_in_index`, `column_name`, `collation`, `cardinality`, `sub_part`, `packed`, `nullable`, `index_type`, `comment`, `index_comment`, `is_visible`, `expression`)'
 					. " VALUES ('wp', 't', 0, 'wp', 'PRIMARY', 1, 'id', 'A', 0, null, null, '', 'BTREE', '', '', 'YES', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -347,8 +347,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_statistics` (`table_schema`, `table_name`, `non_unique`, `index_schema`, `index_name`, `seq_in_index`, `column_name`, `collation`, `cardinality`, `sub_part`, `packed`, `nullable`, `index_type`, `comment`, `index_comment`, `is_visible`, `expression`)'
 					. " VALUES ('wp', 't1', 0, 'wp', 'PRIMARY', 1, 'id', 'A', 0, null, null, '', 'BTREE', '', '', 'YES', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't1'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't1'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't1'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't1' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't1' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 
@@ -367,8 +367,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_statistics` (`table_schema`, `table_name`, `non_unique`, `index_schema`, `index_name`, `seq_in_index`, `column_name`, `collation`, `cardinality`, `sub_part`, `packed`, `nullable`, `index_type`, `comment`, `index_comment`, `is_visible`, `expression`)'
 					. " VALUES ('wp', 't2', 0, 'wp', 'PRIMARY', 1, 'id', 'A', 0, null, null, '', 'BTREE', '', '', 'YES', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't2'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't2'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't2'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't2' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't2' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 
@@ -389,8 +389,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 					. " VALUES ('wp', 't3', 0, 'wp', 'PRIMARY', 1, 'id', 'A', 0, null, null, '', 'BTREE', '', '', 'YES', null)",
 				"WITH s AS ( SELECT column_name, CASE WHEN MAX(index_name = 'PRIMARY') THEN 'PRI' WHEN MAX(non_unique = 0 AND seq_in_index = 1) THEN 'UNI' WHEN MAX(seq_in_index = 1) THEN 'MUL' ELSE '' END AS column_key FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't3' GROUP BY column_name ) UPDATE `_wp_sqlite_mysql_information_schema_columns` AS c SET column_key = s.column_key, is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable) FROM s WHERE c.table_schema = 'wp' AND c.table_name = 't3' AND s.column_name = c.column_name",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't3'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't3'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't3'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't3' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't3' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -418,8 +418,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_statistics` (`table_schema`, `table_name`, `non_unique`, `index_schema`, `index_name`, `seq_in_index`, `column_name`, `collation`, `cardinality`, `sub_part`, `packed`, `nullable`, `index_type`, `comment`, `index_comment`, `is_visible`, `expression`)'
 					. " VALUES ('wp', 't', 0, 'wp', 'name', 1, 'name', 'A', 0, null, null, 'YES', 'BTREE', '', '', 'YES', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -451,8 +451,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 					. " VALUES ('wp', 't', 0, 'wp', 'name', 1, 'name', 'A', 0, null, null, 'YES', 'BTREE', '', '', 'YES', null)",
 				"WITH s AS ( SELECT column_name, CASE WHEN MAX(index_name = 'PRIMARY') THEN 'PRI' WHEN MAX(non_unique = 0 AND seq_in_index = 1) THEN 'UNI' WHEN MAX(seq_in_index = 1) THEN 'MUL' ELSE '' END AS column_key FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' GROUP BY column_name ) UPDATE `_wp_sqlite_mysql_information_schema_columns` AS c SET column_key = s.column_key, is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable) FROM s WHERE c.table_schema = 'wp' AND c.table_name = 't' AND s.column_name = c.column_name",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -519,8 +519,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'a', 2, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -548,8 +548,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'a', 2, null, 'NO', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -577,8 +577,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'a', 2, '0', 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -606,8 +606,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'a', 2, '0', 'NO', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -641,8 +641,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'c', 4, null, 'YES', 'tinyint', null, null, 3, 0, null, null, null, 'tinyint(1)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -670,8 +670,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				"DELETE FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE `table_schema` = 'wp' AND `table_name` = 't' AND `column_name` = 'a'",
 				"WITH s AS ( SELECT column_name, CASE WHEN MAX(index_name = 'PRIMARY') THEN 'PRI' WHEN MAX(non_unique = 0 AND seq_in_index = 1) THEN 'UNI' WHEN MAX(seq_in_index = 1) THEN 'MUL' ELSE '' END AS column_key FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' GROUP BY column_name ) UPDATE `_wp_sqlite_mysql_information_schema_columns` AS c SET column_key = s.column_key, is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable) FROM s WHERE c.table_schema = 'wp' AND c.table_name = 't' AND s.column_name = c.column_name",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);  }
 
@@ -701,8 +701,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				"DELETE FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE `table_schema` = 'wp' AND `table_name` = 't' AND `column_name` = 'b'",
 				"WITH s AS ( SELECT column_name, CASE WHEN MAX(index_name = 'PRIMARY') THEN 'PRI' WHEN MAX(non_unique = 0 AND seq_in_index = 1) THEN 'UNI' WHEN MAX(seq_in_index = 1) THEN 'MUL' ELSE '' END AS column_key FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' GROUP BY column_name ) UPDATE `_wp_sqlite_mysql_information_schema_columns` AS c SET column_key = s.column_key, is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable) FROM s WHERE c.table_schema = 'wp' AND c.table_name = 't' AND s.column_name = c.column_name",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -733,8 +733,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				"DELETE FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE `table_schema` = 'wp' AND `table_name` = 't' AND `column_name` = 'a'",
 				"WITH s AS ( SELECT column_name, CASE WHEN MAX(index_name = 'PRIMARY') THEN 'PRI' WHEN MAX(non_unique = 0 AND seq_in_index = 1) THEN 'UNI' WHEN MAX(seq_in_index = 1) THEN 'MUL' ELSE '' END AS column_key FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' GROUP BY column_name ) UPDATE `_wp_sqlite_mysql_information_schema_columns` AS c SET column_key = s.column_key, is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable) FROM s WHERE c.table_schema = 'wp' AND c.table_name = 't' AND s.column_name = c.column_name",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -765,8 +765,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'a', 1, null, 'YES', 'int', null, null, 10, 0, null, null, null, 'int', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -786,8 +786,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'i2', 2, null, 'YES', 'bit', null, null, 10, null, null, null, null, 'bit(10)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -807,8 +807,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'i2', 2, null, 'YES', 'tinyint', null, null, 3, 0, null, null, null, 'tinyint(1)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -836,8 +836,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'i6', 6, null, 'YES', 'bigint', null, null, 19, 0, null, null, null, 'bigint', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -861,8 +861,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'f4', 4, null, 'YES', 'double', null, null, 22, null, null, null, null, 'double', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -886,8 +886,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'f4', 4, null, 'YES', 'decimal', null, null, 10, 0, null, null, null, 'decimal(10,0)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -907,8 +907,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'c2', 2, null, 'YES', 'char', 10, 40, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'char(10)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -930,8 +930,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'c3', 3, null, 'YES', 'varchar', 255, 1020, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -955,8 +955,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'c4', 4, null, 'YES', 'char', 10, 30, null, null, null, 'utf8', 'utf8_general_ci', 'char(10)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -978,8 +978,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'c3', 3, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1001,8 +1001,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'c3', 3, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1026,8 +1026,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 't4', 4, null, 'YES', 'longtext', 4294967295, 4294967295, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'longtext', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1045,8 +1045,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'e', 1, null, 'YES', 'enum', 1, 4, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'enum(''a'',''b'',''c'')', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1072,8 +1072,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'y', 5, null, 'YES', 'year', null, null, null, null, null, null, null, 'year', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1093,8 +1093,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'v', 2, null, 'YES', 'varbinary', 255, 255, null, null, null, null, null, 'varbinary(255)', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1118,8 +1118,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'b4', 4, null, 'YES', 'longblob', 4294967295, 4294967295, null, null, null, null, null, 'longblob', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1143,8 +1143,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'g4', 4, null, 'YES', 'polygon', null, null, null, null, null, null, null, 'polygon', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1166,8 +1166,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'g3', 3, null, 'YES', 'multipolygon', null, null, null, null, null, null, null, 'multipolygon', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1187,8 +1187,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'g2', 2, null, 'YES', 'geomcollection', null, null, null, null, null, null, null, 'geomcollection', '', '', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}
@@ -1206,8 +1206,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 				'INSERT INTO `_wp_sqlite_mysql_information_schema_columns` (`table_schema`, `table_name`, `column_name`, `ordinal_position`, `column_default`, `is_nullable`, `data_type`, `character_maximum_length`, `character_octet_length`, `numeric_precision`, `numeric_scale`, `datetime_precision`, `character_set_name`, `collation_name`, `column_type`, `column_key`, `extra`, `privileges`, `column_comment`, `generation_expression`, `srs_id`)'
 					. " VALUES ('wp', 't', 'id', 1, null, 'NO', 'bigint', null, null, 20, 0, null, null, null, 'bigint unsigned', 'PRI', 'auto_increment', 'select,insert,update,references', '', '', null)",
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_tables` WHERE table_type = 'BASE TABLE' AND table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't'",
-				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't'",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_columns` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY ordinal_position",
+				"SELECT * FROM `_wp_sqlite_mysql_information_schema_statistics` WHERE table_schema = 'wp' AND table_name = 't' ORDER BY INDEX_NAME = 'PRIMARY' DESC, NON_UNIQUE = '0' DESC, INDEX_TYPE = 'SPATIAL' DESC, INDEX_TYPE = 'BTREE' DESC, INDEX_TYPE = 'FULLTEXT' DESC, ROWID, SEQ_IN_INDEX",
 			)
 		);
 	}

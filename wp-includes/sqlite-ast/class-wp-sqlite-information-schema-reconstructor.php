@@ -79,6 +79,14 @@ class WP_SQLite_Information_Schema_Reconstructor {
 						throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 					}
 				}
+
+				/*
+				 * First, let's make sure we clean up all related data. This fixes
+				 * partial data corruption, such as when a table record is missing,
+				 * but some related column, index, or constraint records are stored.
+				 */
+				$this->record_drop_table( $table );
+
 				$this->schema_builder->record_create_table( $ast );
 			}
 		}
@@ -86,16 +94,28 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// Remove information schema records for tables that don't exist.
 		foreach ( $information_schema_tables as $table ) {
 			if ( ! in_array( $table, $sqlite_tables, true ) ) {
-				$sql = sprintf( 'DROP TABLE %s', $this->connection->quote_identifier( $table ) ); // TODO: mysql quote
-				$ast = $this->driver->create_parser( $sql )->parse();
-				if ( null === $ast ) {
-					throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
-				}
-				$this->schema_builder->record_drop_table(
-					$ast->get_first_descendant_node( 'dropStatement' )
-				);
+				$this->record_drop_table( $table );
 			}
 		}
+	}
+
+	/**
+	 * Record a DROP TABLE statement in the information schema.
+	 *
+	 * This removes a table record from the information schema, as well as all
+	 * column, index, and constraint records that are related to the table.
+	 *
+	 * @param string $table_name The name of the table to drop.
+	 */
+	private function record_drop_table( string $table_name ): void {
+		$sql = sprintf( 'DROP TABLE %s', $this->connection->quote_identifier( $table_name ) ); // TODO: mysql quote
+		$ast = $this->driver->create_parser( $sql )->parse();
+		if ( null === $ast ) {
+			throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+		}
+		$this->schema_builder->record_drop_table(
+			$ast->get_first_descendant_node( 'dropStatement' )
+		);
 	}
 
 	/**

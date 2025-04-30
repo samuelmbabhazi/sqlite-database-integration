@@ -51,7 +51,8 @@ class WP_SQLite_Information_Schema_Builder {
 			TABLE_COLLATION TEXT NOT NULL,              -- table collation
 			CHECKSUM INTEGER,                           -- not implemented
 			CREATE_OPTIONS TEXT NOT NULL DEFAULT '',    -- extra CREATE TABLE options
-			TABLE_COMMENT TEXT NOT NULL DEFAULT ''      -- comment
+			TABLE_COMMENT TEXT NOT NULL DEFAULT '',     -- comment
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME)
 		) STRICT",
 
 		// COLUMNS
@@ -77,7 +78,8 @@ class WP_SQLite_Information_Schema_Builder {
 			PRIVILEGES TEXT NOT NULL,                       -- not implemented
 			COLUMN_COMMENT TEXT NOT NULL DEFAULT '',        -- comment
 			GENERATION_EXPRESSION TEXT NOT NULL DEFAULT '', -- expression for generated columns
-			SRS_ID INTEGER                                  -- not implemented
+			SRS_ID INTEGER,                                 -- not implemented
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME)
 		) STRICT",
 
 		// VIEWS
@@ -93,7 +95,8 @@ class WP_SQLite_Information_Schema_Builder {
 			SECURITY_TYPE TEXT NOT NULL,
 			CHARACTER_SET_CLIENT TEXT NOT NULL,
 			COLLATION_CONNECTION TEXT NOT NULL,
-			ALGORITHM TEXT NOT NULL
+			ALGORITHM TEXT NOT NULL,
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME)
 		) STRICT",
 
 		// STATISTICS (indexes)
@@ -115,18 +118,27 @@ class WP_SQLite_Information_Schema_Builder {
 			COMMENT TEXT NOT NULL DEFAULT '',            -- not implemented
 			INDEX_COMMENT TEXT NOT NULL DEFAULT '',      -- index comment
 			IS_VISIBLE TEXT NOT NULL DEFAULT 'YES',      -- 'NO' if column is hidden, 'YES' otherwise
-			EXPRESSION TEXT                              -- expression for functional indexes
+			EXPRESSION TEXT,                             -- expression for functional indexes
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX),
+			UNIQUE (INDEX_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX)
 		) STRICT",
 
 		// TABLE_CONSTRAINTS
 		// @TODO: Implement. Could this be just a view?
-		"CREATE TABLE IF NOT EXISTS <prefix>constraints ( -- '<prefix>' is a placeholder replaced at runtime
+		"CREATE TABLE IF NOT EXISTS <prefix>table_constraints ( -- '<prefix>' is a placeholder replaced at runtime
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
 			TABLE_SCHEMA TEXT NOT NULL,
 			TABLE_NAME TEXT NOT NULL,
-			CONSTRAINT_TYPE TEXT NOT NULL
+			CONSTRAINT_TYPE TEXT NOT NULL,
+
+			-- Constraint names are unique per type in each table.
+			-- A MySQL table can have a PRIMARY KEY, UNIQUE, FOREIGN KEY, and CHECK
+			-- constraints with the same name, but the name must be unique per type.
+			-- CHECK and FOREIGN KEY constraint names must also be unique per schema.
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_TYPE, CONSTRAINT_NAME),
+			UNIQUE (CONSTRAINT_SCHEMA, TABLE_NAME, CONSTRAINT_TYPE, CONSTRAINT_NAME)
 		) STRICT",
 
 		// CHECK_CONSTRAINTS
@@ -134,9 +146,9 @@ class WP_SQLite_Information_Schema_Builder {
 		"CREATE TABLE IF NOT EXISTS <prefix>check_constraints ( -- '<prefix>' is a placeholder replaced at runtime
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
-			TABLE_NAME TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
-			CHECK_CLAUSE TEXT NOT NULL
+			CHECK_CLAUSE TEXT NOT NULL,
+			PRIMARY KEY (CONSTRAINT_SCHEMA, CONSTRAINT_NAME) -- CHECK constraints must be unique per schema
 		) STRICT",
 
 		// KEY_COLUMN_USAGE
@@ -154,6 +166,7 @@ class WP_SQLite_Information_Schema_Builder {
 			REFERENCED_TABLE_SCHEMA TEXT,
 			REFERENCED_TABLE_NAME TEXT,
 			REFERENCED_COLUMN_NAME TEXT
+			-- TODO: PRIMARY/UNIQUE keys, if needed.
 		) STRICT",
 
 		// REFERENTIAL_CONSTRAINTS
@@ -168,7 +181,8 @@ class WP_SQLite_Information_Schema_Builder {
 			MATCH_OPTION TEXT NOT NULL,
 			UPDATE_RULE TEXT NOT NULL,
 			DELETE_RULE TEXT NOT NULL,
-			REFERENCED_TABLE_NAME TEXT NOT NULL
+			REFERENCED_TABLE_NAME TEXT NOT NULL,
+			PRIMARY KEY (CONSTRAINT_SCHEMA, CONSTRAINT_NAME) -- FOREIGN KEY constraints must be unique per schema
 		) STRICT",
 
 		// TRIGGERS
@@ -195,7 +209,8 @@ class WP_SQLite_Information_Schema_Builder {
 			DEFINER TEXT NOT NULL,
 			CHARACTER_SET_CLIENT TEXT NOT NULL,
 			COLLATION_CONNECTION TEXT NOT NULL,
-			DATABASE_COLLATION TEXT NOT NULL
+			DATABASE_COLLATION TEXT NOT NULL,
+			PRIMARY KEY (TRIGGER_SCHEMA, TRIGGER_NAME)
 		) STRICT",
 	);
 
@@ -476,9 +491,20 @@ class WP_SQLite_Information_Schema_Builder {
 			 */
 			if ( $table_is_temporary && str_contains( $e->getMessage(), 'no such table' ) ) {
 				$this->ensure_temporary_information_schema_tables();
-				$this->insert_values( $tables_table_name, $table_data );
-			} else {
-				throw $e;
+				try {
+					$e = null;
+					$this->insert_values( $tables_table_name, $table_data );
+				} catch ( PDOException $retry_exception ) {
+					$e = $retry_exception;
+				}
+			}
+
+			if ( $e ) {
+				if ( '23000' === $e->getCode() ) {
+					throw WP_SQLite_Information_Schema_Exception::duplicate_table_name( $table_name );
+				} else {
+					throw $e;
+				}
 			}
 		}
 
@@ -494,10 +520,18 @@ class WP_SQLite_Information_Schema_Builder {
 				$column_node,
 				$column_position
 			);
-			$this->insert_values(
-				$this->get_table_name( $table_is_temporary, 'columns' ),
-				$column_data
-			);
+
+			try {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'columns' ),
+					$column_data
+				);
+			} catch ( PDOException $e ) {
+				if ( '23000' === $e->getCode() ) {
+					throw WP_SQLite_Information_Schema_Exception::duplicate_column_name( $column_name );
+				}
+				throw $e;
+			}
 
 			// Inline column constraint.
 			$column_constraint_data = $this->extract_column_constraint_data(
@@ -681,10 +715,17 @@ class WP_SQLite_Information_Schema_Builder {
 		)->fetchColumn();
 
 		$column_data = $this->extract_column_data( $table_name, $column_name, $node, (int) $position + 1 );
-		$this->insert_values(
-			$this->get_table_name( $table_is_temporary, 'columns' ),
-			$column_data
-		);
+		try {
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'columns' ),
+				$column_data
+			);
+		} catch ( PDOException $e ) {
+			if ( '23000' === $e->getCode() ) {
+				throw WP_SQLite_Information_Schema_Exception::duplicate_column_name( $column_name );
+			}
+			throw $e;
+		}
 
 		$column_constraint_data = $this->extract_column_constraint_data( $table_name, $column_name, $node, true );
 		if ( null !== $column_constraint_data ) {
@@ -939,28 +980,37 @@ class WP_SQLite_Information_Schema_Builder {
 				$has_spatial_column
 			);
 
-			$this->insert_values(
-				$this->get_table_name( $table_is_temporary, 'statistics' ),
-				array(
-					'table_schema'  => $this->db_name,
-					'table_name'    => $table_name,
-					'non_unique'    => $non_unique,
-					'index_schema'  => $this->db_name,
-					'index_name'    => $index_name,
-					'seq_in_index'  => $seq_in_index,
-					'column_name'   => $column_name,
-					'collation'     => $collation,
-					'cardinality'   => 0, // not implemented
-					'sub_part'      => $sub_part,
-					'packed'        => null, // not implemented
-					'nullable'      => $nullable,
-					'index_type'    => $index_type,
-					'comment'       => '', // not implemented
-					'index_comment' => '', // @TODO
-					'is_visible'    => 'YES', // @TODO: Save actual visibility value.
-					'expression'    => null, // @TODO
-				)
+			$column_constraint_data = array(
+				'table_schema'  => $this->db_name,
+				'table_name'    => $table_name,
+				'non_unique'    => $non_unique,
+				'index_schema'  => $this->db_name,
+				'index_name'    => $index_name,
+				'seq_in_index'  => $seq_in_index,
+				'column_name'   => $column_name,
+				'collation'     => $collation,
+				'cardinality'   => 0, // not implemented
+				'sub_part'      => $sub_part,
+				'packed'        => null, // not implemented
+				'nullable'      => $nullable,
+				'index_type'    => $index_type,
+				'comment'       => '', // not implemented
+				'index_comment' => '', // @TODO
+				'is_visible'    => 'YES', // @TODO: Save actual visibility value.
+				'expression'    => null, // @TODO
 			);
+
+			try {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'statistics' ),
+					$column_constraint_data
+				);
+			} catch ( PDOException $e ) {
+				if ( '23000' === $e->getCode() ) {
+					throw WP_SQLite_Information_Schema_Exception::duplicate_key_name( $index_name );
+				}
+				throw $e;
+			}
 
 			$seq_in_index += 1;
 		}

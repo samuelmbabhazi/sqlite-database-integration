@@ -675,8 +675,12 @@ class WP_SQLite_Driver {
 			} catch ( Throwable $rollback_exception ) {
 				// Ignore rollback errors.
 			}
-			$code = $e->getCode();
-			throw $this->new_driver_exception( $e->getMessage(), is_int( $code ) ? $code : 0, $e );
+			if ( $e instanceof WP_SQLite_Driver_Exception ) {
+				throw $e;
+			} elseif ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
+				throw $this->convert_information_schema_exception( $e );
+			}
+			throw $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
 		}
 	}
 
@@ -1527,14 +1531,18 @@ class WP_SQLite_Driver {
 					INDEX_COMMENT AS `Index_comment`,
 					IS_VISIBLE AS `Visible`,
 					EXPRESSION AS `Expression`
-				FROM ' . $this->quote_sqlite_identifier( $statistics_table ) . '
+				FROM ' . $this->quote_sqlite_identifier( $statistics_table ) . "
 				WHERE table_schema = ?
 				AND table_name = ?
 				ORDER BY
-					INDEX_NAME = "PRIMARY" DESC,
-					INDEX_TYPE = "FULLTEXT" ASC,
+					INDEX_NAME = 'PRIMARY' DESC,
+					NON_UNIQUE = '0' DESC,
+					INDEX_TYPE = 'SPATIAL' DESC,
+					INDEX_TYPE = 'BTREE' DESC,
+					INDEX_TYPE = 'FULLTEXT' DESC,
+					ROWID,
 					SEQ_IN_INDEX
-			',
+			",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
@@ -1571,7 +1579,7 @@ class WP_SQLite_Driver {
 		);
 		$table_info    = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? %s',
+				'SELECT * FROM %s WHERE table_schema = ? %s ORDER BY table_name',
 				$this->quote_sqlite_identifier( $tables_tables ),
 				$condition ?? ''
 			),
@@ -1640,7 +1648,7 @@ class WP_SQLite_Driver {
 		);
 		$table_info   = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? %s',
+				'SELECT * FROM %s WHERE table_schema = ? %s ORDER BY table_name',
 				$this->quote_sqlite_identifier( $table_tables ),
 				$condition ?? ''
 			),
@@ -1722,7 +1730,7 @@ class WP_SQLite_Driver {
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? %s',
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? %s ORDER BY ordinal_position',
 				$this->quote_sqlite_identifier( $columns_table ),
 				$condition ?? ''
 			),
@@ -1776,6 +1784,7 @@ class WP_SQLite_Driver {
 				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
+				ORDER BY ordinal_position
 			',
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
@@ -3159,7 +3168,7 @@ class WP_SQLite_Driver {
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position',
 				$this->quote_sqlite_identifier( $columns_table )
 			),
 			array( $this->db_name, $table_name )
@@ -3169,7 +3178,20 @@ class WP_SQLite_Driver {
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+				"
+					SELECT *
+					FROM %s
+					WHERE table_schema = ?
+					AND table_name = ?
+					ORDER BY
+						INDEX_NAME = 'PRIMARY' DESC,
+						NON_UNIQUE = '0' DESC,
+						INDEX_TYPE = 'SPATIAL' DESC,
+						INDEX_TYPE = 'BTREE' DESC,
+						INDEX_TYPE = 'FULLTEXT' DESC,
+						ROWID,
+						SEQ_IN_INDEX
+				",
 				$this->quote_sqlite_identifier( $statistics_table )
 			),
 			array( $this->db_name, $table_name )
@@ -3352,7 +3374,13 @@ class WP_SQLite_Driver {
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+				'
+					SELECT *
+					FROM %s
+					WHERE table_schema = ?
+					AND table_name = ?
+					ORDER BY ordinal_position
+				',
 				$this->quote_sqlite_identifier( $columns_table )
 			),
 			array( $this->db_name, $table_name )
@@ -3362,7 +3390,20 @@ class WP_SQLite_Driver {
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+				"
+					SELECT *
+					FROM %s
+					WHERE table_schema = ?
+					AND table_name = ?
+					ORDER BY
+						INDEX_NAME = 'PRIMARY' DESC,
+						NON_UNIQUE = '0' DESC,
+						INDEX_TYPE = 'SPATIAL' DESC,
+						INDEX_TYPE = 'BTREE' DESC,
+						INDEX_TYPE = 'FULLTEXT' DESC,
+						ROWID,
+						SEQ_IN_INDEX
+				",
 				$this->quote_sqlite_identifier( $statistics_table )
 			),
 			array( $this->db_name, $table_name )
@@ -3630,5 +3671,47 @@ class WP_SQLite_Driver {
 			$this,
 			sprintf( 'MySQL query not supported. Cause: %s', $cause )
 		);
+	}
+
+	/**
+	 * Convert an information schema exception to a MySQL-like driver exception.
+	 *
+	 * This method is used to convert some information schema exceptions to the
+	 * corresponding MySQL exceptions, as they would be generated by PDO MySQL.
+	 * This conversion mirrors PDO's error messages and SQLSTATE codes.
+	 *
+	 * @param  WP_SQLite_Information_Schema_Exception $e The information schema exception.
+	 * @return Throwable                                 The converted exception, or the original
+	 *                                                   exception if no conversion was done.
+	 */
+	private function convert_information_schema_exception( WP_SQLite_Information_Schema_Exception $e ): Throwable {
+		switch ( $e->get_type() ) {
+			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_TABLE_NAME:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42S01]: Base table or view already exists: 1050 Table '%s' already exists",
+						$e->get_data()['table_name']
+					),
+					'42S01'
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_COLUMN_NAME:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name '%s'",
+						$e->get_data()['column_name']
+					),
+					'42S21'
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_KEY_NAME:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name '%s'",
+						$e->get_data()['key_name']
+					),
+					'42S21'
+				);
+			default:
+				return $e;
+		}
 	}
 }
