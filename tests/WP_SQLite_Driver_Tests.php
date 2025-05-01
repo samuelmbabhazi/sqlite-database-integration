@@ -1209,14 +1209,34 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					'name'     => '_wp_sqlite__tmp_table_created_at_on_update',
 					'tbl_name' => '_tmp_table',
 					'rootpage' => '0',
-					'sql'      => "CREATE TRIGGER `_wp_sqlite__tmp_table_created_at_on_update`\n\t\t\t\tAFTER UPDATE ON `_tmp_table`\n\t\t\t\tFOR EACH ROW\n\t\t\t\tBEGIN\n\t\t\t\t  UPDATE `_tmp_table` SET `created_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\t\tEND",
+					'sql'      => implode(
+						"\n\t\t\t\t",
+						array(
+							'CREATE TRIGGER `_wp_sqlite__tmp_table_created_at_on_update`',
+							'AFTER UPDATE ON `_tmp_table`',
+							'FOR EACH ROW',
+							'BEGIN',
+							'  UPDATE `_tmp_table` SET `created_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;',
+							'END',
+						)
+					),
 				),
 				(object) array(
 					'type'     => 'trigger',
 					'name'     => '_wp_sqlite__tmp_table_updated_at_on_update',
 					'tbl_name' => '_tmp_table',
 					'rootpage' => '0',
-					'sql'      => "CREATE TRIGGER `_wp_sqlite__tmp_table_updated_at_on_update`\n\t\t\t\tAFTER UPDATE ON `_tmp_table`\n\t\t\t\tFOR EACH ROW\n\t\t\t\tBEGIN\n\t\t\t\t  UPDATE `_tmp_table` SET `updated_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\t\tEND",
+					'sql'      => implode(
+						"\n\t\t\t\t",
+						array(
+							'CREATE TRIGGER `_wp_sqlite__tmp_table_updated_at_on_update`',
+							'AFTER UPDATE ON `_tmp_table`',
+							'FOR EACH ROW',
+							'BEGIN',
+							'  UPDATE `_tmp_table` SET `updated_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;',
+							'END',
+						)
+					),
 				),
 			),
 			$results
