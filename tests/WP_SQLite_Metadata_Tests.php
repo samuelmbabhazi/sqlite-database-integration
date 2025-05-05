@@ -3,29 +3,11 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_SQLite_Metadata_Tests extends TestCase {
-
+	/** @var WP_SQLite_Translator */
 	private $engine;
-	private $sqlite;
 
-	public static function setUpBeforeClass(): void {
-		// if ( ! defined( 'PDO_DEBUG' )) {
-		// define( 'PDO_DEBUG', true );
-		// }
-		if ( ! defined( 'FQDB' ) ) {
-			define( 'FQDB', ':memory:' );
-			define( 'FQDBDIR', __DIR__ . '/../testdb' );
-		}
-		error_reporting( E_ALL & ~E_DEPRECATED );
-		if ( ! isset( $GLOBALS['table_prefix'] ) ) {
-			$GLOBALS['table_prefix'] = 'wptests_';
-		}
-		if ( ! isset( $GLOBALS['wpdb'] ) ) {
-			$GLOBALS['wpdb']                  = new stdClass();
-			$GLOBALS['wpdb']->suppress_errors = false;
-			$GLOBALS['wpdb']->show_errors     = true;
-		}
-		return;
-	}
+	/** @var PDO */
+	private $sqlite;
 
 	// Before each test, we create a new database
 	public function setUp(): void {

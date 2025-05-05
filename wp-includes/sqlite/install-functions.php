@@ -35,10 +35,8 @@ function sqlite_make_db_sqlite() {
 
 	if ( defined( 'WP_SQLITE_AST_DRIVER' ) && WP_SQLITE_AST_DRIVER ) {
 		$translator = new WP_SQLite_Driver(
-			array(
-				'database'   => $wpdb->dbname,
-				'connection' => $pdo,
-			)
+			new WP_SQLite_Connection( array( 'pdo' => $pdo ) ),
+			$wpdb->dbname
 		);
 	} else {
 		$translator = new WP_SQLite_Translator( $pdo );

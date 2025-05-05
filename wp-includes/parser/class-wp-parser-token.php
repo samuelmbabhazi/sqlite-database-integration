@@ -17,20 +17,52 @@ class WP_Parser_Token {
 	public $id;
 
 	/**
-	 * Token value in its original raw form.
+	 * Byte offset in the input where the token begins.
+	 *
+	 * @var int
+	 */
+	public $start;
+
+	/**
+	 * Byte length of the token in the input.
+	 *
+	 * @var int
+	 */
+	public $length;
+
+	/**
+	 * Input bytes from which the token was parsed.
 	 *
 	 * @var string
 	 */
-	public $value;
+	private $input;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param int $id Token type.
-	 * @param string $value Token value.
+	 * @param int    $id      Token type.
+	 * @param int    $start   Byte offset in the input where the token begins.
+	 * @param int    $length  Byte length of the token in the input.
+	 * @param string $input   Input bytes from which the token was parsed.
 	 */
-	public function __construct( int $id, string $value ) {
-		$this->id    = $id;
-		$this->value = $value;
+	public function __construct(
+		int $id,
+		int $start,
+		int $length,
+		string $input
+	) {
+		$this->id     = $id;
+		$this->start  = $start;
+		$this->length = $length;
+		$this->input  = $input;
+	}
+
+	/**
+	 * Get the token value as raw bytes from the input.
+	 *
+	 * @return string The token value.
+	 */
+	public function get_value(): string {
+		return substr( $this->input, $this->start, $this->length );
 	}
 }

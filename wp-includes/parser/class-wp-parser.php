@@ -9,9 +9,9 @@
  *        satisfy in order to be supported by this parser (e.g., no left recursion).
  */
 class WP_Parser {
-	private $grammar;
-	private $tokens;
-	private $position;
+	protected $grammar;
+	protected $tokens;
+	protected $position;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
 		$this->grammar  = $grammar;

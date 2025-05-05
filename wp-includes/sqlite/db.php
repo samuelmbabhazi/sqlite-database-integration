@@ -6,6 +6,11 @@
  * @since 1.0.0
  */
 
+/**
+ * Load the "SQLITE_DRIVER_VERSION" constant.
+ */
+require_once dirname( __DIR__, 2 ) . '/version.php';
+
 // Require the constants file.
 require_once dirname( __DIR__, 2 ) . '/constants.php';
 

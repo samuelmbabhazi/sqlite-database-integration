@@ -1,46 +1,21 @@
 <?php
 
-require_once __DIR__ . '/WP_SQLite_Translator_Tests.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver-exception.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-builder.php';
-
 use PHPUnit\Framework\TestCase;
 
 class WP_SQLite_Driver_Tests extends TestCase {
-
+	/** @var WP_SQLite_Driver */
 	private $engine;
-	private $sqlite;
 
-	public static function setUpBeforeClass(): void {
-		// if ( ! defined( 'PDO_DEBUG' )) {
-		// define( 'PDO_DEBUG', true );
-		// }
-		if ( ! defined( 'FQDB' ) ) {
-			define( 'FQDB', ':memory:' );
-			define( 'FQDBDIR', __DIR__ . '/../testdb' );
-		}
-		error_reporting( E_ALL & ~E_DEPRECATED );
-		if ( ! isset( $GLOBALS['table_prefix'] ) ) {
-			$GLOBALS['table_prefix'] = 'wptests_';
-		}
-		if ( ! isset( $GLOBALS['wpdb'] ) ) {
-			$GLOBALS['wpdb']                  = new stdClass();
-			$GLOBALS['wpdb']->suppress_errors = false;
-			$GLOBALS['wpdb']->show_errors     = true;
-		}
-		return;
-	}
+	/** @var PDO */
+	private $sqlite;
 
 	// Before each test, we create a new database
 	public function setUp(): void {
 		$this->sqlite = new PDO( 'sqlite::memory:' );
 
 		$this->engine = new WP_SQLite_Driver(
-			array(
-				'connection' => $this->sqlite,
-				'database'   => 'wp',
-			)
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			'wp'
 		);
 		$this->engine->query(
 			"CREATE TABLE _options (
@@ -1234,14 +1209,34 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					'name'     => '_wp_sqlite__tmp_table_created_at_on_update',
 					'tbl_name' => '_tmp_table',
 					'rootpage' => '0',
-					'sql'      => "CREATE TRIGGER \"_wp_sqlite__tmp_table_created_at_on_update\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"created_at\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\tEND",
+					'sql'      => implode(
+						"\n\t\t\t\t",
+						array(
+							'CREATE TRIGGER `_wp_sqlite__tmp_table_created_at_on_update`',
+							'AFTER UPDATE ON `_tmp_table`',
+							'FOR EACH ROW',
+							'BEGIN',
+							'  UPDATE `_tmp_table` SET `created_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;',
+							'END',
+						)
+					),
 				),
 				(object) array(
 					'type'     => 'trigger',
 					'name'     => '_wp_sqlite__tmp_table_updated_at_on_update',
 					'tbl_name' => '_tmp_table',
 					'rootpage' => '0',
-					'sql'      => "CREATE TRIGGER \"_wp_sqlite__tmp_table_updated_at_on_update\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"updated_at\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\tEND",
+					'sql'      => implode(
+						"\n\t\t\t\t",
+						array(
+							'CREATE TRIGGER `_wp_sqlite__tmp_table_updated_at_on_update`',
+							'AFTER UPDATE ON `_tmp_table`',
+							'FOR EACH ROW',
+							'BEGIN',
+							'  UPDATE `_tmp_table` SET `updated_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;',
+							'END',
+						)
+					),
 				),
 			),
 			$results
@@ -2338,7 +2333,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		} catch ( Throwable $e ) {
 			$error = $e->getMessage();
 		}
-		$this->assertStringContainsString( 'duplicate column name: test', $error );
+		$this->assertStringContainsString( "Duplicate column name 'test'", $error );
 
 		// Commit the transaction.
 		$this->assertQuery( 'COMMIT' );
@@ -3073,7 +3068,7 @@ QUERY
 			'CREATE TABLE IF NOT EXISTS t (ID INTEGER, name TEXT)'
 		);
 
-		$this->expectExceptionMessage( 'table `t` already exists' );
+		$this->expectExceptionMessage( "Table 't' already exists" );
 		$this->assertQuery(
 			'CREATE TABLE t (ID INTEGER, name TEXT)'
 		);
@@ -3087,7 +3082,7 @@ QUERY
 			'CREATE TEMPORARY TABLE IF NOT EXISTS t (ID INTEGER, name TEXT)'
 		);
 
-		$this->expectExceptionMessage( 'table `t` already exists' );
+		$this->expectExceptionMessage( "Table 't' already exists" );
 		$this->assertQuery(
 			'CREATE TEMPORARY TABLE t (ID INTEGER, name TEXT)'
 		);
@@ -4487,5 +4482,139 @@ QUERY
 		$this->assertQuery( 'SET @@session.SQL_mode = "only_full_group_by"' );
 		$result = $this->assertQuery( 'SELECT @@session.SQL_mode' );
 		$this->assertSame( 'ONLY_FULL_GROUP_BY', $result[0]->{'@@session.SQL_mode'} );
+	}
+
+	public function testMultiQueryNotSupported(): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Multi-query is not supported.' );
+		$this->assertQuery( 'SELECT 1; SELECT 2' );
+	}
+
+	public function testCreateTableDuplicateTableName(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (id INT)' );
+			$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42S01]: Base table or view already exists: 1050 Table 't' already exists", $exception->getMessage() );
+		$this->assertSame( '42S01', $exception->getCode() );
+	}
+
+	public function testCreateTableDuplicateColumnName(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (col INT, col INT)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name 'col'", $exception->getMessage() );
+		$this->assertSame( '42S21', $exception->getCode() );
+	}
+
+	public function testCreateTableDuplicateKeyName(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (id1 INT, id2 INT, INDEX idx (id1), INDEX idx (id2))' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
+		$this->assertSame( '42S21', $exception->getCode() );
+	}
+
+	public function testCreateTableDuplicateKeyNameWithUnique(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (id1 INT, id2 INT, INDEX idx (id1), UNIQUE idx (id2))' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
+		$this->assertSame( '42S21', $exception->getCode() );
+	}
+
+	public function testCreateTableDuplicateKeyNameWithPrimaryKey(): void {
+		$this->assertQuery( 'CREATE TABLE t (id1 INT, id2 INT, PRIMARY KEY idx (id1), INDEX idx (id2))' );
+		// No exception. In MySQL, PRIMARY KEY names are ignored.
+	}
+
+	public function testAlterTableDuplicateColumnName(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (col INT)' );
+			$this->assertQuery( 'ALTER TABLE t ADD COLUMN col INT' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name 'col'", $exception->getMessage() );
+		$this->assertSame( '42S21', $exception->getCode() );
+	}
+
+	public function testAlterTableDuplicateColumnNameWithMultipleOperations(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (id INT)' );
+			$this->assertQuery( 'ALTER TABLE t ADD COLUMN col INT, ADD COLUMN col INT' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name 'col'", $exception->getMessage() );
+		$this->assertSame( '42S21', $exception->getCode() );
+	}
+
+	public function testAlterTableDuplicateKeyName(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (id INT, INDEX idx (id))' );
+			$this->assertQuery( 'ALTER TABLE t ADD INDEX idx (id)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
+		$this->assertSame( '42S21', $exception->getCode() );
+	}
+
+	public function testAlterTableDuplicateKeyNameWithMultipleOperations(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (id INT)' );
+			$this->assertQuery( 'ALTER TABLE t ADD INDEX idx (id), ADD INDEX idx (id)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
+		$this->assertSame( '42S21', $exception->getCode() );
+	}
+
+	public function testAlterTableDuplicateKeyNameWithUnique(): void {
+		$exception = null;
+		try {
+			$this->assertQuery( 'CREATE TABLE t (id INT, INDEX idx (id))' );
+			$this->assertQuery( 'ALTER TABLE t ADD UNIQUE idx (id)' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
+		$this->assertSame( '42S21', $exception->getCode() );
 	}
 }

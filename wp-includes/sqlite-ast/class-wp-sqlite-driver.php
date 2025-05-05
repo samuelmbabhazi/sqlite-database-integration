@@ -29,16 +29,27 @@ class WP_SQLite_Driver {
 	const MINIMUM_SQLITE_VERSION = '3.37.0';
 
 	/**
-	 * The default timeout in seconds for SQLite to wait for a writable lock.
-	 */
-	const DEFAULT_SQLITE_TIMEOUT = 10;
-
-	/**
 	 * An identifier prefix for internal database objects.
 	 *
 	 * @TODO: Do not allow accessing objects with this prefix.
 	 */
 	const RESERVED_PREFIX = '_wp_sqlite_';
+
+	/**
+	 * The name of a global variables table.
+	 *
+	 * This special table is used to emulate MySQL global variables and to store
+	 * some internal configuration values.
+	 */
+	const GLOBAL_VARIABLES_TABLE_NAME = self::RESERVED_PREFIX . 'global_variables';
+
+	/**
+	 * The name of the SQLite driver version variable.
+	 *
+	 * This internal variable is used to store the latest version of the SQLite
+	 * driver that was used to initialize and configure the SQLite database.
+	 */
+	const DRIVER_VERSION_VARIABLE_NAME = self::RESERVED_PREFIX . 'driver_version';
 
 	/**
 	 * A map of MySQL tokens to SQLite data types.
@@ -326,11 +337,11 @@ class WP_SQLite_Driver {
 	private $db_name;
 
 	/**
-	 * An instance of the PDO object.
+	 * An instance of the SQLite connection.
 	 *
-	 * @var PDO
+	 * @var WP_SQLite_Connection
 	 */
-	private $pdo;
+	private $connection;
 
 	/**
 	 * A service for managing MySQL INFORMATION_SCHEMA tables in SQLite.
@@ -419,66 +430,15 @@ class WP_SQLite_Driver {
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
 	 *
-	 * @param array $options {
-	 *     An array of options.
-	 *
-	 *     @type string      $database            Database name.
-	 *                                            The name of the emulated MySQL database.
-	 *     @type string|null $path                Optional. SQLite database path.
-	 *                                            For in-memory database, use ':memory:'.
-	 *                                            Must be set when PDO instance is not provided.
-	 *     @type PDO|null    $connection          Optional. PDO instance with SQLite connection.
-	 *                                            If not provided, a new PDO instance will be created.
-	 *     @type int|null    $timeout             Optional. SQLite timeout in seconds.
-	 *                                            The time to wait for a writable lock.
-	 *     @type string|null $sqlite_journal_mode Optional. SQLite journal mode.
-	 * }
+	 * @param WP_SQLite_Connection $connection A SQLite database connection.
+	 * @param string               $database   The database name.
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
 	 */
-	public function __construct( array $options ) {
-		// Database name.
-		if ( ! isset( $options['database'] ) || ! is_string( $options['database'] ) ) {
-			throw $this->new_driver_exception( 'Option "database" is required.' );
-		}
-		$this->main_db_name = $options['database'];
-		$this->db_name      = $this->main_db_name;
-
-		// Database connection.
-		if ( isset( $options['connection'] ) && $options['connection'] instanceof PDO ) {
-			$this->pdo = $options['connection'];
-		}
-
-		// Create a PDO connection if it is not provided.
-		if ( ! $this->pdo ) {
-			if ( ! isset( $options['path'] ) || ! is_string( $options['path'] ) ) {
-				throw $this->new_driver_exception(
-					'Option "path" is required when "connection" is not provided.'
-				);
-			}
-			$path = $options['path'];
-
-			try {
-				$this->pdo = new PDO( 'sqlite:' . $path );
-			} catch ( PDOException $e ) {
-				$code = $e->getCode();
-				throw $this->new_driver_exception( $e->getMessage(), is_int( $code ) ? $code : 0, $e );
-			}
-		}
-
-		// Throw exceptions on error.
-		$this->pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
-
-		// Configure SQLite timeout.
-		if ( isset( $options['timeout'] ) && is_int( $options['timeout'] ) ) {
-			$timeout = $options['timeout'];
-		} else {
-			$timeout = self::DEFAULT_SQLITE_TIMEOUT;
-		}
-		$this->pdo->setAttribute( PDO::ATTR_TIMEOUT, $timeout );
-
-		// Return all values (except null) as strings.
-		$this->pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+	public function __construct( WP_SQLite_Connection $connection, string $database ) {
+		$this->connection   = $connection;
+		$this->main_db_name = $database;
+		$this->db_name      = $database;
 
 		// Check the SQLite version.
 		$sqlite_version = $this->get_sqlite_version();
@@ -496,22 +456,10 @@ class WP_SQLite_Driver {
 		$this->client_info = $sqlite_version;
 
 		// Enable foreign keys. By default, they are off.
-		$this->pdo->query( 'PRAGMA foreign_keys = ON' );
-
-		// Configure SQLite journal mode.
-		if (
-			isset( $options['sqlite_journal_mode'] )
-			&& in_array(
-				$options['sqlite_journal_mode'],
-				array( 'DELETE', 'TRUNCATE', 'PERSIST', 'MEMORY', 'WAL', 'OFF' ),
-				true
-			)
-		) {
-			$this->pdo->query( 'PRAGMA journal_mode = ' . $options['sqlite_journal_mode'] );
-		}
+		$this->connection->query( 'PRAGMA foreign_keys = ON' );
 
 		// Register SQLite functions.
-		WP_SQLite_PDO_User_Defined_Functions::register_for( $this->pdo );
+		WP_SQLite_PDO_User_Defined_Functions::register_for( $this->connection->get_pdo() );
 
 		// Load MySQL grammar.
 		if ( null === self::$mysql_grammar ) {
@@ -522,18 +470,30 @@ class WP_SQLite_Driver {
 		$this->information_schema_builder = new WP_SQLite_Information_Schema_Builder(
 			$this->main_db_name,
 			self::RESERVED_PREFIX,
-			array( $this, 'execute_sqlite_query' )
+			$this->connection
 		);
-		$this->information_schema_builder->ensure_information_schema_tables();
+
+		// Ensure that the database is configured.
+		$migrator = new WP_SQLite_Configurator( $this, $this->information_schema_builder );
+		$migrator->ensure_database_configured();
+
+		$this->connection->set_query_logger(
+			function ( string $sql, array $params ) {
+				$this->last_sqlite_queries[] = array(
+					'sql'    => $sql,
+					'params' => $params,
+				);
+			}
+		);
 	}
 
 	/**
-	 * Get the PDO object.
+	 * Get the SQLite connection instance.
 	 *
-	 * @return PDO
+	 * @return WP_SQLite_Connection
 	 */
-	public function get_pdo(): PDO {
-		return $this->pdo;
+	public function get_connection(): WP_SQLite_Connection {
+		return $this->connection;
 	}
 
 	/**
@@ -542,7 +502,35 @@ class WP_SQLite_Driver {
 	 * @return string SQLite engine version as a string.
 	 */
 	public function get_sqlite_version(): string {
-		return $this->pdo->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
+		return $this->connection->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
+	}
+
+	/**
+	 * Get the SQLite driver version saved in the database.
+	 *
+	 * The saved driver version corresponds to the latest version of the SQLite
+	 * driver that was used to initialize and configure the SQLite database.
+	 *
+	 * @return string       SQLite driver version as a string.
+	 * @throws PDOException When the query execution fails.
+	 */
+	public function get_saved_driver_version(): string {
+		$default_version = '0.0.0';
+		try {
+			$stmt = $this->execute_sqlite_query(
+				sprintf(
+					'SELECT value FROM %s WHERE name = ?',
+					$this->quote_sqlite_identifier( self::GLOBAL_VARIABLES_TABLE_NAME )
+				),
+				array( self::DRIVER_VERSION_VARIABLE_NAME )
+			);
+			return $stmt->fetchColumn() ?? $default_version;
+		} catch ( PDOException $e ) {
+			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
+				return $default_version;
+			}
+			throw $e;
+		}
 	}
 
 	/**
@@ -579,7 +567,7 @@ class WP_SQLite_Driver {
 	 * @return int|string
 	 */
 	public function get_insert_id() {
-		$last_insert_id = $this->pdo->lastInsertId();
+		$last_insert_id = $this->connection->get_last_insert_id();
 		if ( is_numeric( $last_insert_id ) ) {
 			$last_insert_id = (int) $last_insert_id;
 		}
@@ -611,14 +599,15 @@ class WP_SQLite_Driver {
 
 		try {
 			// Parse the MySQL query.
-			$lexer  = new WP_MySQL_Lexer( $query );
-			$tokens = $lexer->remaining_tokens();
-
-			$parser = new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
-			$ast    = $parser->parse();
-
+			$parser = $this->create_parser( $query );
+			$parser->next_query();
+			$ast = $parser->get_query_ast();
 			if ( null === $ast ) {
 				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+			}
+
+			if ( $parser->next_query() ) {
+				throw $this->new_driver_exception( 'Multi-query is not supported.' );
 			}
 
 			// Handle transaction commands.
@@ -686,9 +675,25 @@ class WP_SQLite_Driver {
 			} catch ( Throwable $rollback_exception ) {
 				// Ignore rollback errors.
 			}
-			$code = $e->getCode();
-			throw $this->new_driver_exception( $e->getMessage(), is_int( $code ) ? $code : 0, $e );
+			if ( $e instanceof WP_SQLite_Driver_Exception ) {
+				throw $e;
+			} elseif ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
+				throw $this->convert_information_schema_exception( $e );
+			}
+			throw $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
 		}
+	}
+
+	/**
+	 * Tokenize a MySQL query and initialize a parser.
+	 *
+	 * @param  string          $query The MySQL query to parse.
+	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
+	 */
+	public function create_parser( string $query ): WP_MySQL_Parser {
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer->remaining_tokens();
+		return new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
 	}
 
 	/**
@@ -718,13 +723,7 @@ class WP_SQLite_Driver {
 	 * @return PDOStatement The PDO statement object.
 	 */
 	public function execute_sqlite_query( string $sql, array $params = array() ): PDOStatement {
-		$this->last_sqlite_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-		$stmt                        = $this->pdo->prepare( $sql );
-		$stmt->execute( $params );
-		return $stmt;
+		return $this->connection->query( $sql, $params );
 	}
 
 	/**
@@ -1158,7 +1157,11 @@ class WP_SQLite_Driver {
 
 			$select_list = array();
 			foreach ( $table_aliases as $table ) {
-				$select_list[] = "\"$table\".rowid AS \"{$table}_rowid\"";
+				$select_list[] = sprintf(
+					'%s.rowid AS %s',
+					$this->quote_sqlite_identifier( $table ),
+					$this->quote_sqlite_identifier( $table . '_rowid' )
+				);
 			}
 
 			$ids = $this->execute_sqlite_query(
@@ -1234,7 +1237,10 @@ class WP_SQLite_Driver {
 		if ( $subnode->has_child_node( 'ifNotExists' ) ) {
 			$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 			$table_exists = $this->execute_sqlite_query(
-				"SELECT 1 FROM $tables_table WHERE table_schema = ? AND table_name = ?",
+				sprintf(
+					'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->quote_sqlite_identifier( $tables_table )
+				),
 				array( $this->db_name, $table_name )
 			)->fetchColumn();
 
@@ -1275,7 +1281,10 @@ class WP_SQLite_Driver {
 		// Save all column names from the original table.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_names  = $this->execute_sqlite_query(
-			"SELECT COLUMN_NAME FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT COLUMN_NAME FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_COLUMN );
 
@@ -1383,9 +1392,9 @@ class WP_SQLite_Driver {
 			$this->translate( $node->get_first_child_node( 'tableRef' ) )
 		);
 
-		$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
-
-		$this->execute_sqlite_query( "DELETE FROM $quoted_table_name" );
+		$this->execute_sqlite_query(
+			sprintf( 'DELETE FROM %s', $this->quote_sqlite_identifier( $table_name ) )
+		);
 		try {
 			$this->execute_sqlite_query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $table_name ) );
 		} catch ( PDOException $e ) {
@@ -1468,7 +1477,7 @@ class WP_SQLite_Driver {
 					sprintf(
 						'statement type: "%s" > "%s"',
 						$node->rule_name,
-						$keyword1->value
+						$keyword1->get_value()
 					)
 				);
 		}
@@ -1522,14 +1531,18 @@ class WP_SQLite_Driver {
 					INDEX_COMMENT AS `Index_comment`,
 					IS_VISIBLE AS `Visible`,
 					EXPRESSION AS `Expression`
-				FROM ' . $statistics_table . '
+				FROM ' . $this->quote_sqlite_identifier( $statistics_table ) . "
 				WHERE table_schema = ?
 				AND table_name = ?
 				ORDER BY
-					INDEX_NAME = "PRIMARY" DESC,
-					INDEX_TYPE = "FULLTEXT" ASC,
+					INDEX_NAME = 'PRIMARY' DESC,
+					NON_UNIQUE = '0' DESC,
+					INDEX_TYPE = 'SPATIAL' DESC,
+					INDEX_TYPE = 'BTREE' DESC,
+					INDEX_TYPE = 'FULLTEXT' DESC,
+					ROWID,
 					SEQ_IN_INDEX
-			',
+			",
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
@@ -1566,7 +1579,8 @@ class WP_SQLite_Driver {
 		);
 		$table_info    = $this->execute_sqlite_query(
 			sprintf(
-				"SELECT * FROM $tables_tables WHERE table_schema = ? %s",
+				'SELECT * FROM %s WHERE table_schema = ? %s ORDER BY table_name',
+				$this->quote_sqlite_identifier( $tables_tables ),
 				$condition ?? ''
 			),
 			array( $database )
@@ -1634,7 +1648,8 @@ class WP_SQLite_Driver {
 		);
 		$table_info   = $this->execute_sqlite_query(
 			sprintf(
-				"SELECT * FROM $table_tables WHERE table_schema = ? %s",
+				'SELECT * FROM %s WHERE table_schema = ? %s ORDER BY table_name',
+				$this->quote_sqlite_identifier( $table_tables ),
 				$condition ?? ''
 			),
 			array( $database )
@@ -1691,7 +1706,10 @@ class WP_SQLite_Driver {
 		// Check if the table exists.
 		$tables_tables = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_exists  = $this->execute_sqlite_query(
-			"SELECT 1 FROM $tables_tables WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $tables_tables )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchColumn();
 
@@ -1709,10 +1727,11 @@ class WP_SQLite_Driver {
 		}
 
 		// Fetch column information.
-		$column_info = $this->execute_sqlite_query(
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
+		$column_info   = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? %s',
-				$this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' ),
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? %s ORDER BY ordinal_position',
+				$this->quote_sqlite_identifier( $columns_table ),
 				$condition ?? ''
 			),
 			array( $database, $table_name )
@@ -1754,7 +1773,7 @@ class WP_SQLite_Driver {
 
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
-			"
+			'
 				SELECT
 					column_name AS `Field`,
 					column_type AS `Type`,
@@ -1762,10 +1781,11 @@ class WP_SQLite_Driver {
 					column_key AS `Key`,
 					column_default AS `Default`,
 					extra AS Extra
-				FROM $columns_table
+				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
-			",
+				ORDER BY ordinal_position
+			',
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
@@ -1961,11 +1981,13 @@ class WP_SQLite_Driver {
 			try {
 				switch ( $first_token->id ) {
 					case WP_MySQL_Lexer::ANALYZE_SYMBOL:
-						$stmt   = $this->execute_sqlite_query( "ANALYZE $quoted_table_name" );
+						$stmt   = $this->execute_sqlite_query( sprintf( 'ANALYZE %s', $quoted_table_name ) );
 						$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );
 						break;
 					case WP_MySQL_Lexer::CHECK_SYMBOL:
-						$stmt   = $this->execute_sqlite_query( "PRAGMA integrity_check($quoted_table_name)" );
+						$stmt   = $this->execute_sqlite_query(
+							sprintf( 'PRAGMA integrity_check(%s)', $quoted_table_name )
+						);
 						$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );
 						if ( 'ok' === $errors[0] ) {
 							array_shift( $errors );
@@ -1988,7 +2010,7 @@ class WP_SQLite_Driver {
 							sprintf(
 								'statement type: "%s" > "%s"',
 								$node->rule_name,
-								$first_token->value
+								$first_token->get_value()
 							)
 						);
 				}
@@ -2000,7 +2022,7 @@ class WP_SQLite_Driver {
 				}
 			}
 
-			$operation = strtolower( $first_token->value );
+			$operation = strtolower( $first_token->get_value() );
 			foreach ( $errors as $error ) {
 				$results[] = (object) array(
 					'Table'    => $this->db_name . '.' . $table_name,
@@ -2124,7 +2146,7 @@ class WP_SQLite_Driver {
 
 				// @TODO: Handle SET and JSON.
 				throw $this->new_not_supported_exception(
-					sprintf( 'data type: %s', $child->value )
+					sprintf( 'data type: %s', $child->get_value() )
 				);
 			case 'fromClause':
 				// FROM DUAL is MySQL-specific syntax that means "FROM no tables"
@@ -2163,7 +2185,7 @@ class WP_SQLite_Driver {
 				$name = strtolower( $original_name );
 				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
 				if ( 'sql_mode' === $name ) {
-					$value = $this->pdo->quote( implode( ',', $this->active_sql_modes ) );
+					$value = $this->connection->quote( implode( ',', $this->active_sql_modes ) );
 				} else {
 					// When we have no value, it's reasonable to use NULL.
 					$value = 'NULL';
@@ -2182,7 +2204,7 @@ class WP_SQLite_Driver {
 					'%s AS %s',
 					$value,
 					$this->quote_sqlite_identifier(
-						'@@' . ( $type_token ? "$type_token->value." : '' ) . $original_name
+						'@@' . ( $type_token ? "{$type_token->get_value()}." : '' ) . $original_name
 					)
 				);
 			case 'castType':
@@ -2233,7 +2255,7 @@ class WP_SQLite_Driver {
 				 */
 				return null;
 			default:
-				return $token->value;
+				return $token->get_value();
 		}
 	}
 
@@ -2276,8 +2298,8 @@ class WP_SQLite_Driver {
 		/*
 		 * 1. Remove bounding quotes.
 		 */
-		$quote = $token->value[0];
-		$value = substr( $token->value, 1, -1 );
+		$quote = $token->get_value()[0];
+		$value = substr( $token->get_value(), 1, -1 );
 
 		/*
 		 * 2. Normalize escaping of "%" and "_" characters.
@@ -2363,13 +2385,13 @@ class WP_SQLite_Driver {
 		$token = $node->get_first_child_token();
 
 		if ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-			$value = substr( $token->value, 1, -1 );
+			$value = substr( $token->get_value(), 1, -1 );
 			$value = str_replace( '""', '"', $value );
 		} elseif ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
-			$value = substr( $token->value, 1, -1 );
+			$value = substr( $token->get_value(), 1, -1 );
 			$value = str_replace( '``', '`', $value );
 		} else {
-			$value = $token->value;
+			$value = $token->get_value();
 		}
 
 		return '`' . str_replace( '`', '``', $value ) . '`';
@@ -2788,7 +2810,10 @@ class WP_SQLite_Driver {
 		if ( null === $column_map ) {
 			$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 			$column_names  = $this->execute_sqlite_query(
-				"SELECT COLUMN_NAME FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+				sprintf(
+					'SELECT COLUMN_NAME FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->quote_sqlite_identifier( $columns_table )
+				),
 				array( $this->db_name, $table_name )
 			)->fetchAll( PDO::FETCH_COLUMN );
 			$column_map    = array_combine( $column_names, $column_names );
@@ -2943,13 +2968,13 @@ class WP_SQLite_Driver {
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
-			"
+			'
 				SELECT column_name, is_nullable, column_default, data_type, extra
-				FROM $columns_table
+				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
 				ORDER BY ordinal_position
-			",
+			',
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -3011,7 +3036,7 @@ class WP_SQLite_Driver {
 				if ( null === $default && ! $is_nullable && ! $is_auto_inc ) {
 					$default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
 				}
-				$fragment .= null === $default ? 'NULL' : $this->pdo->quote( $default );
+				$fragment .= null === $default ? 'NULL' : $this->connection->quote( $default );
 			} else {
 				// When a column value is included, we can use it without change.
 				$position  = array_search( $column['COLUMN_NAME'], $insert_list, true );
@@ -3059,12 +3084,12 @@ class WP_SQLite_Driver {
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
-			"
+			'
 				SELECT column_name, is_nullable, data_type, column_default
-				FROM $columns_table
+				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
-			",
+			',
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$column_map    = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
@@ -3085,7 +3110,7 @@ class WP_SQLite_Driver {
 			// Get the UPDATE value. It's either an expression or a DEFAULT keyword.
 			if ( null === $expr ) {
 				// Emulate "column = DEFAULT".
-				$value = null === $default ? 'NULL' : $this->pdo->quote( $default );
+				$value = null === $default ? 'NULL' : $this->connection->quote( $default );
 			} else {
 				$value = $this->translate( $expr );
 			}
@@ -3093,7 +3118,7 @@ class WP_SQLite_Driver {
 			// If the column is NOT NULL, a NULL value resolves to implicit default.
 			$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
 			if ( ! $is_nullable && null !== $implicit_default ) {
-				$value = sprintf( 'COALESCE(%s, %s)', $value, $this->pdo->quote( $implicit_default ) );
+				$value = sprintf( 'COALESCE(%s, %s)', $value, $this->connection->quote( $implicit_default ) );
 			}
 
 			// Compose the UPDATE list item.
@@ -3122,9 +3147,9 @@ class WP_SQLite_Driver {
 		// 1. Get table info.
 		$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_info   = $this->execute_sqlite_query(
-			"
+			'
 				SELECT *
-				FROM $tables_table
+				FROM ' . $this->quote_sqlite_identifier( $tables_table ) . "
 				WHERE table_type = 'BASE TABLE'
 				AND table_schema = ?
 				AND table_name = ?
@@ -3142,14 +3167,33 @@ class WP_SQLite_Driver {
 		// 2. Get column info.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
-			"SELECT * FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
-			"SELECT * FROM $statistics_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				"
+					SELECT *
+					FROM %s
+					WHERE table_schema = ?
+					AND table_name = ?
+					ORDER BY
+						INDEX_NAME = 'PRIMARY' DESC,
+						NON_UNIQUE = '0' DESC,
+						INDEX_TYPE = 'SPATIAL' DESC,
+						INDEX_TYPE = 'BTREE' DESC,
+						INDEX_TYPE = 'FULLTEXT' DESC,
+						ROWID,
+						SEQ_IN_INDEX
+				",
+				$this->quote_sqlite_identifier( $statistics_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -3220,7 +3264,7 @@ class WP_SQLite_Driver {
 				) {
 					$query .= ' DEFAULT CURRENT_TIMESTAMP';
 				} else {
-					$query .= ' DEFAULT ' . $this->pdo->quote( $column['COLUMN_DEFAULT'] );
+					$query .= ' DEFAULT ' . $this->connection->quote( $column['COLUMN_DEFAULT'] );
 				}
 			}
 			$rows[] = $query;
@@ -3312,9 +3356,9 @@ class WP_SQLite_Driver {
 		// 1. Get table info.
 		$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_info   = $this->execute_sqlite_query(
-			"
+			'
 				SELECT *
-				FROM $tables_table
+				FROM ' . $this->quote_sqlite_identifier( $tables_table ) . "
 				WHERE table_type = 'BASE TABLE'
 				AND table_schema = ?
 				AND table_name = ?
@@ -3329,14 +3373,39 @@ class WP_SQLite_Driver {
 		// 2. Get column info.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 		$column_info   = $this->execute_sqlite_query(
-			"SELECT * FROM $columns_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				'
+					SELECT *
+					FROM %s
+					WHERE table_schema = ?
+					AND table_name = ?
+					ORDER BY ordinal_position
+				',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
-			"SELECT * FROM $statistics_table WHERE table_schema = ? AND table_name = ?",
+			sprintf(
+				"
+					SELECT *
+					FROM %s
+					WHERE table_schema = ?
+					AND table_name = ?
+					ORDER BY
+						INDEX_NAME = 'PRIMARY' DESC,
+						NON_UNIQUE = '0' DESC,
+						INDEX_TYPE = 'SPATIAL' DESC,
+						INDEX_TYPE = 'BTREE' DESC,
+						INDEX_TYPE = 'FULLTEXT' DESC,
+						ROWID,
+						SEQ_IN_INDEX
+				",
+				$this->quote_sqlite_identifier( $statistics_table )
+			),
 			array( $this->db_name, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
@@ -3371,7 +3440,7 @@ class WP_SQLite_Driver {
 			) {
 				$sql .= ' DEFAULT CURRENT_TIMESTAMP';
 			} elseif ( null !== $column['COLUMN_DEFAULT'] ) {
-				$sql .= ' DEFAULT ' . $this->pdo->quote( $column['COLUMN_DEFAULT'] );
+				$sql .= ' DEFAULT ' . $this->connection->quote( $column['COLUMN_DEFAULT'] );
 			} elseif ( 'YES' === $column['IS_NULLABLE'] ) {
 				$sql .= ' DEFAULT NULL';
 			}
@@ -3405,7 +3474,12 @@ class WP_SQLite_Driver {
 			} else {
 				$is_unique = '0' === $info['NON_UNIQUE'];
 
-				$sql  = sprintf( '  %sKEY ', $is_unique ? 'UNIQUE ' : '' );
+				$sql  = sprintf(
+					'  %s%s%sKEY ',
+					$is_unique ? 'UNIQUE ' : '',
+					'FULLTEXT' === $info['INDEX_TYPE'] ? 'FULLTEXT ' : '',
+					'SPATIAL' === $info['INDEX_TYPE'] ? 'SPATIAL ' : ''
+				);
 				$sql .= $this->quote_mysql_identifier( $info['INDEX_NAME'] );
 				$sql .= ' (';
 				$sql .= implode(
@@ -3459,14 +3533,20 @@ class WP_SQLite_Driver {
 		// but currently that can't happen as we're not creating such tables.
 		// See: https://www.sqlite.org/rowidtable.html
 		$trigger_name = self::RESERVED_PREFIX . "{$table}_{$column}_on_update";
-		return "
-			CREATE TRIGGER \"$trigger_name\"
-			AFTER UPDATE ON \"$table\"
-			FOR EACH ROW
-			BEGIN
-			  UPDATE \"$table\" SET \"$column\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
-			END
-		";
+		return sprintf(
+			'
+				CREATE TRIGGER %s
+				AFTER UPDATE ON %s
+				FOR EACH ROW
+				BEGIN
+				  UPDATE %s SET %s = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
+				END
+			',
+			$this->quote_sqlite_identifier( $trigger_name ),
+			$this->quote_sqlite_identifier( $table ),
+			$this->quote_sqlite_identifier( $table ),
+			$this->quote_sqlite_identifier( $column )
+		);
 	}
 
 	/**
@@ -3481,22 +3561,19 @@ class WP_SQLite_Driver {
 		$first_byte = $quoted_identifier[0] ?? null;
 		if ( '"' === $first_byte || '`' === $first_byte ) {
 			$unquoted = substr( $quoted_identifier, 1, -1 );
-		} else {
-			$unquoted = $quoted_identifier;
+			return str_replace( $first_byte . $first_byte, $first_byte, $unquoted );
 		}
-		return str_replace( $first_byte . $first_byte, $first_byte, $unquoted );
+		return $quoted_identifier;
 	}
 
 	/**
 	 * Quote an SQLite identifier.
 	 *
-	 * Wrap the identifier in backticks and escape backtick values within.
-	 *
 	 * @param  string $unquoted_identifier The unquoted identifier value.
 	 * @return string                      The quoted identifier value.
 	 */
 	private function quote_sqlite_identifier( string $unquoted_identifier ): string {
-		return '`' . str_replace( '`', '``', $unquoted_identifier ) . '`';
+		return $this->connection->quote_identifier( $unquoted_identifier );
 	}
 
 
@@ -3594,5 +3671,47 @@ class WP_SQLite_Driver {
 			$this,
 			sprintf( 'MySQL query not supported. Cause: %s', $cause )
 		);
+	}
+
+	/**
+	 * Convert an information schema exception to a MySQL-like driver exception.
+	 *
+	 * This method is used to convert some information schema exceptions to the
+	 * corresponding MySQL exceptions, as they would be generated by PDO MySQL.
+	 * This conversion mirrors PDO's error messages and SQLSTATE codes.
+	 *
+	 * @param  WP_SQLite_Information_Schema_Exception $e The information schema exception.
+	 * @return Throwable                                 The converted exception, or the original
+	 *                                                   exception if no conversion was done.
+	 */
+	private function convert_information_schema_exception( WP_SQLite_Information_Schema_Exception $e ): Throwable {
+		switch ( $e->get_type() ) {
+			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_TABLE_NAME:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42S01]: Base table or view already exists: 1050 Table '%s' already exists",
+						$e->get_data()['table_name']
+					),
+					'42S01'
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_COLUMN_NAME:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name '%s'",
+						$e->get_data()['column_name']
+					),
+					'42S21'
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_KEY_NAME:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name '%s'",
+						$e->get_data()['key_name']
+					),
+					'42S21'
+				);
+			default:
+				return $e;
+		}
 	}
 }

@@ -34,6 +34,6 @@ class WP_MySQL_Token extends WP_Parser_Token {
 	 * @return string
 	 */
 	public function __toString(): string {
-		return $this->value . '<' . $this->id . ',' . $this->get_name() . '>';
+		return $this->get_value() . '<' . $this->id . ',' . $this->get_name() . '>';
 	}
 }

@@ -38,6 +38,20 @@ class WP_SQLite_DB extends wpdb {
 	 * @param string $dbname Database name.
 	 */
 	public function __construct( $dbname ) {
+		/**
+		 * We need to initialize the "$wpdb" global early, so that the SQLite
+		 * driver can configure the database. The call stack goes like this:
+		 *
+		 *   1. The "parent::__construct()" call executes "$this->db_connect()".
+		 *   2. The database connection call initializes the SQLite driver.
+		 *   3. The SQLite driver initializes and runs "WP_SQLite_Configurator".
+		 *   4. The configurator uses "WP_SQLite_Information_Schema_Reconstructor",
+		 *      which requires "wp-admin/includes/schema.php" when in WordPress.
+		 *   5. The "wp-admin/includes/schema.php" requires the "$wpdb" global,
+		 *      which creates a circular dependency.
+		 */
+		$GLOBALS['wpdb'] = $this;
+
 		parent::__construct( '', '', $dbname, '' );
 		$this->charset = 'utf8mb4';
 	}
@@ -300,32 +314,37 @@ class WP_SQLite_DB extends wpdb {
 			require_once __DIR__ . '/../../wp-includes/mysql/class-wp-mysql-token.php';
 			require_once __DIR__ . '/../../wp-includes/mysql/class-wp-mysql-lexer.php';
 			require_once __DIR__ . '/../../wp-includes/mysql/class-wp-mysql-parser.php';
+			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-connection.php';
+			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-configurator.php';
 			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-driver.php';
 			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-driver-exception.php';
 			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-builder.php';
+			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-exception.php';
+			require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-reconstructor.php';
 			$this->ensure_database_directory( FQDB );
 
 			try {
-				$this->dbh = new WP_SQLite_Driver(
+				$connection      = new WP_SQLite_Connection(
 					array(
-						'connection'          => $pdo,
-						'path'                => FQDB,
-						'database'            => $this->dbname,
-						'sqlite_journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+						'pdo'          => $pdo,
+						'path'         => FQDB,
+						'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
 					)
 				);
+				$this->dbh       = new WP_SQLite_Driver( $connection, $this->dbname );
+				$GLOBALS['@pdo'] = $this->dbh->get_connection()->get_pdo();
 			} catch ( Throwable $e ) {
 				$this->last_error = $this->format_error_message( $e );
 			}
 		} else {
 			$this->dbh        = new WP_SQLite_Translator( $pdo );
 			$this->last_error = $this->dbh->get_error_message();
+			$GLOBALS['@pdo']  = $this->dbh->get_pdo();
 		}
 		if ( $this->last_error ) {
 			return false;
 		}
-		$GLOBALS['@pdo'] = $this->dbh->get_pdo();
-		$this->ready     = true;
+		$this->ready = true;
 		$this->set_sql_mode();
 	}
 

@@ -263,6 +263,27 @@ class WP_Parser_Node {
 		return $all_descendants;
 	}
 
+	/**
+	 * Get the byte offset in the input SQL string where this node begins.
+	 *
+	 * @return int
+	 */
+	public function get_start(): int {
+		return $this->get_first_descendant_token()->start;
+	}
+
+	/**
+	 * Get the byte length of this node in the input SQL string.
+	 *
+	 * @return int
+	 */
+	public function get_length(): int {
+		$tokens     = $this->get_descendant_tokens();
+		$last_token = end( $tokens );
+		$start      = $this->get_start();
+		return $last_token->start + $last_token->length - $start;
+	}
+
 	/*
 	 * @TODO: Let's implement a more powerful AST-querying API.
 	 *        See: https://github.com/WordPress/sqlite-database-integration/pull/164#discussion_r1855230501

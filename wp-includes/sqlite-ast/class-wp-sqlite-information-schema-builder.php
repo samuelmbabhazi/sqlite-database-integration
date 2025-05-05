@@ -51,7 +51,8 @@ class WP_SQLite_Information_Schema_Builder {
 			TABLE_COLLATION TEXT NOT NULL,              -- table collation
 			CHECKSUM INTEGER,                           -- not implemented
 			CREATE_OPTIONS TEXT NOT NULL DEFAULT '',    -- extra CREATE TABLE options
-			TABLE_COMMENT TEXT NOT NULL DEFAULT ''      -- comment
+			TABLE_COMMENT TEXT NOT NULL DEFAULT '',     -- comment
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME)
 		) STRICT",
 
 		// COLUMNS
@@ -77,7 +78,8 @@ class WP_SQLite_Information_Schema_Builder {
 			PRIVILEGES TEXT NOT NULL,                       -- not implemented
 			COLUMN_COMMENT TEXT NOT NULL DEFAULT '',        -- comment
 			GENERATION_EXPRESSION TEXT NOT NULL DEFAULT '', -- expression for generated columns
-			SRS_ID INTEGER                                  -- not implemented
+			SRS_ID INTEGER,                                 -- not implemented
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME)
 		) STRICT",
 
 		// VIEWS
@@ -93,7 +95,8 @@ class WP_SQLite_Information_Schema_Builder {
 			SECURITY_TYPE TEXT NOT NULL,
 			CHARACTER_SET_CLIENT TEXT NOT NULL,
 			COLLATION_CONNECTION TEXT NOT NULL,
-			ALGORITHM TEXT NOT NULL
+			ALGORITHM TEXT NOT NULL,
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME)
 		) STRICT",
 
 		// STATISTICS (indexes)
@@ -115,18 +118,27 @@ class WP_SQLite_Information_Schema_Builder {
 			COMMENT TEXT NOT NULL DEFAULT '',            -- not implemented
 			INDEX_COMMENT TEXT NOT NULL DEFAULT '',      -- index comment
 			IS_VISIBLE TEXT NOT NULL DEFAULT 'YES',      -- 'NO' if column is hidden, 'YES' otherwise
-			EXPRESSION TEXT                              -- expression for functional indexes
+			EXPRESSION TEXT,                             -- expression for functional indexes
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX),
+			UNIQUE (INDEX_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX)
 		) STRICT",
 
 		// TABLE_CONSTRAINTS
 		// @TODO: Implement. Could this be just a view?
-		"CREATE TABLE IF NOT EXISTS <prefix>constraints ( -- '<prefix>' is a placeholder replaced at runtime
+		"CREATE TABLE IF NOT EXISTS <prefix>table_constraints ( -- '<prefix>' is a placeholder replaced at runtime
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
 			TABLE_SCHEMA TEXT NOT NULL,
 			TABLE_NAME TEXT NOT NULL,
-			CONSTRAINT_TYPE TEXT NOT NULL
+			CONSTRAINT_TYPE TEXT NOT NULL,
+
+			-- Constraint names are unique per type in each table.
+			-- A MySQL table can have a PRIMARY KEY, UNIQUE, FOREIGN KEY, and CHECK
+			-- constraints with the same name, but the name must be unique per type.
+			-- CHECK and FOREIGN KEY constraint names must also be unique per schema.
+			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_TYPE, CONSTRAINT_NAME),
+			UNIQUE (CONSTRAINT_SCHEMA, TABLE_NAME, CONSTRAINT_TYPE, CONSTRAINT_NAME)
 		) STRICT",
 
 		// CHECK_CONSTRAINTS
@@ -134,9 +146,9 @@ class WP_SQLite_Information_Schema_Builder {
 		"CREATE TABLE IF NOT EXISTS <prefix>check_constraints ( -- '<prefix>' is a placeholder replaced at runtime
 			CONSTRAINT_CATALOG TEXT NOT NULL,
 			CONSTRAINT_SCHEMA TEXT NOT NULL,
-			TABLE_NAME TEXT NOT NULL,
 			CONSTRAINT_NAME TEXT NOT NULL,
-			CHECK_CLAUSE TEXT NOT NULL
+			CHECK_CLAUSE TEXT NOT NULL,
+			PRIMARY KEY (CONSTRAINT_SCHEMA, CONSTRAINT_NAME) -- CHECK constraints must be unique per schema
 		) STRICT",
 
 		// KEY_COLUMN_USAGE
@@ -154,6 +166,7 @@ class WP_SQLite_Information_Schema_Builder {
 			REFERENCED_TABLE_SCHEMA TEXT,
 			REFERENCED_TABLE_NAME TEXT,
 			REFERENCED_COLUMN_NAME TEXT
+			-- TODO: PRIMARY/UNIQUE keys, if needed.
 		) STRICT",
 
 		// REFERENTIAL_CONSTRAINTS
@@ -168,7 +181,8 @@ class WP_SQLite_Information_Schema_Builder {
 			MATCH_OPTION TEXT NOT NULL,
 			UPDATE_RULE TEXT NOT NULL,
 			DELETE_RULE TEXT NOT NULL,
-			REFERENCED_TABLE_NAME TEXT NOT NULL
+			REFERENCED_TABLE_NAME TEXT NOT NULL,
+			PRIMARY KEY (CONSTRAINT_SCHEMA, CONSTRAINT_NAME) -- FOREIGN KEY constraints must be unique per schema
 		) STRICT",
 
 		// TRIGGERS
@@ -195,7 +209,8 @@ class WP_SQLite_Information_Schema_Builder {
 			DEFINER TEXT NOT NULL,
 			CHARACTER_SET_CLIENT TEXT NOT NULL,
 			COLLATION_CONNECTION TEXT NOT NULL,
-			DATABASE_COLLATION TEXT NOT NULL
+			DATABASE_COLLATION TEXT NOT NULL,
+			PRIMARY KEY (TRIGGER_SCHEMA, TRIGGER_NAME)
 		) STRICT",
 	);
 
@@ -358,25 +373,22 @@ class WP_SQLite_Information_Schema_Builder {
 	private $temporary_information_schema_exists = false;
 
 	/**
-	 * Query callback.
+	 * An instance of the SQLite connection.
 	 *
-	 * @TODO: Consider extracting a part of the WP_SQLite_Driver class
-	 *        to a class like "WP_SQLite_Connection" and reuse it in both.
-	 *
-	 * @var callable(string, array): PDOStatement
+	 * @var WP_SQLite_Connection
 	 */
-	private $query_callback;
+	private $connection;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param string                                $database        Database name.
-	 * @param string                                $reserved_prefix An identifier prefix for internal database objects.
-	 * @param callable(string, array): PDOStatement $query_callback  A callback that executes an SQLite query.
+	 * @param string               $database        Database name.
+	 * @param string               $reserved_prefix An identifier prefix for internal database objects.
+	 * @param WP_SQLite_Connection $connection      An instance of the SQLite connection.
 	 */
-	public function __construct( string $database, string $reserved_prefix, callable $query_callback ) {
+	public function __construct( string $database, string $reserved_prefix, WP_SQLite_Connection $connection ) {
 		$this->db_name                = $database;
-		$this->query_callback         = $query_callback;
+		$this->connection             = $connection;
 		$this->table_prefix           = $reserved_prefix . 'mysql_information_schema_';
 		$this->temporary_table_prefix = $reserved_prefix . 'mysql_information_schema_tmp_';
 	}
@@ -404,7 +416,7 @@ class WP_SQLite_Information_Schema_Builder {
 		 * We could search in the "{$this->temporary_table_prefix}tables" table,
 		 * but it may not exist yet, so using "sqlite_temp_schema" is simpler.
 		 */
-		$stmt = $this->query(
+		$stmt = $this->connection->query(
 			"SELECT 1 FROM sqlite_temp_schema WHERE type = 'table' AND name = ?",
 			array( $table_name )
 		);
@@ -417,7 +429,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	public function ensure_information_schema_tables(): void {
 		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
-			$this->query( str_replace( '<prefix>', $this->table_prefix, $query ) );
+			$this->connection->query( str_replace( '<prefix>', $this->table_prefix, $query ) );
 		}
 	}
 
@@ -428,7 +440,7 @@ class WP_SQLite_Information_Schema_Builder {
 	public function ensure_temporary_information_schema_tables(): void {
 		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
 			$query = str_replace( 'CREATE TABLE', 'CREATE TEMPORARY TABLE', $query );
-			$this->query( str_replace( '<prefix>', $this->temporary_table_prefix, $query ) );
+			$this->connection->query( str_replace( '<prefix>', $this->temporary_table_prefix, $query ) );
 		}
 		$this->temporary_information_schema_exists = true;
 	}
@@ -479,9 +491,20 @@ class WP_SQLite_Information_Schema_Builder {
 			 */
 			if ( $table_is_temporary && str_contains( $e->getMessage(), 'no such table' ) ) {
 				$this->ensure_temporary_information_schema_tables();
-				$this->insert_values( $tables_table_name, $table_data );
-			} else {
-				throw $e;
+				try {
+					$e = null;
+					$this->insert_values( $tables_table_name, $table_data );
+				} catch ( PDOException $retry_exception ) {
+					$e = $retry_exception;
+				}
+			}
+
+			if ( $e ) {
+				if ( '23000' === $e->getCode() ) {
+					throw WP_SQLite_Information_Schema_Exception::duplicate_table_name( $table_name );
+				} else {
+					throw $e;
+				}
 			}
 		}
 
@@ -497,10 +520,18 @@ class WP_SQLite_Information_Schema_Builder {
 				$column_node,
 				$column_position
 			);
-			$this->insert_values(
-				$this->get_table_name( $table_is_temporary, 'columns' ),
-				$column_data
-			);
+
+			try {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'columns' ),
+					$column_data
+				);
+			} catch ( PDOException $e ) {
+				if ( '23000' === $e->getCode() ) {
+					throw WP_SQLite_Information_Schema_Exception::duplicate_column_name( $column_name );
+				}
+				throw $e;
+			}
 
 			// Inline column constraint.
 			$column_constraint_data = $this->extract_column_constraint_data(
@@ -568,7 +599,7 @@ class WP_SQLite_Information_Schema_Builder {
 					continue;
 				}
 
-				throw new \Exception( sprintf( 'Unsupported ALTER TABLE ADD action: %s', $first_token->value ) );
+				throw new \Exception( sprintf( 'Unsupported ALTER TABLE ADD action: %s', $first_token->get_value() ) );
 			}
 
 			// CHANGE [COLUMN]
@@ -673,21 +704,28 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_Parser_Node $node
 	): void {
 		$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
-		$position           = $this->query(
-			"
+		$position           = $this->connection->query(
+			'
 				SELECT MAX(ordinal_position)
-				FROM $columns_table_name
+				FROM ' . $this->connection->quote_identifier( $columns_table_name ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
-			",
+			',
 			array( $this->db_name, $table_name )
 		)->fetchColumn();
 
 		$column_data = $this->extract_column_data( $table_name, $column_name, $node, (int) $position + 1 );
-		$this->insert_values(
-			$this->get_table_name( $table_is_temporary, 'columns' ),
-			$column_data
-		);
+		try {
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'columns' ),
+				$column_data
+			);
+		} catch ( PDOException $e ) {
+			if ( '23000' === $e->getCode() ) {
+				throw WP_SQLite_Information_Schema_Exception::duplicate_column_name( $column_name );
+			}
+			throw $e;
+		}
 
 		$column_constraint_data = $this->extract_column_constraint_data( $table_name, $column_name, $node, true );
 		if ( null !== $column_constraint_data ) {
@@ -893,13 +931,13 @@ class WP_SQLite_Information_Schema_Builder {
 		$column_names = array_filter( $key_part_column_names );
 		if ( count( $column_names ) > 0 ) {
 			$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
-			$column_info        = $this->query(
-				"
+			$column_info        = $this->connection->query(
+				'
 					SELECT column_name, data_type, is_nullable, character_maximum_length
-					FROM $columns_table_name
+					FROM ' . $this->connection->quote_identifier( $columns_table_name ) . '
 					WHERE table_schema = ?
 					AND table_name = ?
-					AND column_name IN (" . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
+					AND column_name IN (' . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
 				',
 				array_merge( array( $this->db_name, $table_name ), $column_names )
 			)->fetchAll(
@@ -942,28 +980,37 @@ class WP_SQLite_Information_Schema_Builder {
 				$has_spatial_column
 			);
 
-			$this->insert_values(
-				$this->get_table_name( $table_is_temporary, 'statistics' ),
-				array(
-					'table_schema'  => $this->db_name,
-					'table_name'    => $table_name,
-					'non_unique'    => $non_unique,
-					'index_schema'  => $this->db_name,
-					'index_name'    => $index_name,
-					'seq_in_index'  => $seq_in_index,
-					'column_name'   => $column_name,
-					'collation'     => $collation,
-					'cardinality'   => 0, // not implemented
-					'sub_part'      => $sub_part,
-					'packed'        => null, // not implemented
-					'nullable'      => $nullable,
-					'index_type'    => $index_type,
-					'comment'       => '', // not implemented
-					'index_comment' => '', // @TODO
-					'is_visible'    => 'YES', // @TODO: Save actual visibility value.
-					'expression'    => null, // @TODO
-				)
+			$column_constraint_data = array(
+				'table_schema'  => $this->db_name,
+				'table_name'    => $table_name,
+				'non_unique'    => $non_unique,
+				'index_schema'  => $this->db_name,
+				'index_name'    => $index_name,
+				'seq_in_index'  => $seq_in_index,
+				'column_name'   => $column_name,
+				'collation'     => $collation,
+				'cardinality'   => 0, // not implemented
+				'sub_part'      => $sub_part,
+				'packed'        => null, // not implemented
+				'nullable'      => $nullable,
+				'index_type'    => $index_type,
+				'comment'       => '', // not implemented
+				'index_comment' => '', // @TODO
+				'is_visible'    => 'YES', // @TODO: Save actual visibility value.
+				'expression'    => null, // @TODO
 			);
+
+			try {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'statistics' ),
+					$column_constraint_data
+				);
+			} catch ( PDOException $e ) {
+				if ( '23000' === $e->getCode() ) {
+					throw WP_SQLite_Information_Schema_Exception::duplicate_key_name( $index_name );
+				}
+				throw $e;
+			}
 
 			$seq_in_index += 1;
 		}
@@ -1078,7 +1125,7 @@ class WP_SQLite_Information_Schema_Builder {
 		// @TODO: Consider listing only affected columns.
 		$columns_table_name    = $this->get_table_name( $table_is_temporary, 'columns' );
 		$statistics_table_name = $this->get_table_name( $table_is_temporary, 'statistics' );
-		$this->query(
+		$this->connection->query(
 			"
 				WITH s AS (
 					SELECT
@@ -1089,12 +1136,12 @@ class WP_SQLite_Information_Schema_Builder {
 							WHEN MAX(seq_in_index = 1) THEN 'MUL'
 							ELSE ''
 						END AS column_key
-					FROM $statistics_table_name
+					FROM " . $this->connection->quote_identifier( $statistics_table_name ) . '
 					WHERE table_schema = ?
 					AND table_name = ?
 					GROUP BY column_name
 				)
-				UPDATE $columns_table_name AS c
+				UPDATE ' . $this->connection->quote_identifier( $columns_table_name ) . " AS c
 				SET
 					column_key = s.column_key,
 					is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable)
@@ -1353,7 +1400,7 @@ class WP_SQLite_Information_Schema_Builder {
 		) {
 			$type = 'mediumtext';
 		} else {
-			throw new \RuntimeException( 'Unknown data type: ' . $token->value );
+			throw new \RuntimeException( 'Unknown data type: ' . $token->get_value() );
 		}
 
 		// Get full type.
@@ -1619,8 +1666,8 @@ class WP_SQLite_Information_Schema_Builder {
 		$precision_node = $node->get_first_descendant_node( 'precision' );
 		if ( null !== $precision_node ) {
 			$values    = $precision_node->get_descendant_tokens( WP_MySQL_Lexer::INT_NUMBER );
-			$precision = (int) $values[0]->value;
-			$scale     = (int) $values[1]->value;
+			$precision = (int) $values[0]->get_value();
+			$scale     = (int) $values[1]->get_value();
 		}
 
 		if ( 'float' === $data_type ) {
@@ -1865,20 +1912,20 @@ class WP_SQLite_Information_Schema_Builder {
 			if ( $child instanceof WP_Parser_Node ) {
 				$value = $this->get_value( $child );
 			} elseif ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $child->id ) {
-				$value = substr( $child->value, 1, -1 );
+				$value = substr( $child->get_value(), 1, -1 );
 				$value = str_replace( '``', '`', $value );
 			} elseif ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $child->id ) {
-				$value = $child->value;
+				$value = $child->get_value();
 				$value = substr( $value, 1, -1 );
-				$value = str_replace( '\"', '"', $value );
-				$value = str_replace( '""', '"', $value );
+				$value = str_replace( "\'", "'", $value );
+				$value = str_replace( "''", "'", $value );
 			} elseif ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $child->id ) {
-				$value = $child->value;
+				$value = $child->get_value();
 				$value = substr( $value, 1, -1 );
 				$value = str_replace( '\"', '"', $value );
 				$value = str_replace( '""', '"', $value );
 			} else {
-				$value = $child->value;
+				$value = $child->get_value();
 			}
 			$full_value .= $value;
 		}
@@ -1892,11 +1939,18 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param array<string, string> $data       The data to insert (key is column name, value is column value).
 	 */
 	private function insert_values( string $table_name, array $data ): void {
-		$this->query(
-			'
-				INSERT INTO ' . $table_name . ' (' . implode( ', ', array_keys( $data ) ) . ')
-				VALUES (' . implode( ', ', array_fill( 0, count( $data ), '?' ) ) . ')
-			',
+		$insert_columns = array();
+		foreach ( $data as $column => $value ) {
+			$insert_columns[] = $this->connection->quote_identifier( $column );
+		}
+
+		$this->connection->query(
+			sprintf(
+				'INSERT INTO %s (%s) VALUES (%s)',
+				$this->connection->quote_identifier( $table_name ),
+				implode( ', ', $insert_columns ),
+				implode( ', ', array_fill( 0, count( $data ), '?' ) )
+			),
 			array_values( $data )
 		);
 	}
@@ -1909,22 +1963,23 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param array<string, string> $where      The WHERE clause conditions (key is column name, value is column value).
 	 */
 	private function update_values( string $table_name, array $data, array $where ): void {
-		$set = array();
+		$set_statements = array();
 		foreach ( $data as $column => $value ) {
-			$set[] = $column . ' = ?';
+			$set_statements[] = $this->connection->quote_identifier( $column ) . ' = ?';
 		}
 
-		$where_clause = array();
+		$where_statements = array();
 		foreach ( $where as $column => $value ) {
-			$where_clause[] = $column . ' = ?';
+			$where_statements[] = $this->connection->quote_identifier( $column ) . ' = ?';
 		}
 
-		$this->query(
-			'
-				UPDATE ' . $table_name . '
-				SET ' . implode( ', ', $set ) . '
-				WHERE ' . implode( ' AND ', $where_clause ) . '
-			',
+		$this->connection->query(
+			sprintf(
+				'UPDATE %s SET %s WHERE %s',
+				$this->connection->quote_identifier( $table_name ),
+				implode( ', ', $set_statements ),
+				implode( ' AND ', $where_statements )
+			),
 			array_merge( array_values( $data ), array_values( $where ) )
 		);
 	}
@@ -1936,29 +1991,18 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param array<string, string> $where      The WHERE clause conditions (key is column name, value is column value).
 	 */
 	private function delete_values( string $table_name, array $where ): void {
-		$where_clause = array();
+		$where_statements = array();
 		foreach ( $where as $column => $value ) {
-			$where_clause[] = $column . ' = ?';
+			$where_statements[] = $this->connection->quote_identifier( $column ) . ' = ?';
 		}
 
-		$this->query(
-			'
-				DELETE FROM ' . $table_name . '
-				WHERE ' . implode( ' AND ', $where_clause ) . '
-			',
+		$this->connection->query(
+			sprintf(
+				'DELETE FROM %s WHERE %s',
+				$this->connection->quote_identifier( $table_name ),
+				implode( ' AND ', $where_statements )
+			),
 			array_values( $where )
 		);
-	}
-
-	/**
-	 * Execute an SQLite query.
-	 *
-	 * @param  string $query  The query to execute.
-	 * @param  array  $params The query parameters.
-	 *
-	 * @return PDOStatement
-	 */
-	private function query( string $query, array $params = array() ) {
-		return ( $this->query_callback )( $query, $params );
 	}
 }

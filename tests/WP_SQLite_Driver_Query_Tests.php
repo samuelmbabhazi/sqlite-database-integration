@@ -1,38 +1,16 @@
 <?php
 
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver-exception.php';
-require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-builder.php';
-
 use PHPUnit\Framework\TestCase;
 
 /**
  * Unit tests using the WordPress table definitions.
  */
 class WP_SQLite_Driver_Query_Tests extends TestCase {
-
+	/** @var WP_SQLite_Driver */
 	private $engine;
-	private $sqlite;
 
-	public static function setUpBeforeClass(): void {
-		// if ( ! defined( 'PDO_DEBUG' )) {
-		// define( 'PDO_DEBUG', true );
-		// }
-		if ( ! defined( 'FQDB' ) ) {
-			define( 'FQDB', ':memory:' );
-			define( 'FQDBDIR', __DIR__ . '/../testdb' );
-		}
-		error_reporting( E_ALL & ~E_DEPRECATED );
-		if ( ! isset( $GLOBALS['table_prefix'] ) ) {
-			$GLOBALS['table_prefix'] = 'wptests_';
-		}
-		if ( ! isset( $GLOBALS['wpdb'] ) ) {
-			$GLOBALS['wpdb']                  = new stdClass();
-			$GLOBALS['wpdb']->suppress_errors = false;
-			$GLOBALS['wpdb']->show_errors     = true;
-		}
-		return;
-	}
+	/** @var PDO */
+	private $sqlite;
 
 	/**
 	 *  Before each test, we create a new volatile database and WordPress tables.
@@ -47,10 +25,8 @@ class WP_SQLite_Driver_Query_Tests extends TestCase {
 
 		$this->sqlite = new PDO( 'sqlite::memory:' );
 		$this->engine = new WP_SQLite_Driver(
-			array(
-				'connection' => $this->sqlite,
-				'database'   => 'wp',
-			)
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			'wp'
 		);
 
 		$translator = $this->engine;
@@ -462,7 +438,7 @@ QUERY;
 		);
 		$option_name          = 'serialized_option';
 		$option_value         = serialize( $obj );
-		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
+		$option_value_escaped = $this->engine->get_connection()->quote( $option_value );
 		/* Note well: this is heredoc not nowdoc */
 		$insert = <<<QUERY
 		INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
@@ -488,7 +464,7 @@ QUERY;
 		++$obj ['two'];
 		$obj ['pi']          *= 2;
 		$option_value         = serialize( $obj );
-		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
+		$option_value_escaped = $this->engine->get_connection()->quote( $option_value );
 		/* Note well: this is heredoc not nowdoc */
 		$insert = <<<QUERY
 		INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
