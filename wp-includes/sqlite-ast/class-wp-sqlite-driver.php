@@ -691,7 +691,11 @@ class WP_SQLite_Driver {
 	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
 	 */
 	public function create_parser( string $query ): WP_MySQL_Parser {
-		$lexer  = new WP_MySQL_Lexer( $query );
+		$lexer  = new WP_MySQL_Lexer(
+			$query,
+			80038,
+			$this->active_sql_modes
+		);
 		$tokens = $lexer->remaining_tokens();
 		return new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
 	}
@@ -2294,45 +2298,7 @@ class WP_SQLite_Driver {
 	 */
 	private function translate_string_literal( WP_Parser_Node $node ): string {
 		$token = $node->get_first_child_token();
-
-		/*
-		 * 1. Remove bounding quotes.
-		 */
-		$quote = $token->get_value()[0];
-		$value = substr( $token->get_value(), 1, -1 );
-
-		/*
-		 * 2. Normalize escaping of "%" and "_" characters.
-		 *
-		 * MySQL has unusual handling for "\%" and "\_" in all string literals.
-		 * While other sequences follow the C-style escaping ("\?" is "?", etc.),
-		 * "\%" resolves to "\%" and "\_" resolves to "\_" (unlike in C strings).
-		 *
-		 * This means that "\%" behaves like "\\%", and "\_" behaves like "\\_".
-		 * To preserve this behavior, we need to add a second backslash in cases
-		 * where only one is used. To do so correctly, we need to:
-		 *
-		 *  1. Skip all double backslash patterns (as "\\" resolves to "\").
-		 *  2. Add an extra backslash when "\%" or "\_" follows right after.
-		 *
-		 * This may be related to: https://bugs.mysql.com/bug.php?id=84118
-		 */
-		$value = preg_replace( '/(^|[^\\\\](?:\\\\{2}))*(\\\\[%_])/', '$1\\\\$2', $value );
-
-		/*
-		 * 3. Unescape quotes within the string.
-		 */
-		$value = str_replace( $quote . $quote, $quote, $value );
-
-		/*
-		 * 4. Unescape C-style escape sequences.
-		 *
-		 * MySQL string literals are represented using C-style encoded strings,
-		 * but SQLite doesn't support such escaping.
-		 *
-		 * @TODO: Handle NO_BACKSLASH_ESCAPES SQL mode.
-		 */
-		$value = stripcslashes( $value );
+		$value = $token->get_value();
 
 		/*
 		 * 5. Translate datetime literals.
@@ -2383,17 +2349,7 @@ class WP_SQLite_Driver {
 	 */
 	private function translate_pure_identifier( WP_Parser_Node $node ): string {
 		$token = $node->get_first_child_token();
-
-		if ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-			$value = substr( $token->get_value(), 1, -1 );
-			$value = str_replace( '""', '"', $value );
-		} elseif ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
-			$value = substr( $token->get_value(), 1, -1 );
-			$value = str_replace( '``', '`', $value );
-		} else {
-			$value = $token->get_value();
-		}
-
+		$value = $token->get_value();
 		return '`' . str_replace( '`', '``', $value ) . '`';
 	}
 
@@ -2556,7 +2512,11 @@ class WP_SQLite_Driver {
 		 * We'll probably need to overload the like() function:
 		 *   https://www.sqlite.org/lang_corefunc.html#like
 		 */
-		return $this->translate_sequence( $node->get_children() ) . " ESCAPE '\\'";
+		$statement = $this->translate_sequence( $node->get_children() );
+		if ( $this->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ) {
+			return $statement;
+		}
+		return $statement . " ESCAPE '\\'";
 	}
 
 	/**
@@ -3440,7 +3400,7 @@ class WP_SQLite_Driver {
 			) {
 				$sql .= ' DEFAULT CURRENT_TIMESTAMP';
 			} elseif ( null !== $column['COLUMN_DEFAULT'] ) {
-				$sql .= ' DEFAULT ' . $this->connection->quote( $column['COLUMN_DEFAULT'] );
+				$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
 			} elseif ( 'YES' === $column['IS_NULLABLE'] ) {
 				$sql .= ' DEFAULT NULL';
 			}
@@ -3448,6 +3408,13 @@ class WP_SQLite_Driver {
 			// Handle ON UPDATE CURRENT_TIMESTAMP.
 			if ( str_contains( $column['EXTRA'], 'on update CURRENT_TIMESTAMP' ) ) {
 				$sql .= ' ON UPDATE CURRENT_TIMESTAMP';
+			}
+
+			if ( '' !== $column['COLUMN_COMMENT'] ) {
+				$sql .= sprintf(
+					' COMMENT %s',
+					$this->quote_mysql_utf8_string_literal( $column['COLUMN_COMMENT'] )
+				);
 			}
 
 			$rows[] = $sql;
@@ -3459,8 +3426,8 @@ class WP_SQLite_Driver {
 			$info = $constraint[1];
 
 			if ( 'PRIMARY' === $info['INDEX_NAME'] ) {
-				$sql    = '  PRIMARY KEY (';
-				$sql   .= implode(
+				$sql  = '  PRIMARY KEY (';
+				$sql .= implode(
 					', ',
 					array_map(
 						function ( $column ) {
@@ -3469,8 +3436,7 @@ class WP_SQLite_Driver {
 						$constraint
 					)
 				);
-				$sql   .= ')';
-				$rows[] = $sql;
+				$sql .= ')';
 			} else {
 				$is_unique = '0' === $info['NON_UNIQUE'];
 
@@ -3496,9 +3462,16 @@ class WP_SQLite_Driver {
 					)
 				);
 				$sql .= ')';
-
-				$rows[] = $sql;
 			}
+
+			if ( '' !== $info['INDEX_COMMENT'] ) {
+				$sql .= sprintf(
+					' COMMENT %s',
+					$this->quote_mysql_utf8_string_literal( $info['INDEX_COMMENT'] )
+				);
+			}
+
+			$rows[] = $sql;
 		}
 
 		// 5. Compose the CREATE TABLE statement.
@@ -3515,6 +3488,12 @@ class WP_SQLite_Driver {
 		$sql .= sprintf( ' ENGINE=%s', $table_info['ENGINE'] );
 		$sql .= sprintf( ' DEFAULT CHARSET=%s', $charset );
 		$sql .= sprintf( ' COLLATE=%s', $collation );
+		if ( '' !== $table_info['TABLE_COMMENT'] ) {
+			$sql .= sprintf(
+				' COMMENT=%s',
+				$this->quote_mysql_utf8_string_literal( $table_info['TABLE_COMMENT'] )
+			);
+		}
 		return $sql;
 	}
 
@@ -3576,7 +3555,6 @@ class WP_SQLite_Driver {
 		return $this->connection->quote_identifier( $unquoted_identifier );
 	}
 
-
 	/**
 	 * Quote a MySQL identifier.
 	 *
@@ -3587,6 +3565,53 @@ class WP_SQLite_Driver {
 	 */
 	private function quote_mysql_identifier( string $unquoted_identifier ): string {
 		return '`' . str_replace( '`', '``', $unquoted_identifier ) . '`';
+	}
+
+	/**
+	 * Format a MySQL UTF-8 string literal for output in a CREATE TABLE statement.
+	 *
+	 * We expect UTF-8 strings coming from SQLite. The only characters that must
+	 * be escaped in a single-quoted string for a UTF-8 MySQL dump are ' and \.
+	 *
+	 * MySQL SHOW CREATE TABLE command additionally escapes "\0", "\n", and "\r",
+	 * for the mysql CLI, logs, and better readability. This applies to column
+	 * default values, and table, column, and index comments. Other values, such
+	 * as identifiers, don't have these extra characters escaped in the output.
+	 *
+	 * See:
+	 *  - https://github.com/mysql/mysql-server/blob/ff05628a530696bc6851ba6540ac250c7a059aa7/sql/sql_show.cc#L1799
+	 *  - https://github.com/mysql/mysql-server/blob/ff05628a530696bc6851ba6540ac250c7a059aa7/sql/table.cc#L3525
+	 *
+	 * Unfortunately, SQLite doesn't validate the UTF-8 encoding, so other byte
+	 * sequences may come from SQLite as well: https://www.sqlite.org/invalidutf.html
+	 *
+	 * TODO: We may consider stripping invalid UTF-8 characters, but that's likely
+	 *       to be a bigger project, as these can appear also in other contexts.
+	 *
+	 * @param  string $utf8_literal The UTF-8 string literal to escape.
+	 * @return string               The escaped string literal.
+	 */
+	private function quote_mysql_utf8_string_literal( string $utf8_literal ): string {
+		/*
+		 * We can't use "addcslashes()" here, because it has an unusual handling
+		 * of the ASCII NULL character, escaping it to "\000" instead of "\0".
+		 *
+		 * It is important to use "strtr()" and not "str_replace()", because
+		 * "str_replace()" applies replacements one after another, modifying
+		 * intermediate changes rather than just the original string:
+		 *
+		 *   - str_replace( [ 'a', 'b' ], [ 'b', 'c' ], 'ab' ); // 'cc' (bad)
+		 *   - strtr( 'ab', [ 'a' => 'b', 'b' => 'c' ] );       // 'bc' (good)
+		 */
+		$backslash    = chr( 92 );
+		$replacements = array(
+			"'"        => "''",                    // A single quote character (').
+			$backslash => $backslash . $backslash, // A backslash character (\).
+			chr( 0 )   => $backslash . '0',        // An ASCII NULL character (\0).
+			chr( 10 )  => $backslash . 'n',        // A newline (linefeed) character (\n).
+			chr( 13 )  => $backslash . 'r',        // A carriage return character (\r).
+		);
+		return "'" . strtr( $utf8_literal, $replacements ) . "'";
 	}
 
 	/**

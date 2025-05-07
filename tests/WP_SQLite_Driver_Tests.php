@@ -343,6 +343,59 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCreateTableWithComments(): void {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				id INT NOT NULL COMMENT 'Column 1 comment',
+				name VARCHAR(255) NULL DEFAULT 'test' COMMENT 'Column 2 comment',
+				special_chars_1 TEXT NOT NULL COMMENT '\'',
+				special_chars_2 TEXT NOT NULL COMMENT '''',
+				special_chars_3 TEXT NOT NULL COMMENT '\"',
+				special_chars_4 TEXT NOT NULL COMMENT '\\\"',
+				special_chars_5 TEXT NOT NULL COMMENT '`',
+				special_chars_6 TEXT NOT NULL COMMENT '\0',
+				special_chars_7 TEXT NOT NULL COMMENT '\n',
+				special_chars_8 TEXT NOT NULL COMMENT '\r',
+				special_chars_9 TEXT NOT NULL COMMENT '\t',
+				special_chars_10 TEXT NOT NULL COMMENT '\032',
+				special_chars_11 TEXT NOT NULL COMMENT '\\\\',
+				special_chars_12 TEXT NOT NULL COMMENT '🙂',
+				special_chars_13 TEXT NOT NULL COMMENT '\🙂',
+				INDEX idx_id (id) COMMENT 'Index comment'
+			) COMMENT='Table comment'"
+		);
+
+		$results = $this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					"  `id` int NOT NULL COMMENT 'Column 1 comment',",
+					"  `name` varchar(255) DEFAULT 'test' COMMENT 'Column 2 comment',",
+					"  `special_chars_1` text NOT NULL COMMENT '''',",
+					"  `special_chars_2` text NOT NULL COMMENT '''',",
+					"  `special_chars_3` text NOT NULL COMMENT '\"',",
+					"  `special_chars_4` text NOT NULL COMMENT '\"',",
+					"  `special_chars_5` text NOT NULL COMMENT '`',",
+					"  `special_chars_6` text NOT NULL COMMENT '\\0',",
+					"  `special_chars_7` text NOT NULL COMMENT '\\n',",
+					"  `special_chars_8` text NOT NULL COMMENT '\\r',",
+					"  `special_chars_9` text NOT NULL COMMENT '	',",
+					"  `special_chars_10` text NOT NULL COMMENT '" . chr( 26 ) . "',",
+					"  `special_chars_11` text NOT NULL COMMENT '\\\\',",
+					"  `special_chars_12` text NOT NULL COMMENT '🙂',",
+					"  `special_chars_13` text NOT NULL COMMENT '🙂',",
+					"  KEY `idx_id` (`id`) COMMENT 'Index comment'",
+					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Table comment'",
+				)
+			),
+			$results[0]->{'Create Table'}
+		);
+	}
+
 	public function testCreateTablesWithIdenticalIndexNames() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table_a (
@@ -429,26 +482,59 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
-	public function testShowCreateTableWithCorrectDefaultValues() {
+	public function testShowCreateTableWithDefaultValues(): void {
 		$this->assertQuery(
 			"CREATE TABLE _tmp__table (
-					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
-					default_empty_string VARCHAR(255) default '',
-					null_no_default VARCHAR(255)
-				);"
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				no_default VARCHAR(255),
+				default_zero INT DEFAULT 0,
+				default_empty_string VARCHAR(255) DEFAULT '',
+				special_chars_1 TEXT NOT NULL COMMENT '\'',
+				special_chars_2 TEXT NOT NULL COMMENT '''',
+				special_chars_3 TEXT NOT NULL COMMENT '\"',
+				special_chars_4 TEXT NOT NULL COMMENT '\\\"',
+				special_chars_5 TEXT NOT NULL COMMENT '`',
+				special_chars_6 TEXT NOT NULL COMMENT '\0',
+				special_chars_7 TEXT NOT NULL COMMENT '\n',
+				special_chars_8 TEXT NOT NULL COMMENT '\r',
+				special_chars_9 TEXT NOT NULL COMMENT '\t',
+				special_chars_10 TEXT NOT NULL COMMENT '\032',
+				special_chars_11 TEXT NOT NULL COMMENT '\\\\',
+				special_chars_12 TEXT NOT NULL COMMENT '🙂',
+				special_chars_13 TEXT NOT NULL COMMENT '\🙂'
+			)"
 		);
 
 		$this->assertQuery(
 			'SHOW CREATE TABLE _tmp__table;'
 		);
 		$results = $this->engine->get_query_results();
-		$this->assertEquals(
-			'CREATE TABLE `_tmp__table` (
-  `ID` bigint NOT NULL AUTO_INCREMENT,
-  `default_empty_string` varchar(255) DEFAULT \'\',
-  `null_no_default` varchar(255) DEFAULT NULL,
-  PRIMARY KEY (`ID`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp__table` (',
+					'  `ID` bigint NOT NULL AUTO_INCREMENT,',
+					'  `no_default` varchar(255) DEFAULT NULL,',
+					"  `default_zero` int DEFAULT '0',",
+					"  `default_empty_string` varchar(255) DEFAULT '',",
+					"  `special_chars_1` text NOT NULL COMMENT '''',",
+					"  `special_chars_2` text NOT NULL COMMENT '''',",
+					"  `special_chars_3` text NOT NULL COMMENT '\"',",
+					"  `special_chars_4` text NOT NULL COMMENT '\"',",
+					"  `special_chars_5` text NOT NULL COMMENT '`',",
+					"  `special_chars_6` text NOT NULL COMMENT '\\0',",
+					"  `special_chars_7` text NOT NULL COMMENT '\\n',",
+					"  `special_chars_8` text NOT NULL COMMENT '\\r',",
+					"  `special_chars_9` text NOT NULL COMMENT '	',",
+					"  `special_chars_10` text NOT NULL COMMENT '" . chr( 26 ) . "',",
+					"  `special_chars_11` text NOT NULL COMMENT '\\\\',",
+					"  `special_chars_12` text NOT NULL COMMENT '🙂',",
+					"  `special_chars_13` text NOT NULL COMMENT '🙂',",
+					'  PRIMARY KEY (`ID`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				)
+			),
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -4616,5 +4702,306 @@ QUERY
 		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
+	}
+
+	public function testNoBackslashEscapesSqlMode(): void {
+		$backslash = chr( 92 );
+
+		$query = "SELECT
+			''''                       AS value_1,
+			'{$backslash}\"'           AS value_2,
+			'{$backslash}0'            AS value_3,
+			'{$backslash}n'            AS value_4,
+			'{$backslash}r'            AS value_5,
+			'{$backslash}t'            AS value_6,
+			'{$backslash}b'            AS value_7,
+			'{$backslash}{$backslash}' AS value_8,
+			'🙂'                        AS value_9,
+			'{$backslash}🙂'            AS value_10,
+			'{$backslash}%'            AS value_11,
+			'{$backslash}_'            AS value_12
+		";
+
+		// With NO_BACKSLASH_ESCAPES disabled:
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$result = $this->assertQuery( $query );
+		$this->assertSame( chr( 39 ), $result[0]->value_1 ); // single quote
+		$this->assertSame( chr( 34 ), $result[0]->value_2 ); // double quote
+		$this->assertSame( chr( 0 ), $result[0]->value_3 );  // ASCII NULL
+		$this->assertSame( chr( 10 ), $result[0]->value_4 ); // newline
+		$this->assertSame( chr( 13 ), $result[0]->value_5 ); // carriage return
+		$this->assertSame( chr( 9 ), $result[0]->value_6 );  // tab
+		$this->assertSame( chr( 8 ), $result[0]->value_7 );  // backspace
+		$this->assertSame( chr( 92 ), $result[0]->value_8 ); // backslash
+		$this->assertSame( '🙂', $result[0]->value_9 );
+		$this->assertSame( '🙂', $result[0]->value_10 );
+
+		// Characters "%" and "_" follow special escaping rules. Escape sequences
+		// "\%" and "\_" preserve the backslash so it can be used in some contexts.
+		$this->assertSame( $backslash . '%', $result[0]->value_11 );
+		$this->assertSame( $backslash . '_', $result[0]->value_12 );
+
+		// With NO_BACKSLASH_ESCAPES enabled:
+		$this->assertQuery( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
+		$result = $this->assertQuery( $query );
+		$this->assertSame( "'", $result[0]->value_1 );
+		$this->assertSame( $backslash . '"', $result[0]->value_2 );
+		$this->assertSame( $backslash . '0', $result[0]->value_3 );
+		$this->assertSame( $backslash . 'n', $result[0]->value_4 );
+		$this->assertSame( $backslash . 'r', $result[0]->value_5 );
+		$this->assertSame( $backslash . 't', $result[0]->value_6 );
+		$this->assertSame( $backslash . 'b', $result[0]->value_7 );
+		$this->assertSame( $backslash . $backslash, $result[0]->value_8 );
+		$this->assertSame( '🙂', $result[0]->value_9 );
+		$this->assertSame( $backslash . '🙂', $result[0]->value_10 );
+		$this->assertSame( $backslash . '%', $result[0]->value_11 );
+		$this->assertSame( $backslash . '_', $result[0]->value_12 );
+	}
+
+	public function testNoBackslashEscapesSqlModeWithPatternMatching(): void {
+		$backslash = chr( 92 );
+
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT, value TEXT)' );
+		$this->assertQuery( "INSERT INTO t (value) VALUES ('abc')" );
+		$this->assertQuery( "INSERT INTO t (value) VALUES ('abc_')" );
+		$this->assertQuery( "INSERT INTO t (value) VALUES ('abc%')" );
+		$this->assertQuery( "INSERT INTO t (value) VALUES ('abc{$backslash}{$backslash}x')" ); // abc\x
+
+		/*
+		 * 1. With NO_BACKSLASH_ESCAPES disabled:
+		 *
+		 * Backslashes serve as special escape characters on two levels:
+		 *
+		 *   1. In MySQL string literals.
+		 *   2. In LIKE patterns.
+		 *
+		 * Additionally, "\_" and "\%" sequences preserve the backslash in MySQL
+		 * string literals, making them equivalent to "\\_" and "\\%" sequences.
+		 *
+		 * Here's what that does to some escape sequences:
+		 *
+		 *   "\_"
+		 *      1) String literal resolves to:   "\_" sequence
+		 *      2) Pattern matching resolves to: "_" character
+		 *
+		 *   "\\_"
+		 *      1) String literal resolves to:   "\_" sequence
+		 *      2) Pattern matching resolves to: "_" character
+		 *
+		 *   "\\\_"
+		 *      1) String literal resolves to:   "\\_" sequence
+		 *      2) Pattern matching resolves to: "\" character + "_" wildcard
+		 *
+		 *   "\\\\_"
+		 *      1) String literal resolves to:   "\\_" sequence
+		 *      2) Pattern matching resolves to: "\" character + "_" wildcard
+		 *
+		 * The same rules applies to the "%" character.
+		 */
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// A "_" = a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc_' ORDER BY id" );
+		$this->assertCount( 2, $result );
+		$this->assertSame( 'abc_', $result[0]->value );
+		$this->assertSame( 'abc%', $result[1]->value );
+
+		// A "\_" sequence = the "_" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}_'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'abc_', $result[0]->value );
+
+		// A "\\_" sequence = the "_" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}_'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'abc_', $result[0]->value );
+
+		// A "\\\_" sequence = the "\" character and a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}_'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( "abc{$backslash}x", $result[0]->value );
+
+		// A "\\\\_" sequence = the "\" character and a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}{$backslash}_'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( "abc{$backslash}x", $result[0]->value );
+
+		// A "\\\\\_" sequence = the "\" character and the "_" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}{$backslash}{$backslash}_'" );
+		$this->assertCount( 0, $result );
+
+		// A "%" = a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc%' ORDER BY id" );
+		$this->assertCount( 4, $result );
+		$this->assertSame( 'abc', $result[0]->value );
+		$this->assertSame( 'abc_', $result[1]->value );
+		$this->assertSame( 'abc%', $result[2]->value );
+		$this->assertSame( "abc{$backslash}x", $result[3]->value );
+
+		// A "\%" sequence = the "%" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}%'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'abc%', $result[0]->value );
+
+		// A "\\%" sequence = the "%" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}%'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'abc%', $result[0]->value );
+
+		// A "\\\%" sequence = the "\" character and a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}%'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( "abc{$backslash}x", $result[0]->value );
+
+		// A "\\\\%" sequence = the "\" character and a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}{$backslash}%'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( "abc{$backslash}x", $result[0]->value );
+
+		// A "\\\\\%" sequence = the "\" character and the "%" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}{$backslash}{$backslash}%'" );
+		$this->assertCount( 0, $result );
+
+		// A "\x" sequence = the "x" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}x'" );
+		$this->assertCount( 0, $result );
+
+		// A "\\x" sequence = the "x" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}x'" );
+		$this->assertCount( 0, $result );
+
+		// A "\\\x" sequence = the "x" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}x'" );
+		$this->assertCount( 0, $result );
+
+		// A "\\\\x" sequence = the "\" character and the "x" character:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}{$backslash}x'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( "abc{$backslash}x", $result[0]->value );
+
+		/*
+		 * 2. With NO_BACKSLASH_ESCAPES enabled:
+		 *
+		 * Backslashes don't serve as special escape characters at all:
+		 *
+		 *   1. No special meaning in MySQL string literals.
+		 *   2. No special meaning in LIKE patterns.
+		 *      This can be overriden using the "ESCAPE ..." clause of the LIKE
+		 *      expression. This is not implemented in the SQLite driver yet.
+		 */
+		$this->assertQuery( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
+
+		// A "_" = a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc_' ORDER BY id" );
+		$this->assertCount( 2, $result );
+		$this->assertSame( 'abc_', $result[0]->value );
+		$this->assertSame( 'abc%', $result[1]->value );
+
+		// A "\_" sequence = the "\" character and a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}_'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( "abc{$backslash}x", $result[0]->value );
+
+		// A "\\_" sequence = two "\" characters and a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}_'" );
+		$this->assertCount( 0, $result );
+
+		// A "%" = a wildcard:
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc%' ORDER BY id" );
+		$this->assertCount( 4, $result );
+		$this->assertSame( 'abc', $result[0]->value );
+		$this->assertSame( 'abc_', $result[1]->value );
+		$this->assertSame( 'abc%', $result[2]->value );
+		$this->assertSame( "abc{$backslash}x", $result[3]->value );
+
+		// A "\%" sequence = the "\" character and a wildcard.
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}%'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( "abc{$backslash}x", $result[0]->value );
+
+		// A "\\%" sequence = two "\" characters and a wildcard.
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}%'" );
+		$this->assertCount( 0, $result );
+
+		// A "\x" sequence = the "\" and the "x" character.
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}x'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( "abc{$backslash}x", $result[0]->value );
+
+		// A "\\x" sequence = two "\" characters and the "x" character.
+		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}x'" );
+		$this->assertCount( 0, $result );
+	}
+
+	public function testQuoteMysqlUtf8StringLiteral(): void {
+		// WP_SQLite_Driver::quote_mysql_utf8_string_literal() is a private method.
+		// Let's use a closure bound to the driver instance to access it for tests.
+		$quote = Closure::bind(
+			function ( string $utf8_literal ) {
+				return $this->quote_mysql_utf8_string_literal( $utf8_literal );
+			},
+			$this->engine,
+			WP_SQLite_Driver::class
+		);
+
+		$backslash = chr( 92 );
+
+		// The formatted string must be enclosed in single quotes.
+		$this->assertSame( "'abc'", $quote( 'abc' ) );
+
+		// Single quotes must be escaped by being doubled.
+		$this->assertSame( "''''", $quote( chr( 39 ) ) );
+		$this->assertSame( "'abc''xyz'", $quote( "abc'xyz" ) );
+
+		// Backslashes must be escaped by being doubled.
+		$this->assertSame( "'{$backslash}{$backslash}'", $quote( $backslash ) );
+		$this->assertSame( "'abc{$backslash}{$backslash}xyz'", $quote( "abc{$backslash}xyz" ) );
+
+		// ASCII NULL, newline, and carriage return must be escaped with a backslash.
+		$this->assertSame( "'{$backslash}0'", $quote( chr( 0 ) ) );  // ASCII NULL (\0)
+		$this->assertSame( "'{$backslash}n'", $quote( chr( 10 ) ) ); // newline (\n)
+		$this->assertSame( "'{$backslash}r'", $quote( chr( 13 ) ) ); // carriage return (\r)
+
+		// Other valid UTF-8 characters must be preserved.
+		$this->assertSame( "'" . chr( 34 ) . "'", $quote( chr( 34 ) ) ); // double quote
+		$this->assertSame( "'" . chr( 96 ) . "'", $quote( chr( 96 ) ) ); // backtick
+		$this->assertSame( "'" . chr( 8 ) . "'", $quote( chr( 8 ) ) );   // backspace
+		$this->assertSame( "'" . chr( 9 ) . "'", $quote( chr( 9 ) ) );   // tab
+		$this->assertSame( "'" . chr( 26 ) . "'", $quote( chr( 26 ) ) ); // Control+Z
+		$this->assertSame( "'🙂'", $quote( '🙂' ) );
+		$this->assertSame( "'👪'", $quote( '👪' ) );
+		$this->assertSame( "'Ʈềʂᴛӏń𝒈 𝙨𝑜ɱê Ū𝐓Ϝ-8 𝒄𝒽ȃᵲ𝛼çṱ𝘦ᴦ𐑈.'", $quote( 'Ʈềʂᴛӏń𝒈 𝙨𝑜ɱê Ū𝐓Ϝ-8 𝒄𝒽ȃᵲ𝛼çṱ𝘦ᴦ𐑈.' ) );
+
+		// Invalid UTF-8: An incomplete 2-byte sequence is left unchanged.
+		$this->assertSame(
+			"'" . chr( 0xC0 ) . "'",
+			$quote( chr( 0xC0 ) )
+		);
+
+		// Invalid UTF-8: A surrogate pair is left unchanged.
+		$this->assertSame(
+			"'" . chr( 0xED ) . chr( 0xA0 ) . chr( 0x80 ) . "'",
+			$quote( chr( 0xED ) . chr( 0xA0 ) . chr( 0x80 ) )
+		);
+
+		// Invalid UTF-8: Overlong encoding of ASCII NULL is left unchanged.
+		$this->assertSame(
+			"'" . chr( 0xE0 ) . chr( 0x80 ) . chr( 0x80 ) . "'",
+			$quote( chr( 0xE0 ) . chr( 0x80 ) . chr( 0x80 ) )
+		);
+
+		// Invalid UTF-8: A 2-byte sequence prefix, followed by an ASCII NULL.
+		// The NULL is escaped, leaving the C0 prefix an incomplete sequence.
+		$this->assertSame(
+			"'" . chr( 0xC0 ) . "{$backslash}0" . "'",
+			$quote( chr( 0xC0 ) . chr( 0 ) )
+		);
+
+		// Invalid UTF-8: A 2-byte sequence prefix, followed by a single quote.
+		// The single quote is escaped, leaving the C0 prefix an incomplete sequence.
+		$this->assertSame(
+			"'" . chr( 0xC0 ) . chr( 39 ) . chr( 39 ) . "'",
+			$quote( chr( 0xC0 ) . chr( 39 ) )
+		);
 	}
 }
