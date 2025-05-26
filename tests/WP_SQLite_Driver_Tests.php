@@ -4704,6 +4704,107 @@ QUERY
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
 
+	public function testConstraintName(): void {
+		$this->assertQuery(
+			'CREATE TABLE t ( id INT, CONSTRAINT cst_id UNIQUE (id) )'
+		);
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'cst_id', $result[0]->Key_name );
+	}
+
+	public function testIndexNamePrecedesConstraintName(): void {
+		$this->assertQuery(
+			'CREATE TABLE t ( id INT, CONSTRAINT cst_id UNIQUE idx_id (id) )'
+		);
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'idx_id', $result[0]->Key_name );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  UNIQUE KEY `idx_id` (`id`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
+	public function testImplicitIndexNames(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT UNIQUE,
+				id_2 INT UNIQUE,
+				value INT,
+				UNIQUE (id),
+				UNIQUE (id, value)
+			)'
+		);
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 5, $result );
+
+		$this->assertSame( 'id', $result[0]->Key_name );
+		$this->assertSame( 'id', $result[0]->Column_name );
+
+		$this->assertSame( 'id_2', $result[1]->Key_name );
+		$this->assertSame( 'id_2', $result[1]->Column_name );
+
+		$this->assertSame( 'id_3', $result[2]->Key_name );
+		$this->assertSame( 'id', $result[2]->Column_name );
+
+		$this->assertSame( 'id_4', $result[3]->Key_name );
+		$this->assertSame( 'id', $result[3]->Column_name );
+
+		$this->assertSame( 'id_4', $result[4]->Key_name );
+		$this->assertSame( 'value', $result[4]->Column_name );
+	}
+
+	public function testValidDuplicateConstraintNames(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+			id INT,
+			CONSTRAINT cid PRIMARY KEY (id),
+			CONSTRAINT cid UNIQUE (id)
+			-- Not yet supported: CONSTRAINT cid CHECK (id > 0),
+			-- Not yet supported: CONSTRAINT cid FOREIGN KEY (id) REFERENCES t (id)
+		)'
+		);
+
+		// No exception. This table definition is valid in MySQL.
+		// Constraint names must be unique per constraint type, not per table.
+	}
+
+	public function testMultipleTablesWithSameConstraintNames(): void {
+		$this->assertQuery(
+			'CREATE TABLE t1 (
+				id INT,
+				CONSTRAINT c_primary PRIMARY KEY (id),
+				CONSTRAINT c_unique UNIQUE (id)
+			)'
+		);
+
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				CONSTRAINT c_primary PRIMARY KEY (id),
+				CONSTRAINT c_unique UNIQUE (id)
+			)'
+		);
+
+		// No exception. This is valid in MySQL.
+		// Primary and unique key names must be unique per table, not per schema.
+	}
+
 	public function testNoBackslashEscapesSqlMode(): void {
 		$backslash = chr( 92 );
 
@@ -5003,5 +5104,87 @@ QUERY
 			"'" . chr( 0xC0 ) . chr( 39 ) . chr( 39 ) . "'",
 			$quote( chr( 0xC0 ) . chr( 39 ) )
 		);
+	}
+
+	public function testColumnNamesAreNotCaseSensitive(): void {
+		$this->assertQuery( 'CREATE TABLE t (value TEXT)' );
+
+		// INSERT.
+		$this->assertQuery( "INSERT INTO t (value) VALUES ('one')" );
+		$this->assertQuery( "INSERT INTO t (VaLuE) VALUES ('two')" );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 2, $result );
+
+		// SELECT.
+		$result = $this->assertQuery( "SELECT * FROM t WHERE value = 'one'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'one', $result[0]->value );
+
+		$result = $this->assertQuery( "SELECT * FROM t WHERE VaLuE = 'two'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'two', $result[0]->value );
+
+		// UPDATE.
+		$this->assertQuery( "UPDATE t SET value = 'one-updated' WHERE value = 'one'" );
+		$result = $this->assertQuery( "SELECT * FROM t WHERE value = 'one-updated'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'one-updated', $result[0]->value );
+
+		$this->assertQuery( "UPDATE t SET VALUE = 'two-updated' WHERE VaLuE = 'two'" );
+		$result = $this->assertQuery( "SELECT * FROM t WHERE value = 'two-updated'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'two-updated', $result[0]->value );
+
+		// DELETE.
+		$this->assertQuery( "DELETE FROM t WHERE value = 'one-updated'" );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'two-updated', $result[0]->value );
+
+		$this->assertQuery( "DELETE FROM t WHERE VaLuE = 'two-updated'" );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 0, $result );
+
+		// ALTER TABLE.
+		$this->assertQuery( 'ALTER TABLE t CHANGE COLUMN VaLuE value_changed TEXT' );
+		$this->assertQuery( 'ALTER TABLE t CHANGE COLUMN value_changed value TEXT' );
+
+		// ADD COLUMN.
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN added TEXT' );
+		$exception = null;
+		try {
+			$this->assertQuery( 'ALTER TABLE t ADD COLUMN AdDeD TEXT' );
+		} catch ( Throwable $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertStringContainsString(
+			"Column already exists: 1060 Duplicate column name 'AdDeD'",
+			$exception->getMessage()
+		);
+
+		// DROP COLUMN.
+		$this->assertQuery( 'ALTER TABLE t DROP COLUMN added' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'value', $result[0]->Field );
+	}
+
+	public function testAliasesMustBeAscii(): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'The SQLite driver only supports ASCII characters in identifiers.' );
+		$this->assertQuery( 'SELECT 123 AS `ńôñ-ášçíì`' );
+	}
+
+	public function testTableNamesMustBeAscii(): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'The SQLite driver only supports ASCII characters in identifiers.' );
+		$this->assertQuery( 'CREATE TABLE `ńôñ-ášçíì` (id INT)' );
+	}
+
+	public function testColumnNamesMustBeAscii(): void {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'The SQLite driver only supports ASCII characters in identifiers.' );
+		$this->assertQuery( 'CREATE TABLE t (`ńôñ-ášçíì` INT)' );
 	}
 }

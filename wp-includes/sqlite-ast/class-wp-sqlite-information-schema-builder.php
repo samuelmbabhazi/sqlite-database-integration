@@ -18,120 +18,105 @@ class WP_SQLite_Information_Schema_Builder {
 	 * introspection and representation, currently covering the following tables:
 	 *
 	 *  - TABLES
-	 *  - VIEWS
 	 *  - COLUMNS
 	 *  - STATISTICS (indexes)
-	 *  - TABLE_CONSTRAINTS (PK, UNIQUE, FK)
+	 *  - TABLE_CONSTRAINTS
+	 *
+	 * TODO (not yet implemented):
+	 *  - VIEWS
 	 *  - CHECK_CONSTRAINTS
 	 *  - KEY_COLUMN_USAGE (foreign keys)
 	 *  - REFERENTIAL_CONSTRAINTS (foreign keys)
 	 *  - TRIGGERS
 	 */
-	const CREATE_INFORMATION_SCHEMA_QUERIES = array(
-		// TABLES
-		"CREATE TABLE IF NOT EXISTS <prefix>tables (    -- '<prefix>' is a placeholder replaced at runtime
-			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def',  -- always 'def'
-			TABLE_SCHEMA TEXT NOT NULL,                 -- database name
-			TABLE_NAME TEXT NOT NULL,                   -- table name
-			TABLE_TYPE TEXT NOT NULL,                   -- 'BASE TABLE' or 'VIEW'
-			ENGINE TEXT NOT NULL,                       -- storage engine
-			VERSION INTEGER NOT NULL DEFAULT 10,        -- unused, in MySQL 8 hardcoded to 10
-			ROW_FORMAT TEXT NOT NULL,                   -- row storage format @TODO - implement
-			TABLE_ROWS INTEGER NOT NULL DEFAULT 0,      -- not implemented
-			AVG_ROW_LENGTH INTEGER NOT NULL DEFAULT 0,  -- not implemented
-			DATA_LENGTH INTEGER NOT NULL DEFAULT 0,     -- not implemented
-			MAX_DATA_LENGTH INTEGER NOT NULL DEFAULT 0, -- not implemented
-			INDEX_LENGTH INTEGER NOT NULL DEFAULT 0,    -- not implemented
-			DATA_FREE INTEGER NOT NULL DEFAULT 0,       -- not implemented
-			AUTO_INCREMENT INTEGER,                     -- not implemented
-			CREATE_TIME TEXT NOT NULL                   -- table creation timestamp
+	const INFORMATION_SCHEMA_TABLE_DEFINITIONS = array(
+		// INFORMATION_SCHEMA.TABLES
+		'tables'            => "
+			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE, -- always 'def'
+			TABLE_SCHEMA TEXT NOT NULL COLLATE NOCASE,                -- database name
+			TABLE_NAME TEXT NOT NULL COLLATE NOCASE,                  -- table name
+			TABLE_TYPE TEXT NOT NULL COLLATE BINARY,                  -- 'BASE TABLE', 'VIEW', or 'SYSTEM VIEW'
+			ENGINE TEXT NOT NULL COLLATE NOCASE,                      -- storage engine
+			VERSION INTEGER NOT NULL DEFAULT 10,                      -- unused, in MySQL 8 hardcoded to 10
+			ROW_FORMAT TEXT NOT NULL COLLATE BINARY,                  -- row storage format @TODO - implement
+			TABLE_ROWS INTEGER NOT NULL DEFAULT 0,                    -- not implemented
+			AVG_ROW_LENGTH INTEGER NOT NULL DEFAULT 0,                -- not implemented
+			DATA_LENGTH INTEGER NOT NULL DEFAULT 0,                   -- not implemented
+			MAX_DATA_LENGTH INTEGER NOT NULL DEFAULT 0,               -- not implemented
+			INDEX_LENGTH INTEGER NOT NULL DEFAULT 0,                  -- not implemented
+			DATA_FREE INTEGER NOT NULL DEFAULT 0,                     -- not implemented
+			AUTO_INCREMENT INTEGER,                                   -- not implemented
+			CREATE_TIME TEXT NOT NULL                                 -- table creation timestamp
 				DEFAULT CURRENT_TIMESTAMP,
-			UPDATE_TIME TEXT,                           -- table update time
-			CHECK_TIME TEXT,                            -- not implemented
-			TABLE_COLLATION TEXT NOT NULL,              -- table collation
-			CHECKSUM INTEGER,                           -- not implemented
-			CREATE_OPTIONS TEXT NOT NULL DEFAULT '',    -- extra CREATE TABLE options
-			TABLE_COMMENT TEXT NOT NULL DEFAULT '',     -- comment
+			UPDATE_TIME TEXT,                                         -- table update time
+			CHECK_TIME TEXT,                                          -- not implemented
+			TABLE_COLLATION TEXT NOT NULL COLLATE NOCASE,             -- table collation
+			CHECKSUM INTEGER,                                         -- not implemented
+			CREATE_OPTIONS TEXT NOT NULL DEFAULT '' COLLATE NOCASE,   -- extra CREATE TABLE options
+			TABLE_COMMENT TEXT NOT NULL DEFAULT '' COLLATE NOCASE,    -- comment
 			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME)
-		) STRICT",
+		",
 
-		// COLUMNS
-		"CREATE TABLE IF NOT EXISTS <prefix>columns (       -- '<prefix>' is a placeholder replaced at runtime
-			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def',      -- always 'def'
-			TABLE_SCHEMA TEXT NOT NULL,                     -- database name
-			TABLE_NAME TEXT NOT NULL,                       -- table name
-			COLUMN_NAME TEXT NOT NULL,                      -- column name
-			ORDINAL_POSITION INTEGER NOT NULL,              -- column position
-			COLUMN_DEFAULT TEXT,                            -- default value, NULL for both NULL and none
-			IS_NULLABLE TEXT NOT NULL,                      -- 'YES' or 'NO'
-			DATA_TYPE TEXT NOT NULL,                        -- data type (without length, precision, etc.)
-			CHARACTER_MAXIMUM_LENGTH INTEGER,               -- max length for string columns in characters
-			CHARACTER_OCTET_LENGTH INTEGER,                 -- max length for string columns in bytes
-			NUMERIC_PRECISION INTEGER,                      -- number precision for numeric columns
-			NUMERIC_SCALE INTEGER,                          -- number scale for numeric columns
-			DATETIME_PRECISION INTEGER,                     -- fractional seconds precision for temporal columns
-			CHARACTER_SET_NAME TEXT,                        -- charset for string columns
-			COLLATION_NAME TEXT,                            -- collation for string columns
-			COLUMN_TYPE TEXT NOT NULL,                      -- full data type (with length, precision, etc.)
-			COLUMN_KEY TEXT NOT NULL DEFAULT '',            -- if column is indexed ('', 'PRI', 'UNI', 'MUL')
-			EXTRA TEXT NOT NULL DEFAULT '',                 -- AUTO_INCREMENT, VIRTUAL, STORED, etc.
-			PRIVILEGES TEXT NOT NULL,                       -- not implemented
-			COLUMN_COMMENT TEXT NOT NULL DEFAULT '',        -- comment
-			GENERATION_EXPRESSION TEXT NOT NULL DEFAULT '', -- expression for generated columns
-			SRS_ID INTEGER,                                 -- not implemented
+		// INFORMATION_SCHEMA.COLUMNS
+		'columns'           => "
+			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE,      -- always 'def'
+			TABLE_SCHEMA TEXT NOT NULL COLLATE NOCASE,                     -- database name
+			TABLE_NAME TEXT NOT NULL COLLATE NOCASE,                       -- table name
+			COLUMN_NAME TEXT NOT NULL COLLATE NOCASE,                      -- column name
+			ORDINAL_POSITION INTEGER NOT NULL,                             -- column position
+			COLUMN_DEFAULT TEXT COLLATE BINARY,                            -- default value, NULL for both NULL and none
+			IS_NULLABLE TEXT NOT NULL COLLATE NOCASE,                      -- 'YES' or 'NO'
+			DATA_TYPE TEXT NOT NULL COLLATE BINARY,                        -- data type (without length, precision, etc.)
+			CHARACTER_MAXIMUM_LENGTH INTEGER,                              -- max length for string columns in characters
+			CHARACTER_OCTET_LENGTH INTEGER,                                -- max length for string columns in bytes
+			NUMERIC_PRECISION INTEGER,                                     -- number precision for numeric columns
+			NUMERIC_SCALE INTEGER,                                         -- number scale for numeric columns
+			DATETIME_PRECISION INTEGER,                                    -- fractional seconds precision for temporal columns
+			CHARACTER_SET_NAME TEXT COLLATE NOCASE,                        -- charset for string columns
+			COLLATION_NAME TEXT COLLATE NOCASE,                            -- collation for string columns
+			COLUMN_TYPE TEXT NOT NULL COLLATE BINARY,                      -- full data type (with length, precision, etc.)
+			COLUMN_KEY TEXT NOT NULL DEFAULT '' COLLATE BINARY,            -- if column is indexed ('', 'PRI', 'UNI', 'MUL')
+			EXTRA TEXT NOT NULL DEFAULT '' COLLATE NOCASE,                 -- AUTO_INCREMENT, VIRTUAL, STORED, etc.
+			PRIVILEGES TEXT NOT NULL COLLATE NOCASE,                       -- not implemented
+			COLUMN_COMMENT TEXT NOT NULL DEFAULT '' COLLATE BINARY,        -- comment
+			GENERATION_EXPRESSION TEXT NOT NULL DEFAULT '' COLLATE BINARY, -- expression for generated columns
+			SRS_ID INTEGER,                                                -- not implemented
 			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME)
-		) STRICT",
+		",
 
-		// VIEWS
-		// @TODO: Implement.
-		"CREATE TABLE IF NOT EXISTS <prefix>views ( -- '<prefix>' is a placeholder replaced at runtime
-			TABLE_CATALOG TEXT NOT NULL,
-			TABLE_SCHEMA TEXT NOT NULL,
-			TABLE_NAME TEXT NOT NULL,
-			VIEW_DEFINITION TEXT NOT NULL,
-			CHECK_OPTION TEXT NOT NULL,
-			IS_UPDATABLE TEXT NOT NULL,
-			DEFINER TEXT NOT NULL,
-			SECURITY_TYPE TEXT NOT NULL,
-			CHARACTER_SET_CLIENT TEXT NOT NULL,
-			COLLATION_CONNECTION TEXT NOT NULL,
-			ALGORITHM TEXT NOT NULL,
-			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME)
-		) STRICT",
-
-		// STATISTICS (indexes)
-		"CREATE TABLE IF NOT EXISTS <prefix>statistics ( -- '<prefix>' is a placeholder replaced at runtime
-			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def',   -- always 'def'
-			TABLE_SCHEMA TEXT NOT NULL,                  -- database name
-			TABLE_NAME TEXT NOT NULL,                    -- table name
-			NON_UNIQUE INTEGER NOT NULL,                 -- 0 for unique indexes, 1 otherwise
-			INDEX_SCHEMA TEXT NOT NULL,                  -- index database name
-			INDEX_NAME TEXT NOT NULL,                    -- index name, for PKs always 'PRIMARY'
-			SEQ_IN_INDEX INTEGER NOT NULL,               -- column position in index (from 1)
-			COLUMN_NAME TEXT,                            -- column name (NULL for functional indexes)
-			COLLATION TEXT,                              -- column sort in the index ('A', 'D', or NULL)
-			CARDINALITY INTEGER,                         -- not implemented
-			SUB_PART INTEGER,                            -- number of indexed chars, NULL for full column
-			PACKED TEXT,                                 -- not implemented
-			NULLABLE TEXT NOT NULL,                      -- 'YES' if column can contain NULL, '' otherwise
-			INDEX_TYPE TEXT NOT NULL,                    -- 'BTREE', 'FULLTEXT', 'SPATIAL'
-			COMMENT TEXT NOT NULL DEFAULT '',            -- not implemented
-			INDEX_COMMENT TEXT NOT NULL DEFAULT '',      -- index comment
-			IS_VISIBLE TEXT NOT NULL DEFAULT 'YES',      -- 'NO' if column is hidden, 'YES' otherwise
-			EXPRESSION TEXT,                             -- expression for functional indexes
+		// INFORMATION_SCHEMA.STATISTICS (indexes)
+		'statistics'        => "
+			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE, -- always 'def'
+			TABLE_SCHEMA TEXT NOT NULL COLLATE NOCASE,                -- database name
+			TABLE_NAME TEXT NOT NULL COLLATE NOCASE,                  -- table name
+			NON_UNIQUE INTEGER NOT NULL,                              -- 0 for unique indexes, 1 otherwise
+			INDEX_SCHEMA TEXT NOT NULL COLLATE NOCASE,                -- index database name
+			INDEX_NAME TEXT NOT NULL COLLATE NOCASE,                  -- index name, for PKs always 'PRIMARY'
+			SEQ_IN_INDEX INTEGER NOT NULL,                            -- column position in index (from 1)
+			COLUMN_NAME TEXT COLLATE NOCASE,                          -- column name (NULL for functional indexes)
+			COLLATION TEXT COLLATE NOCASE,                            -- column sort in the index ('A', 'D', or NULL)
+			CARDINALITY INTEGER,                                      -- not implemented
+			SUB_PART INTEGER,                                         -- number of indexed chars, NULL for full column
+			PACKED TEXT,                                              -- not implemented
+			NULLABLE TEXT NOT NULL COLLATE NOCASE,                    -- 'YES' if column can contain NULL, '' otherwise
+			INDEX_TYPE TEXT NOT NULL COLLATE BINARY,                  -- 'BTREE', 'FULLTEXT', 'SPATIAL'
+			COMMENT TEXT NOT NULL DEFAULT '' COLLATE NOCASE,          -- not implemented
+			INDEX_COMMENT TEXT NOT NULL DEFAULT '' COLLATE BINARY,    -- index comment
+			IS_VISIBLE TEXT NOT NULL DEFAULT 'YES' COLLATE NOCASE,    -- 'NO' if column is hidden, 'YES' otherwise
+			EXPRESSION TEXT COLLATE BINARY,                           -- expression for functional indexes
 			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX),
 			UNIQUE (INDEX_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX)
-		) STRICT",
+		",
 
-		// TABLE_CONSTRAINTS
-		// @TODO: Implement. Could this be just a view?
-		"CREATE TABLE IF NOT EXISTS <prefix>table_constraints ( -- '<prefix>' is a placeholder replaced at runtime
-			CONSTRAINT_CATALOG TEXT NOT NULL,
-			CONSTRAINT_SCHEMA TEXT NOT NULL,
-			CONSTRAINT_NAME TEXT NOT NULL,
-			TABLE_SCHEMA TEXT NOT NULL,
-			TABLE_NAME TEXT NOT NULL,
-			CONSTRAINT_TYPE TEXT NOT NULL,
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		'table_constraints' => "
+			CONSTRAINT_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE, -- always 'def'
+			CONSTRAINT_SCHEMA TEXT NOT NULL COLLATE NOCASE,                -- constraint database name
+			CONSTRAINT_NAME TEXT NOT NULL COLLATE NOCASE,                  -- constraint name
+			TABLE_SCHEMA TEXT NOT NULL COLLATE NOCASE,                     -- table database name
+			TABLE_NAME TEXT NOT NULL COLLATE NOCASE,                       -- table name
+			CONSTRAINT_TYPE TEXT NOT NULL COLLATE BINARY,                  -- constraint type ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY', 'CHECK')
+			ENFORCED TEXT NOT NULL DEFAULT 'YES' COLLATE BINARY,           -- 'YES' if constraint is enforced, 'NO' otherwise
 
 			-- Constraint names are unique per type in each table.
 			-- A MySQL table can have a PRIMARY KEY, UNIQUE, FOREIGN KEY, and CHECK
@@ -139,79 +124,7 @@ class WP_SQLite_Information_Schema_Builder {
 			-- CHECK and FOREIGN KEY constraint names must also be unique per schema.
 			PRIMARY KEY (TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_TYPE, CONSTRAINT_NAME),
 			UNIQUE (CONSTRAINT_SCHEMA, TABLE_NAME, CONSTRAINT_TYPE, CONSTRAINT_NAME)
-		) STRICT",
-
-		// CHECK_CONSTRAINTS
-		// @TODO: Implement.
-		"CREATE TABLE IF NOT EXISTS <prefix>check_constraints ( -- '<prefix>' is a placeholder replaced at runtime
-			CONSTRAINT_CATALOG TEXT NOT NULL,
-			CONSTRAINT_SCHEMA TEXT NOT NULL,
-			CONSTRAINT_NAME TEXT NOT NULL,
-			CHECK_CLAUSE TEXT NOT NULL,
-			PRIMARY KEY (CONSTRAINT_SCHEMA, CONSTRAINT_NAME) -- CHECK constraints must be unique per schema
-		) STRICT",
-
-		// KEY_COLUMN_USAGE
-		// @TODO: Implement.
-		"CREATE TABLE IF NOT EXISTS <prefix>key_column_usage ( -- '<prefix>' is a placeholder replaced at runtime
-			CONSTRAINT_CATALOG TEXT NOT NULL,
-			CONSTRAINT_SCHEMA TEXT NOT NULL,
-			CONSTRAINT_NAME TEXT NOT NULL,
-			TABLE_CATALOG TEXT NOT NULL,
-			TABLE_SCHEMA TEXT NOT NULL,
-			TABLE_NAME TEXT NOT NULL,
-			COLUMN_NAME TEXT NOT NULL,
-			ORDINAL_POSITION INTEGER NOT NULL,
-			POSITION_IN_UNIQUE_CONSTRAINT INTEGER,
-			REFERENCED_TABLE_SCHEMA TEXT,
-			REFERENCED_TABLE_NAME TEXT,
-			REFERENCED_COLUMN_NAME TEXT
-			-- TODO: PRIMARY/UNIQUE keys, if needed.
-		) STRICT",
-
-		// REFERENTIAL_CONSTRAINTS
-		// @TODO: Implement.
-		"CREATE TABLE IF NOT EXISTS <prefix>referential_constraints ( -- '<prefix>' is a placeholder replaced at runtime
-			CONSTRAINT_CATALOG TEXT NOT NULL,
-			CONSTRAINT_SCHEMA TEXT NOT NULL,
-			CONSTRAINT_NAME TEXT NOT NULL,
-			UNIQUE_CONSTRAINT_CATALOG TEXT NOT NULL,
-			UNIQUE_CONSTRAINT_SCHEMA TEXT NOT NULL,
-			UNIQUE_CONSTRAINT_NAME TEXT,
-			MATCH_OPTION TEXT NOT NULL,
-			UPDATE_RULE TEXT NOT NULL,
-			DELETE_RULE TEXT NOT NULL,
-			REFERENCED_TABLE_NAME TEXT NOT NULL,
-			PRIMARY KEY (CONSTRAINT_SCHEMA, CONSTRAINT_NAME) -- FOREIGN KEY constraints must be unique per schema
-		) STRICT",
-
-		// TRIGGERS
-		// @TODO: Implement.
-		"CREATE TABLE IF NOT EXISTS <prefix>triggers ( -- '<prefix>' is a placeholder replaced at runtime
-			TRIGGER_CATALOG TEXT NOT NULL,
-			TRIGGER_SCHEMA TEXT NOT NULL,
-			TRIGGER_NAME TEXT NOT NULL,
-			EVENT_MANIPULATION TEXT NOT NULL,
-			EVENT_OBJECT_CATALOG TEXT NOT NULL,
-			EVENT_OBJECT_SCHEMA TEXT NOT NULL,
-			EVENT_OBJECT_TABLE TEXT NOT NULL,
-			ACTION_ORDER INTEGER NOT NULL,
-			ACTION_CONDITION TEXT,
-			ACTION_STATEMENT TEXT NOT NULL,
-			ACTION_ORIENTATION TEXT NOT NULL,
-			ACTION_TIMING TEXT NOT NULL,
-			ACTION_REFERENCE_OLD_TABLE TEXT,
-			ACTION_REFERENCE_NEW_TABLE TEXT,
-			ACTION_REFERENCE_OLD_ROW TEXT NOT NULL,
-			ACTION_REFERENCE_NEW_ROW TEXT NOT NULL,
-			CREATED TEXT,
-			SQL_MODE TEXT NOT NULL,
-			DEFINER TEXT NOT NULL,
-			CHARACTER_SET_CLIENT TEXT NOT NULL,
-			COLLATION_CONNECTION TEXT NOT NULL,
-			DATABASE_COLLATION TEXT NOT NULL,
-			PRIMARY KEY (TRIGGER_SCHEMA, TRIGGER_NAME)
-		) STRICT",
+		",
 	);
 
 	/**
@@ -428,8 +341,15 @@ class WP_SQLite_Information_Schema_Builder {
 	 * database. Tables that are missing will be created.
 	 */
 	public function ensure_information_schema_tables(): void {
-		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
-			$this->connection->query( str_replace( '<prefix>', $this->table_prefix, $query ) );
+		foreach ( self::INFORMATION_SCHEMA_TABLE_DEFINITIONS as $table_name => $table_body ) {
+			$this->connection->query(
+				sprintf(
+					'CREATE TABLE IF NOT EXISTS %s%s (%s) STRICT',
+					$this->table_prefix,
+					$table_name,
+					$table_body
+				)
+			);
 		}
 	}
 
@@ -438,9 +358,15 @@ class WP_SQLite_Information_Schema_Builder {
 	 * the SQLite database. Tables that are missing will be created.
 	 */
 	public function ensure_temporary_information_schema_tables(): void {
-		foreach ( self::CREATE_INFORMATION_SCHEMA_QUERIES as $query ) {
-			$query = str_replace( 'CREATE TABLE', 'CREATE TEMPORARY TABLE', $query );
-			$this->connection->query( str_replace( '<prefix>', $this->temporary_table_prefix, $query ) );
+		foreach ( self::INFORMATION_SCHEMA_TABLE_DEFINITIONS as $table_name => $table_body ) {
+			$this->connection->query(
+				sprintf(
+					'CREATE TEMPORARY TABLE IF NOT EXISTS %s%s (%s) STRICT',
+					$this->temporary_table_prefix,
+					$table_name,
+					$table_body
+				)
+			);
 		}
 		$this->temporary_information_schema_exists = true;
 	}
@@ -535,17 +461,32 @@ class WP_SQLite_Information_Schema_Builder {
 				throw $e;
 			}
 
-			// Inline column constraint.
-			$column_constraint_data = $this->extract_column_constraint_data(
+			// Inline column constraints and indexes.
+			$index_data = $this->extract_column_statistics_data(
 				$table_name,
 				$column_name,
 				$column_node,
 				'YES' === $column_data['is_nullable']
 			);
-			if ( null !== $column_constraint_data ) {
+
+			if ( null !== $index_data ) {
 				$this->insert_values(
 					$this->get_table_name( $table_is_temporary, 'statistics' ),
-					$column_constraint_data
+					$index_data
+				);
+			}
+
+			// Save constraint data.
+			$constraint_data = $this->extract_table_constraint_data(
+				$column_node,
+				$table_name,
+				$index_data['index_name'] ?? null
+			);
+
+			if ( null !== $constraint_data ) {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+					$constraint_data
 				);
 			}
 
@@ -686,6 +627,13 @@ class WP_SQLite_Information_Schema_Builder {
 					'table_name'   => $table_name,
 				)
 			);
+			$this->delete_values(
+				$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+				array(
+					'table_schema' => $this->db_name,
+					'table_name'   => $table_name,
+				)
+			);
 		}
 
 		// @TODO: RESTRICT vs. CASCADE
@@ -729,11 +677,23 @@ class WP_SQLite_Information_Schema_Builder {
 			throw $e;
 		}
 
-		$column_constraint_data = $this->extract_column_constraint_data( $table_name, $column_name, $node, true );
-		if ( null !== $column_constraint_data ) {
+		$index_data = $this->extract_column_statistics_data( $table_name, $column_name, $node, true );
+		if ( null !== $index_data ) {
 			$this->insert_values(
 				$this->get_table_name( $table_is_temporary, 'statistics' ),
-				$column_constraint_data
+				$index_data
+			);
+		}
+
+		$constraint_data = $this->extract_table_constraint_data(
+			$node,
+			$table_name,
+			$index_data['index_name'] ?? null
+		);
+		if ( null !== $constraint_data ) {
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+				$constraint_data
 			);
 		}
 	}
@@ -783,18 +743,30 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// Handle inline constraints. When inline constraint is defined, MySQL
 		// always adds a new constraint rather than replacing an existing one.
-		$column_constraint_data = $this->extract_column_constraint_data(
+		$index_data = $this->extract_column_statistics_data(
 			$table_name,
 			$new_column_name,
 			$node,
 			'YES' === $column_data['is_nullable']
 		);
-		if ( null !== $column_constraint_data ) {
+		if ( null !== $index_data ) {
 			$this->insert_values(
 				$this->get_table_name( $table_is_temporary, 'statistics' ),
-				$column_constraint_data
+				$index_data
 			);
 			$this->sync_column_key_info( $table_is_temporary, $table_name );
+		}
+
+		$constraint_data = $this->extract_table_constraint_data(
+			$node,
+			$table_name,
+			$index_data['index_name'] ?? null
+		);
+		if ( null !== $constraint_data ) {
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+				$constraint_data
+			);
 		}
 	}
 
@@ -827,6 +799,7 @@ class WP_SQLite_Information_Schema_Builder {
 		string $table_name,
 		string $column_name
 	): void {
+		// Delete the column record from the columns table.
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'columns' ),
 			array(
@@ -836,7 +809,18 @@ class WP_SQLite_Information_Schema_Builder {
 			)
 		);
 
-		/**
+		/*
+		 * When a column is dropped, we need to reflect the effects of the change
+		 * on the existing indexes and constraints that the column was part of.
+		 *
+		 * This means:
+		 *
+		 *   1. Remove the column records from the statistics table.
+		 *   2. Renumber SEQ_IN_INDEX values in the statistics table so that
+		 *      there are no sequence gaps caused by the removed column.
+		 *   3. Recompute column key information in the statistics table.
+		 *   4. Delete the table constraint records for no longer existing indexes.
+		 *
 		 * From MySQL documentation:
 		 *
 		 *   If columns are dropped from a table, the columns are also removed
@@ -849,8 +833,17 @@ class WP_SQLite_Information_Schema_Builder {
 		 * See:
 		 *   - https://dev.mysql.com/doc/refman/8.4/en/alter-table.html
 		 */
+		$statistics_table  = $this->get_table_name( $table_is_temporary, 'statistics' );
+		$constraints_table = $this->get_table_name( $table_is_temporary, 'table_constraints' );
+
+		/*
+		 * 1. Delete the column records from the statistics table.
+		 *
+		 * In MySQL, when a column is dropped, it is removed from all indexes
+		 * that it was part of. An index is dropped when it has no more columns.
+		 */
 		$this->delete_values(
-			$this->get_table_name( $table_is_temporary, 'statistics' ),
+			$statistics_table,
 			array(
 				'table_schema' => $this->db_name,
 				'table_name'   => $table_name,
@@ -858,9 +851,62 @@ class WP_SQLite_Information_Schema_Builder {
 			)
 		);
 
-		// @TODO: Renumber SEQ_IN_INDEX values.
+		/*
+		 * 2. Renumber SEQ_IN_INDEX values in the statistics table.
+		 *
+		 * When a column is removed from a multi-column index, it can leave a gap
+		 * in the numeric sequence of SEQ_IN_INDEX values in the statistics table.
+		 */
+		$this->connection->query(
+			sprintf(
+				'UPDATE %s AS statistics
+				SET seq_in_index = renumbered.seq_in_index
+				FROM (
+					SELECT
+						rowid,
+						row_number() OVER (PARTITION BY index_name ORDER BY seq_in_index) AS seq_in_index
+					FROM %s
+					WHERE table_schema = ?
+					AND table_name = ?
+				) AS renumbered
+				WHERE statistics.rowid = renumbered.rowid
+				AND statistics.seq_in_index != renumbered.seq_in_index',
+				$this->connection->quote_identifier( $statistics_table ),
+				$this->connection->quote_identifier( $statistics_table )
+			),
+			array( $this->db_name, $table_name )
+		);
 
+		/*
+		 * 3. Recompute column key data in the statistics table.
+		 *
+		 * When a column is removed from a multi-column index, it can cause the
+		 * value of COLUMN_KEY in the statistics for other columns to change.
+		 */
 		$this->sync_column_key_info( $table_is_temporary, $table_name );
+
+		/*
+		 * 4. Delete the table constraint records for no longer existing indexes.
+		 *
+		 * If there are no more columns left in an index the column was part of,
+		 * we need to make sure that the associated table constraint records are
+		 * deleted as well. Therefore, remove all index-specific table constraint
+		 * records that have no index data associated with them for a given table.
+		 */
+		$this->connection->query(
+			sprintf(
+				"DELETE FROM %s
+				WHERE table_schema = ?
+				AND table_name = ?
+				AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+				AND constraint_name NOT IN (
+					SELECT DISTINCT index_name FROM %s WHERE table_schema = ? AND table_name = ?
+				)",
+				$this->connection->quote_identifier( $constraints_table ),
+				$this->connection->quote_identifier( $statistics_table )
+			),
+			array( $this->db_name, $table_name, $this->db_name, $table_name )
+		);
 	}
 
 	/**
@@ -875,6 +921,7 @@ class WP_SQLite_Information_Schema_Builder {
 		string $table_name,
 		string $index_name
 	): void {
+		// Delete index data.
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'statistics' ),
 			array(
@@ -883,6 +930,33 @@ class WP_SQLite_Information_Schema_Builder {
 				'index_name'   => $index_name,
 			)
 		);
+
+		/*
+		 * Delete associated table constraint data.
+		 *
+		 * A table constraint record is saved for PRIMARY KEY and UNIQUE indexes.
+		 * We don't need to read the schema to get the constraint type, because:
+		 *
+		 *   1. In MySQL, all primary keys are named "PRIMARY", and no other
+		 *      indexes can be named so. This way we can identify primary keys.
+		 *   2. In MySQL, all indexes in a table must have distinct names, no
+		 *      matter the index type. Therefore, if a table constraint record
+		 *      exists for a given index name, we know it is a unique index.
+		 */
+		$constraint_type =
+			strtoupper( $index_name ) === 'PRIMARY' ? 'PRIMARY KEY' : 'UNIQUE';
+
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+			array(
+				'table_schema'    => $this->db_name,
+				'table_name'      => $table_name,
+				'constraint_name' => $index_name,
+				'constraint_type' => $constraint_type,
+			)
+		);
+
+		// Sync column info from constraint data.
 		$this->sync_column_key_info( $table_is_temporary, $table_name );
 	}
 
@@ -960,7 +1034,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$has_spatial_column = null !== $first_column_type && $this->is_spatial_data_type( $first_column_type );
 
 		$non_unique    = $this->get_index_non_unique( $keyword );
-		$index_name    = $this->get_index_name( $node );
+		$index_name    = $this->get_index_name( $node, $table_name );
 		$index_type    = $this->get_index_type( $node, $keyword, $has_spatial_column );
 		$index_comment = $this->get_index_comment( $node );
 		$seq_in_index  = 1;
@@ -982,7 +1056,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$has_spatial_column
 			);
 
-			$column_constraint_data = array(
+			$index_data = array(
 				'table_schema'  => $this->db_name,
 				'table_name'    => $table_name,
 				'non_unique'    => $non_unique,
@@ -1005,7 +1079,7 @@ class WP_SQLite_Information_Schema_Builder {
 			try {
 				$this->insert_values(
 					$this->get_table_name( $table_is_temporary, 'statistics' ),
-					$column_constraint_data
+					$index_data
 				);
 			} catch ( PDOException $e ) {
 				if ( '23000' === $e->getCode() ) {
@@ -1015,6 +1089,20 @@ class WP_SQLite_Information_Schema_Builder {
 			}
 
 			$seq_in_index += 1;
+		}
+
+		// Save table constraint data.
+		$constraint_data = $this->extract_table_constraint_data(
+			$node,
+			$table_name,
+			$index_name
+		);
+
+		if ( null !== $constraint_data ) {
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+				$constraint_data
+			);
 		}
 
 		$this->sync_column_key_info( $table_is_temporary, $table_name );
@@ -1075,9 +1163,14 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param  string         $column_name The column name.
 	 * @param  WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
 	 * @param  bool           $nullable    Whether the column is nullable.
-	 * @return array|null                  Constraint data for the information schema.
+	 * @return array|null                  Column statistics data for the information schema.
 	 */
-	private function extract_column_constraint_data( string $table_name, string $column_name, WP_Parser_Node $node, bool $nullable ): ?array {
+	private function extract_column_statistics_data(
+		string $table_name,
+		string $column_name,
+		WP_Parser_Node $node,
+		bool $nullable
+	): ?array {
 		// Handle inline PRIMARY KEY and UNIQUE constraints.
 		$has_inline_primary_key = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL );
 		$has_inline_unique_key  = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
@@ -1107,6 +1200,35 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
+	 * Extract table constraint data from the "tableConstraintDef" or "columnDefinition" AST node.
+	 *
+	 * @param  WP_Parser_Node $node        The "tableConstraintDef" or "columnDefinition" AST node.
+	 * @param  string         $table_name  The table name.
+	 * @param  string         $column_name The column name.
+	 * @return array                       Table constraint data for the information schema.
+	 */
+	public function extract_table_constraint_data(
+		WP_Parser_Node $node,
+		string $table_name,
+		?string $index_name = null
+	): ?array {
+		$type = $this->get_table_constraint_type( $node );
+		if ( null === $type ) {
+			return null;
+		}
+
+		// Index name always takes precedence over constraint name.
+		$name = $index_name ?? $this->get_table_constraint_name( $node );
+		return array(
+			'table_schema'      => $this->db_name,
+			'table_name'        => $table_name,
+			'constraint_schema' => $this->db_name,
+			'constraint_name'   => $name,
+			'constraint_type'   => $type,
+		);
+	}
+
+	/**
 	 * Update column info from constraint data in the statistics table.
 	 *
 	 * When constraints are added or removed, we need to reflect the changes
@@ -1128,31 +1250,29 @@ class WP_SQLite_Information_Schema_Builder {
 		$columns_table_name    = $this->get_table_name( $table_is_temporary, 'columns' );
 		$statistics_table_name = $this->get_table_name( $table_is_temporary, 'statistics' );
 		$this->connection->query(
-			"
-				WITH s AS (
-					SELECT
-						column_name,
-						CASE
-							WHEN MAX(index_name = 'PRIMARY') THEN 'PRI'
-							WHEN MAX(non_unique = 0 AND seq_in_index = 1) THEN 'UNI'
-							WHEN MAX(seq_in_index = 1) THEN 'MUL'
-							ELSE ''
-						END AS column_key
-					FROM " . $this->connection->quote_identifier( $statistics_table_name ) . '
-					WHERE table_schema = ?
-					AND table_name = ?
-					GROUP BY column_name
-				)
+			'
 				UPDATE ' . $this->connection->quote_identifier( $columns_table_name ) . " AS c
-				SET
-					column_key = s.column_key,
-					is_nullable = IIF(s.column_key = 'PRI', 'NO', c.is_nullable)
-			    FROM s
+				SET (column_key, is_nullable) = (
+					SELECT
+						CASE
+							WHEN MAX(s.index_name = 'PRIMARY') THEN 'PRI'
+							WHEN MAX(s.non_unique = 0 AND s.seq_in_index = 1) THEN 'UNI'
+							WHEN MAX(s.seq_in_index = 1) THEN 'MUL'
+							ELSE ''
+						END,
+						CASE
+							WHEN MAX(s.index_name = 'PRIMARY') THEN 'NO'
+							ELSE c.is_nullable
+						END
+					FROM " . $this->connection->quote_identifier( $statistics_table_name ) . ' AS s
+					WHERE s.table_schema = c.table_schema
+					AND s.table_name = c.table_name
+					AND s.column_name = c.column_name
+				)
 			    WHERE c.table_schema = ?
 			    AND c.table_name = ?
-				AND s.column_name = c.column_name
-			",
-			array( $this->db_name, $table_name, $this->db_name, $table_name )
+			',
+			array( $this->db_name, $table_name )
 		);
 	}
 
@@ -1739,32 +1859,119 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
+	 * Extract table constraint name from the "tableConstraintDef" or "columnDefinition" AST node.
+	 *
+	 * @param  WP_Parser_Node $node The "tableConstraintDef" or "columnDefinition" AST node.
+	 * @return string|null          The table constraint name.
+	 */
+	public function get_table_constraint_name( WP_Parser_Node $node ): ?string {
+		$name_node = $node->get_first_child_node( 'constraintName' );
+		if ( null !== $name_node ) {
+			return $this->get_value( $name_node );
+		}
+
+		// TODO: Handle CHECK/FOREIGN KEY/UNIQUE constraints.
+		return null;
+	}
+
+	/**
+	 * Extract table constraint type from the "tableConstraintDef" or "columnDefinition" AST node.
+	 *
+	 * @param  WP_Parser_Node $node The "tableConstraintDef" or "columnDefinition" AST node.
+	 * @return string|null          The table constraint type as stored in information schema.
+	 */
+	private function get_table_constraint_type( WP_Parser_Node $node ): ?string {
+		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+			return 'PRIMARY KEY';
+		}
+		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+			return 'UNIQUE';
+		}
+		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::FOREIGN_SYMBOL ) ) {
+			return 'FOREIGN KEY';
+		}
+		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::CHECK_SYMBOL ) ) {
+			return 'CHECK';
+		}
+		return null;
+	}
+
+	/**
 	 * Extract index name from the "tableConstraintDef" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "tableConstraintDef" AST node.
-	 * @return string               The index name as stored in information schema.
+	 * @param  WP_Parser_Node $node       The "tableConstraintDef" AST node.
+	 * @param  string         $table_name The table name.
+	 * @return string                     The index name as stored in information schema.
 	 */
-	private function get_index_name( WP_Parser_Node $node ): string {
+	private function get_index_name( WP_Parser_Node $node, string $table_name ): string {
 		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
 			return 'PRIMARY';
 		}
 
+		/*
+		 * Get index name.
+		 *
+		 * When both index and constraint name are defined, the index name will
+		 * be used. E.g., in "CONSTRAINT c UNIQUE u (id)", the name will be "u".
+		 */
 		$name_node = $node->get_first_descendant_node( 'indexName' );
+		if ( null === $name_node && $node->has_child_node( 'constraintName' ) ) {
+			$name_node = $node
+				->get_first_child_node( 'constraintName' )
+				->get_first_child_node( 'identifier' );
+		}
+
 		if ( null === $name_node ) {
 			/*
 			 * In MySQL, the default index name equals the first column name.
-			 * For functional indexes, the string "functional_index" is used.
+			 * If any part is an expression, the name will be "functional_index".
 			 * If the name is already used, we need to append a number.
 			 */
 			$subnode = $node->get_first_child_node( 'keyListVariants' )->get_first_child_node();
-			if ( 'exprWithParentheses' === $subnode->rule_name ) {
+			if ( null !== $subnode->get_first_descendant_node( 'exprWithParentheses' ) ) {
 				$name = 'functional_index';
 			} else {
 				$name = $this->get_value( $subnode->get_first_descendant_node( 'identifier' ) );
 			}
 
-			// @TODO: Check if the name is already used.
-			return $name;
+			// Check if the name is already used.
+			$existing_indices = $this->connection->query(
+				sprintf(
+					"SELECT DISTINCT index_name
+					FROM %s
+					WHERE table_schema = ?
+					AND table_name = ?
+					AND (index_name = ? OR index_name LIKE ? ESCAPE '\\')",
+					$this->connection->quote_identifier(
+						$this->get_table_name(
+							$this->temporary_table_exists( $table_name ),
+							'statistics'
+						)
+					)
+				),
+				array(
+					$this->db_name,
+					$table_name,
+					$name,
+					str_replace( array( '_', '%' ), array( '\\_', '\\%' ), $name ) . '\\_%',
+				)
+			)->fetchAll(
+				PDO::FETCH_COLUMN // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+			);
+
+			// The name is not used - we can use it as-is.
+			if ( count( $existing_indices ) === 0 ) {
+				return $name;
+			}
+
+			// The name is used - find the first unused name.
+			$new_name = $name;
+			$suffix   = 2;
+			while ( in_array( $new_name, $existing_indices, true ) ) {
+				$new_name = $name . '_' . $suffix;
+				$suffix  += 1;
+			}
+			return $new_name;
 		}
 		return $this->get_value( $name_node );
 	}
@@ -1943,6 +2150,19 @@ class WP_SQLite_Information_Schema_Builder {
 		foreach ( $node->get_children() as $child ) {
 			if ( $child instanceof WP_Parser_Node ) {
 				$value = $this->get_value( $child );
+
+				/*
+				 * At the moment, we only support ASCII bytes in all identifiers.
+				 * This is because SQLite doesn't support case-insensitive Unicode
+				 * character matching: https://sqlite.org/faq.html#q18
+				 */
+				if ( 'pureIdentifier' === $child->rule_name ) {
+					for ( $i = 0; $i < strlen( $value ); $i++ ) {
+						if ( ord( $value[ $i ] ) > 127 ) {
+							throw new Exception( 'The SQLite driver only supports ASCII characters in identifiers.' );
+						}
+					}
+				}
 			} else {
 				$value = $child->get_value();
 			}
