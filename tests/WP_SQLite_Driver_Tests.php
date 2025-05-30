@@ -3787,6 +3787,53 @@ QUERY
 		"
 		);
 
+		$result = $this->assertQuery( 'DESCRIBE t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'CURRENT_TIMESTAMP',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'type',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'DEFAULT',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'description',
+					'Type'    => 'varchar(250)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'CURRENT_TIMESTAMP',
+					'Extra'   => 'DEFAULT_GENERATED',
+				),
+				(object) array(
+					'Field'   => 'updated_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'CURRENT_TIMESTAMP',
+					'Extra'   => 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP',
+				),
+			),
+			$result
+		);
+
 		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
 		$this->assertEquals(
 			"CREATE TABLE `t` (\n"
@@ -4379,6 +4426,40 @@ QUERY
 		$this->assertSame( '', $result[0]->value );
 	}
 
+	public function testNonStrictModeWithDefaultCurrentTimestamp(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( 'CREATE TABLE t (id INT, value TIMESTAMP DEFAULT CURRENT_TIMESTAMP)' );
+
+		// INSERT without a value saves CURRENT_TIMESTAMP:
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertRegExp( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $result[0]->value );
+
+		// UPDATE with NULL saves NULL:
+		$this->assertQuery( 'UPDATE t SET value = NULL' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->value );
+	}
+
+	public function testNonStrictModeWithDefaultCurrentTimestampNotNull(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( 'CREATE TABLE t (id INT, value TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)' );
+
+		// INSERT without a value saves CURRENT_TIMESTAMP:
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertRegExp( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $result[0]->value );
+
+		// UPDATE with NULL saves IMPLICIT DEFAULT:
+		$this->assertQuery( 'UPDATE t SET value = NULL' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '0000-00-00 00:00:00', $result[0]->value );
+	}
+
 	public function testNonStrictSqlModeWithNoListedColumns(): void {
 		$this->assertQuery( "SET SESSION sql_mode = ''" );
 
@@ -4541,6 +4622,113 @@ QUERY
 		$this->assertSame( '', $result[0]->name ); // implicit default
 		$this->assertSame( '123', $result[0]->size );
 		$this->assertSame( 'blue', $result[0]->color );
+	}
+
+	public function testNonStrictModeTypeCasting(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				col_int INT,
+				col_float FLOAT,
+				col_double DOUBLE,
+				col_decimal DECIMAL,
+				col_char CHAR(255),
+				col_varchar VARCHAR(255),
+				col_text TEXT,
+				col_bool BOOL,
+				col_bit BIT,
+				col_binary BINARY(255),
+				col_varbinary VARBINARY(255),
+				col_blob BLOB,
+				col_date DATE,
+				col_time TIME,
+				col_datetime DATETIME,
+				col_timestamp TIMESTAMP,
+				col_year YEAR,
+				col_enum ENUM('a', 'b', 'c'),
+				col_set SET('a', 'b', 'c'),
+				col_json JSON
+			)"
+		);
+
+		// Set non-strict mode.
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// INSERT.
+		$this->assertQuery(
+			"INSERT INTO t VALUES ('', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '')"
+		);
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '0', $result[0]->col_int );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[0]->col_float );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[0]->col_double );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[0]->col_decimal );
+		$this->assertSame( '', $result[0]->col_char );
+		$this->assertSame( '', $result[0]->col_varchar );
+		$this->assertSame( '', $result[0]->col_text );
+		$this->assertSame( '0', $result[0]->col_bool );
+		$this->assertSame( '0', $result[0]->col_bit );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? null : '', $result[0]->col_binary );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? null : '', $result[0]->col_varbinary );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? null : '', $result[0]->col_blob );
+		$this->assertSame( '0000-00-00', $result[0]->col_date );
+		$this->assertSame( '00:00:00', $result[0]->col_time );
+		$this->assertSame( '0000-00-00 00:00:00', $result[0]->col_datetime );
+		$this->assertSame( '0000-00-00 00:00:00', $result[0]->col_timestamp );
+		$this->assertSame( '0000', $result[0]->col_year );
+		$this->assertSame( '', $result[0]->col_enum );
+		$this->assertSame( '', $result[0]->col_set );
+		$this->assertSame( '', $result[0]->col_json ); // TODO: This should not be allowed.
+
+		// UPDATE.
+		$this->assertQuery(
+			"UPDATE t SET
+				col_int = '',
+				col_float = '',
+				col_double = '',
+				col_decimal = '',
+				col_char = '',
+				col_varchar = '',
+				col_text = '',
+				col_bool = '',
+				col_bit = '',
+				col_binary = '',
+				col_varbinary = '',
+				col_blob = '',
+				col_date = '',
+				col_time = '',
+				col_datetime = '',
+				col_timestamp = '',
+				col_year = '',
+				col_enum = '',
+				col_set = '',
+				col_json = ''
+			"
+		);
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '0', $result[0]->col_int );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[0]->col_float );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[0]->col_double );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[0]->col_decimal );
+		$this->assertSame( '', $result[0]->col_char );
+		$this->assertSame( '', $result[0]->col_varchar );
+		$this->assertSame( '', $result[0]->col_text );
+		$this->assertSame( '0', $result[0]->col_bool );
+		$this->assertSame( '0', $result[0]->col_bit );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? null : '', $result[0]->col_binary );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? null : '', $result[0]->col_varbinary );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? null : '', $result[0]->col_blob );
+		$this->assertSame( '0000-00-00', $result[0]->col_date );
+		$this->assertSame( '00:00:00', $result[0]->col_time );
+		$this->assertSame( '0000-00-00 00:00:00', $result[0]->col_datetime );
+		$this->assertSame( '0000-00-00 00:00:00', $result[0]->col_timestamp );
+		$this->assertSame( '0000', $result[0]->col_year );
+		$this->assertSame( '', $result[0]->col_enum );
+		$this->assertSame( '', $result[0]->col_set );
+		$this->assertSame( '', $result[0]->col_json ); // TODO: This should not be allowed.
 	}
 
 	public function testSessionSqlModes(): void {

@@ -94,7 +94,7 @@ class WP_SQLite_Driver {
 		WP_MySQL_Lexer::YEAR_SYMBOL               => 'TEXT',
 
 		// Binary data types:
-		WP_MySQL_Lexer::BINARY_SYMBOL             => 'INTEGER',
+		WP_MySQL_Lexer::BINARY_SYMBOL             => 'BLOB',
 		WP_MySQL_Lexer::VARBINARY_SYMBOL          => 'BLOB',
 		WP_MySQL_Lexer::TINYBLOB_SYMBOL           => 'BLOB',
 		WP_MySQL_Lexer::BLOB_SYMBOL               => 'BLOB',
@@ -162,7 +162,7 @@ class WP_SQLite_Driver {
 		'year'               => 'TEXT',
 
 		// Binary data types:
-		'binary'             => 'INTEGER',
+		'binary'             => 'BLOB',
 		'varbinary'          => 'BLOB',
 		'tinyblob'           => 'BLOB',
 		'blob'               => 'BLOB',
@@ -735,7 +735,46 @@ class WP_SQLite_Driver {
 	 */
 	public function begin_transaction(): void {
 		if ( 0 === $this->transaction_level ) {
-			$this->execute_sqlite_query( 'BEGIN' );
+			/*
+			 * When we're executing a statement that will write to the database,
+			 * we need to use "BEGIN IMMEDIATE" to open a write transaction.
+			 *
+			 * This is needed to avoid the "database is locked" error (SQLITE_BUSY)
+			 * when SQLite can't upgrade a read transaction to a write transaction,
+			 * because another connection is modifying the database.
+			 *
+			 * From the SQLite documentation:
+			 *
+			 *   ## Read transactions versus write transactions
+			 *
+			 *   If a write statement occurs while a read transaction is active,
+			 *   then the read transaction is upgraded to a write transaction if
+			 *   possible. If some other database connection has already modified
+			 *   the database or is already in the process of modifying the database,
+			 *   then upgrading to a write transaction is not possible and the write
+			 *   statement will fail with SQLITE_BUSY.
+			 *
+			 *   ## DEFERRED, IMMEDIATE, and EXCLUSIVE transactions
+			 *
+			 *   Transactions can be DEFERRED, IMMEDIATE, or EXCLUSIVE. The default
+			 *   transaction behavior is DEFERRED.
+			 *
+			 *   DEFERRED means that the transaction does not actually start until
+			 *   the database is first accessed.
+			 *
+			 *   IMMEDIATE causes the database connection to start a new write
+			 *   immediately, without waiting for a write statement. The BEGIN
+			 *   IMMEDIATE might fail with SQLITE_BUSY if another write transaction
+			 *   is already active on another database connection.
+			 *
+			 * See:
+			 *   - https://www.sqlite.org/lang_transaction.html
+			 *   - https://www.sqlite.org/rescode.html#busy
+			 *
+			 * For better performance, we could also consider opening the write
+			 * transaction later in the session - just before the first write.
+			 */
+			$this->execute_sqlite_query( $this->is_readonly ? 'BEGIN' : 'BEGIN IMMEDIATE' );
 		} else {
 			$this->execute_sqlite_query( 'SAVEPOINT LEVEL' . $this->transaction_level );
 		}
@@ -2973,7 +3012,25 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 3. Get the list of column names returned by VALUES or SELECT clause.
+		// 3. Filter out omitted columns that will get a value from the SQLite engine.
+		//    That is, nullable columns, columns with defaults, and generated columns.
+		$columns = array_values(
+			array_filter(
+				$columns,
+				function ( $column ) use ( $insert_list ) {
+					$is_omitted = ! in_array( $column['COLUMN_NAME'], $insert_list, true );
+					if ( ! $is_omitted ) {
+						return true;
+					}
+					$is_nullable  = 'YES' === $column['IS_NULLABLE'];
+					$has_default  = $column['COLUMN_DEFAULT'];
+					$is_generated = str_contains( $column['EXTRA'], 'auto_increment' );
+					return ! ( $is_nullable || $has_default || $is_generated );
+				}
+			)
+		);
+
+		// 4. Get the list of column names returned by VALUES or SELECT clause.
 		$select_list = array();
 		if ( 'insertQueryExpression' === $node->rule_name ) {
 			// When inserting from a SELECT query, we don't know the column names.
@@ -2994,7 +3051,7 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 4. Compose a new INSERT field list with all columns from the table.
+		// 5. Compose a new INSERT field list with all columns from the table.
 		$fragment = '(';
 		foreach ( $columns as $i => $column ) {
 			$fragment .= $i > 0 ? ', ' : '';
@@ -3002,25 +3059,29 @@ class WP_SQLite_Driver {
 		}
 		$fragment .= ')';
 
-		// 5. Compose a wrapper SELECT statement emulating IMPLICIT DEFAULT values.
+		// 6. Compose a wrapper SELECT statement emulating IMPLICIT DEFAULT values.
 		$fragment .= ' SELECT ';
 		foreach ( $columns as $i => $column ) {
 			$is_omitted = ! in_array( $column['COLUMN_NAME'], $insert_list, true );
 			$fragment  .= $i > 0 ? ', ' : '';
 			if ( $is_omitted ) {
-				// When a column value is omitted from the INSERT statement, we
-				// need to use the DEFAULT value or the IMPLICIT DEFAULT value.
-				$is_auto_inc = str_contains( $column['EXTRA'], 'auto_increment' );
-				$is_nullable = 'YES' === $column['IS_NULLABLE'];
-				$default     = $column['COLUMN_DEFAULT'];
-				if ( null === $default && ! $is_nullable && ! $is_auto_inc ) {
-					$default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
-				}
+				/*
+				 * When a column is omitted from the INSERT list, we need to use
+				 * an IMPLICIT DEFAULT value. Note that at this point, all omitted
+				 * columns that will not get an implicit default are filtered out.
+				 * (That is, nullable, generated, and columns with true defaults.)
+				 */
+				$default   = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
 				$fragment .= null === $default ? 'NULL' : $this->connection->quote( $default );
 			} else {
-				// When a column value is included, we can use it without change.
-				$position  = array_search( $column['COLUMN_NAME'], $insert_list, true );
-				$fragment .= $this->quote_sqlite_identifier( $select_list[ $position ] );
+				// When a column value is included, we need to apply type casting.
+				$position   = array_search( $column['COLUMN_NAME'], $insert_list, true );
+				$identifier = $this->quote_sqlite_identifier( $select_list[ $position ] );
+				$fragment  .= sprintf(
+					'%s AS %s',
+					$this->cast_value_in_non_strict_mode( $column['DATA_TYPE'], $identifier ),
+					$identifier
+				);
 			}
 		}
 
@@ -3095,6 +3156,9 @@ class WP_SQLite_Driver {
 				$value = $this->translate( $expr );
 			}
 
+			// Apply type casting.
+			$value = $this->cast_value_in_non_strict_mode( $data_type, $value );
+
 			// If the column is NOT NULL, a NULL value resolves to implicit default.
 			$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
 			if ( ! $is_nullable && null !== $implicit_default ) {
@@ -3108,6 +3172,75 @@ class WP_SQLite_Driver {
 			$fragment .= $value;
 		}
 		return $fragment;
+	}
+
+	/**
+	 * Emulate MySQL type casting for INSERT or UPDATE value in non-strict mode.
+	 *
+	 * @param  string $mysql_data_type  The MySQL data type.
+	 * @param  string $translated_value The original translated value.
+	 * @return string                   The translated value.
+	 */
+	private function cast_value_in_non_strict_mode(
+		string $mysql_data_type,
+		string $translated_value
+	): string {
+		$sqlite_data_type = self::DATA_TYPE_STRING_MAP[ $mysql_data_type ];
+
+		// Get and quote the IMPLICIT DEFAULT value.
+		$implicit_default        = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $mysql_data_type ] ?? null;
+		$quoted_implicit_default = null === $implicit_default
+			? 'NULL'
+			: $this->connection->quote( $implicit_default );
+
+		/*
+		 * In MySQL, when saving a value via INSERT or UPDATE in non-strict mode,
+		 *   1. MySQL attempts to cast the value to the target column data type.
+		 *   2. When casting can't be done, MySQL saves an IMPLICIT DEFAULT.
+		 */
+		switch ( $mysql_data_type ) {
+			case 'date':
+			case 'time':
+			case 'datetime':
+			case 'timestamp':
+			case 'year':
+				/*
+				 * MySQL supports date and time components without a zero padding,
+				 * but that doesn't work with date and time functions in SQLite.
+				 * E.g.: "2025-3-7 9:5:2" is a valid datetime/timestamp value in
+				 * in MySQL, but SQLite requires it to be "2025-03-07 09:05:02".
+				 *
+				 * A solution to this would need to be done on the SQL level to
+				 * address computed values, and it should be done for the strict
+				 * mode as well. This may require a user-defined function.
+				 *
+				 * TODO: Handle zero padding for date and time functions, while
+				 *       supporting both strict and non-strict modes.
+				 */
+
+				if ( 'date' === $mysql_data_type ) {
+					$function_call = sprintf( 'DATE(%s)', $translated_value );
+				} elseif ( 'time' === $mysql_data_type ) {
+					$function_call = sprintf( 'TIME(%s)', $translated_value );
+				} elseif ( 'datetime' === $mysql_data_type || 'timestamp' === $mysql_data_type ) {
+					$function_call = sprintf( 'DATETIME(%s)', $translated_value );
+				} elseif ( 'year' === $mysql_data_type ) {
+					$function_call = sprintf( "STRFTIME('%%Y', %s)", $translated_value );
+				}
+
+				// When the function call evaluates to NULL (invalid date/time),
+				// we need to fallback to the IMPLICIT DEFAULT value.
+				return sprintf(
+					'IIF(%s IS NULL, NULL, COALESCE(%s, %s))',
+					$translated_value,
+					$function_call,
+					$quoted_implicit_default
+				);
+			default:
+				// For all other data types, use SQLite-native CAST expression.
+				$mysql_data_type = strtolower( $mysql_data_type );
+				return sprintf( 'CAST(%s AS %s)', $translated_value, $sqlite_data_type );
+		}
 	}
 
 	/**
@@ -3204,6 +3337,10 @@ class WP_SQLite_Driver {
 			 *  1. Use "INT PRIMARY KEY" when we have a single-column integer
 			 *     PRIMARY KEY without AUTOINCREMENT (to avoid the ROWID alias).
 			 *  2. Use "INTEGER PRIMARY KEY" otherwise.
+			 *
+			 * In SQLite, "AUTOINCREMENT" is only allowed on "INTEGER PRIMARY KEY",
+			 * and setting it changes the automatic ROWID assignment algorithm to
+			 * prevent the reuse of ROWIDs. Using "INT PRIMARY KEY" is not allowed.
 			 *
 			 * See:
 			 *   - https://www.sqlite.org/autoinc.html
