@@ -5375,4 +5375,143 @@ QUERY
 		$this->expectExceptionMessage( 'The SQLite driver only supports ASCII characters in identifiers.' );
 		$this->assertQuery( 'CREATE TABLE t (`ńôñ-ášçíì` INT)' );
 	}
+
+	public function testCreateIndex(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value TEXT)' );
+		$this->assertQuery( 'CREATE INDEX idx_value ON t (value(16))' );
+
+		// Verify that the index was saved in the information schema.
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			(object) array(
+				'Table'         => 't',
+				'Non_unique'    => '1',
+				'Key_name'      => 'idx_value',
+				'Seq_in_index'  => '1',
+				'Column_name'   => 'value',
+				'Collation'     => 'A',
+				'Cardinality'   => '0',
+				'Sub_part'      => '16',
+				'Packed'        => null,
+				'Null'          => 'YES',
+				'Index_type'    => 'BTREE',
+				'Comment'       => '',
+				'Index_comment' => '',
+				'Visible'       => 'YES',
+				'Expression'    => null,
+			),
+			$result[0]
+		);
+
+		// Verify that the index exists in the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => 't__idx_value',
+				'unique'  => '0',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
+	}
+
+	public function testCreateUniqueIndex(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value TEXT)' );
+		$this->assertQuery( 'CREATE UNIQUE INDEX idx_value ON t (value(16))' );
+
+		// Verify that the index was saved in the information schema.
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			(object) array(
+				'Table'         => 't',
+				'Non_unique'    => '0',
+				'Key_name'      => 'idx_value',
+				'Seq_in_index'  => '1',
+				'Column_name'   => 'value',
+				'Collation'     => 'A',
+				'Cardinality'   => '0',
+				'Sub_part'      => '16',
+				'Packed'        => null,
+				'Null'          => 'YES',
+				'Index_type'    => 'BTREE',
+				'Comment'       => '',
+				'Index_comment' => '',
+				'Visible'       => 'YES',
+				'Expression'    => null,
+			),
+			$result[0]
+		);
+
+		// Verify that the UNIQUE constraint was saved in the information schema.
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.table_constraints WHERE table_name = "t"' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			(object) array(
+				'CONSTRAINT_CATALOG' => 'def',
+				'CONSTRAINT_SCHEMA'  => 'wp',
+				'CONSTRAINT_NAME'    => 'idx_value',
+				'TABLE_SCHEMA'       => 'wp',
+				'TABLE_NAME'         => 't',
+				'CONSTRAINT_TYPE'    => 'UNIQUE',
+				'ENFORCED'           => 'YES',
+			),
+			$result[0]
+		);
+
+		// Verify that the index exists in the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => 't__idx_value',
+				'unique'  => '1',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
+	}
+
+	public function testCreateFulltextIndex(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value TEXT)' );
+		$this->assertQuery( 'CREATE FULLTEXT INDEX idx_value ON t (value)' );
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'FULLTEXT', $result[0]->Index_type );
+	}
+
+	public function testCreateSpatialIndex(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value POINT NOT NULL)' );
+		$this->assertQuery( 'CREATE SPATIAL INDEX idx_value ON t (value)' );
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'SPATIAL', $result[0]->Index_type );
+	}
+
+	public function testCreateIndexWithComment(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value INT)' );
+		$this->assertQuery( 'CREATE INDEX idx_value ON t (value) COMMENT "Test comment"' );
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'Test comment', $result[0]->Index_comment );
+	}
+
+	public function testCreateIndexWithDuplicateName(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, val1 INT, val2 INT)' );
+		$this->assertQuery( 'CREATE INDEX idx_value ON t (val1)' );
+
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "1061 Duplicate key name 'idx_value'" );
+
+		$this->assertQuery( 'CREATE INDEX idx_value ON t (val2)' );
+	}
 }
