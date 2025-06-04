@@ -912,6 +912,9 @@ class WP_SQLite_Driver {
 					case 'dropTable':
 						$this->execute_drop_table_statement( $node );
 						break;
+					case 'dropIndex':
+						$this->execute_drop_index_statement( $node );
+						break;
 					default:
 						$query = $this->translate( $node );
 						$this->execute_sqlite_query( $query );
@@ -1507,6 +1510,32 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $sqlite_index_name ),
 				$this->translate( $target->get_first_child_node( 'tableRef' ) ),
 				implode( ', ', $key_parts )
+			)
+		);
+	}
+
+	/**
+	 * Translate and execute a MySQL DROP INDEX statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "dropStatement" AST node with "dropIndex" child.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_drop_index_statement( WP_Parser_Node $node ): void {
+		$this->information_schema_builder->record_drop_index( $node );
+
+		$drop_index = $node->get_first_child_node( 'dropIndex' );
+		$table_name = $this->unquote_sqlite_identifier(
+			$this->translate( $drop_index->get_first_child_node( 'tableRef' ) )
+		);
+		$index_name = $this->unquote_sqlite_identifier(
+			$this->translate( $drop_index->get_first_child_node( 'indexRef' ) )
+		);
+
+		$sqlite_index_name = $this->get_sqlite_index_name( $table_name, $index_name );
+		$this->execute_sqlite_query(
+			sprintf(
+				'DROP INDEX %s',
+				$this->quote_sqlite_identifier( $sqlite_index_name )
 			)
 		);
 	}

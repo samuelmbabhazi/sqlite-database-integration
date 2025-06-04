@@ -5514,4 +5514,17 @@ QUERY
 
 		$this->assertQuery( 'CREATE INDEX idx_value ON t (val2)' );
 	}
+
+	public function testDropIndex(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, val_unique INT UNIQUE, val_index INT)' );
+		$this->assertQuery( 'CREATE INDEX idx_val_index ON t (val_index)' );
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 3, $result );
+		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
+		$this->assertEquals( 'val_unique', $result[1]->Key_name );
+		$this->assertEquals( 'idx_val_index', $result[2]->Key_name );
+
+		$this->assertQuery( 'DROP INDEX idx_val_index ON t' );
+	}
 }

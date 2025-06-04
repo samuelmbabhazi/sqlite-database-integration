@@ -584,7 +584,7 @@ class WP_SQLite_Information_Schema_Builder {
 				// DROP INDEX
 				if ( $action->has_child_node( 'keyOrIndex' ) ) {
 					$name = $this->get_value( $action->get_first_child_node( 'indexRef' ) );
-					$this->record_drop_index( $table_is_temporary, $table_name, $name );
+					$this->record_drop_index_data( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 			}
@@ -651,6 +651,19 @@ class WP_SQLite_Information_Schema_Builder {
 
 		$table_is_temporary = $this->temporary_table_exists( $table_name );
 		$this->record_add_index( $table_is_temporary, $table_name, $create_index );
+	}
+
+	/**
+	 * Analyze DROP INDEX definition and record data in the information schema.
+	 *
+	 * @param WP_Parser_Node $node The "dropStatement" AST node with "dropIndex" child.
+	 */
+	public function record_drop_index( WP_Parser_Node $node ): void {
+		$drop_index         = $node->get_first_child_node( 'dropIndex' );
+		$table_name         = $this->get_value( $drop_index->get_first_child_node( 'tableRef' ) );
+		$index_name         = $this->get_value( $drop_index->get_first_child_node( 'indexRef' ) );
+		$table_is_temporary = $this->temporary_table_exists( $table_name );
+		$this->record_drop_index_data( $table_is_temporary, $table_name, $index_name );
 	}
 
 	/**
@@ -1006,7 +1019,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param string $table_name         The table name.
 	 * @param string $index_name         The index name.
 	 */
-	private function record_drop_index(
+	private function record_drop_index_data(
 		bool $table_is_temporary,
 		string $table_name,
 		string $index_name
