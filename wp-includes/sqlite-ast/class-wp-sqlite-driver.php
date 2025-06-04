@@ -3986,6 +3986,14 @@ class WP_SQLite_Driver {
 					),
 					'42S21'
 				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_KEY_COLUMN_NOT_FOUND:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42000]: Syntax error or access violation: 1072 Key column '%s' doesn't exist in table",
+						$e->get_data()['column_name']
+					),
+					'42000'
+				);
 			default:
 				return $e;
 		}

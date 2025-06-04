@@ -1299,6 +1299,12 @@ class WP_SQLite_Information_Schema_Builder {
 		foreach ( $key_parts as $i => $key_part ) {
 			$column_name = $key_part_column_names[ $i ];
 			$collation   = $this->get_index_column_collation( $key_part, $index_type );
+			$column_info = $column_info_map[ $column_name ] ?? null;
+
+			if ( null === $column_info ) {
+				throw WP_SQLite_Information_Schema_Exception::key_column_not_found( $column_name );
+			}
+
 			if (
 				'PRIMARY' === $index_name
 				|| 'NO' === $column_info_map[ $column_name ]['IS_NULLABLE']

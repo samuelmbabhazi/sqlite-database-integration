@@ -5515,6 +5515,13 @@ QUERY
 		$this->assertQuery( 'CREATE INDEX idx_value ON t (val2)' );
 	}
 
+	public function testCreateIndexOnNonExistentColumn(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "SQLSTATE[42000]: Syntax error or access violation: 1072 Key column 'val' doesn't exist in table" );
+		$this->assertQuery( 'CREATE INDEX idx_value ON t (val)' );
+	}
+
 	public function testDropIndex(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, val_unique INT UNIQUE, val_index INT)' );
 		$this->assertQuery( 'CREATE INDEX idx_val_index ON t (val_index)' );

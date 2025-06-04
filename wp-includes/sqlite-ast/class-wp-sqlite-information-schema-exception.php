@@ -11,6 +11,7 @@ class WP_SQLite_Information_Schema_Exception extends Exception {
 	const TYPE_DUPLICATE_TABLE_NAME  = 'duplicate-table-name';
 	const TYPE_DUPLICATE_COLUMN_NAME = 'duplicate-column-name';
 	const TYPE_DUPLICATE_KEY_NAME    = 'duplicate-key-name';
+	const TYPE_KEY_COLUMN_NOT_FOUND  = 'key-column-not-found';
 
 	/**
 	 * The exception type.
@@ -102,6 +103,14 @@ class WP_SQLite_Information_Schema_Exception extends Exception {
 			self::TYPE_DUPLICATE_KEY_NAME,
 			sprintf( "Key '%s' already exists.", $key_name ),
 			array( 'key_name' => $key_name )
+		);
+	}
+
+	public static function key_column_not_found( string $column_name ): WP_SQLite_Information_Schema_Exception {
+		return new self(
+			self::TYPE_KEY_COLUMN_NOT_FOUND,
+			sprintf( "Key column '%s' doesn't exist in table.", $column_name ),
+			array( 'column_name' => $column_name )
 		);
 	}
 }
