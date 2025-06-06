@@ -5577,18 +5577,48 @@ QUERY
 		$this->assertQuery( 'CREATE TABLE t (id INT, value TEXT)' );
 		$this->assertQuery( 'CREATE FULLTEXT INDEX idx_value ON t (value)' );
 
+		// Verify that the index was saved in the information schema.
 		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
 		$this->assertCount( 1, $result );
 		$this->assertEquals( 'FULLTEXT', $result[0]->Index_type );
+
+		// Verify that the index exists in the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => 't__idx_value',
+				'unique'  => '0',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
 	}
 
 	public function testCreateSpatialIndex(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT, value POINT NOT NULL)' );
 		$this->assertQuery( 'CREATE SPATIAL INDEX idx_value ON t (value)' );
 
+		// Verify that the index was saved in the information schema.
 		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
 		$this->assertCount( 1, $result );
 		$this->assertEquals( 'SPATIAL', $result[0]->Index_type );
+
+		// Verify that the index exists in the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => 't__idx_value',
+				'unique'  => '0',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
 	}
 
 	public function testCreateIndexWithOrder(): void {
@@ -5639,9 +5669,24 @@ QUERY
 		$this->assertQuery( 'CREATE TABLE t (id INT, value INT)' );
 		$this->assertQuery( 'CREATE INDEX idx_value ON t (value) COMMENT "Test comment"' );
 
+		// Verify that the index was saved in the information schema.
 		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
 		$this->assertCount( 1, $result );
 		$this->assertEquals( 'Test comment', $result[0]->Index_comment );
+
+		// Verify that the index exists in the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => 't__idx_value',
+				'unique'  => '0',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
 	}
 
 	public function testCreateIndexWithDuplicateName(): void {
@@ -5656,8 +5701,10 @@ QUERY
 
 	public function testCreateIndexOnNonExistentColumn(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
 		$this->expectException( WP_SQLite_Driver_Exception::class );
 		$this->expectExceptionMessage( "SQLSTATE[42000]: Syntax error or access violation: 1072 Key column 'val' doesn't exist in table" );
+
 		$this->assertQuery( 'CREATE INDEX idx_value ON t (val)' );
 	}
 
