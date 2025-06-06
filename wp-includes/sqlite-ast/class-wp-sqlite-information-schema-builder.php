@@ -493,9 +493,9 @@ class WP_SQLite_Information_Schema_Builder {
 			$column_position += 1;
 		}
 
-		// 3. Constraints.
+		// 3. Constraints and indexes.
 		foreach ( $node->get_descendant_nodes( 'tableConstraintDef' ) as $constraint_node ) {
-			$this->record_add_constraint( $table_is_temporary, $table_name, $constraint_node );
+			$this->record_add_constraint_or_index( $table_is_temporary, $table_name, $constraint_node );
 		}
 	}
 
@@ -535,10 +535,10 @@ class WP_SQLite_Information_Schema_Builder {
 					continue;
 				}
 
-				// ADD CONSTRAINT.
+				// ADD constraint or index.
 				$constraint = $action->get_first_descendant_node( 'tableConstraintDef' );
 				if ( null !== $constraint ) {
-					$this->record_add_constraint( $table_is_temporary, $table_name, $constraint );
+					$this->record_add_constraint_or_index( $table_is_temporary, $table_name, $constraint );
 					continue;
 				}
 
@@ -584,7 +584,7 @@ class WP_SQLite_Information_Schema_Builder {
 				// DROP INDEX
 				if ( $action->has_child_node( 'keyOrIndex' ) ) {
 					$name = $this->get_value( $action->get_first_child_node( 'indexRef' ) );
-					$this->record_drop_index( $table_is_temporary, $table_name, $name );
+					$this->record_drop_index_data( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 			}
@@ -637,6 +637,33 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		// @TODO: RESTRICT vs. CASCADE
+	}
+
+	/**
+	 * Analyze CREATE INDEX definition and record data in the information schema.
+	 *
+	 * @param WP_Parser_Node $node The "createStatement" AST node with "createIndex" child.
+	 */
+	public function record_create_index( WP_Parser_Node $node ): void {
+		$create_index = $node->get_first_child_node( 'createIndex' );
+		$target       = $create_index->get_first_child_node( 'createIndexTarget' );
+		$table_name   = $this->get_value( $target->get_first_child_node( 'tableRef' ) );
+
+		$table_is_temporary = $this->temporary_table_exists( $table_name );
+		$this->record_add_index( $table_is_temporary, $table_name, $create_index );
+	}
+
+	/**
+	 * Analyze DROP INDEX definition and record data in the information schema.
+	 *
+	 * @param WP_Parser_Node $node The "dropStatement" AST node with "dropIndex" child.
+	 */
+	public function record_drop_index( WP_Parser_Node $node ): void {
+		$drop_index         = $node->get_first_child_node( 'dropIndex' );
+		$table_name         = $this->get_value( $drop_index->get_first_child_node( 'tableRef' ) );
+		$index_name         = $this->get_value( $drop_index->get_first_child_node( 'indexRef' ) );
+		$table_is_temporary = $this->temporary_table_exists( $table_name );
+		$this->record_drop_index_data( $table_is_temporary, $table_name, $index_name );
 	}
 
 	/**
@@ -910,13 +937,89 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
+	 * Analyze ADD "tableConstraintDef" and record data in the information schema.
+	 *
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param WP_Parser_Node $node               The "tableConstraintDef" AST node.
+	 */
+	private function record_add_constraint_or_index(
+		bool $table_is_temporary,
+		string $table_name,
+		WP_Parser_Node $node
+	): void {
+		$child                = $node->get_first_child();
+		$first_child_token_id = $child instanceof WP_MySQL_Token ? $child->id : null;
+		if (
+			WP_MySQL_Lexer::KEY_SYMBOL === $first_child_token_id
+			|| WP_MySQL_Lexer::INDEX_SYMBOL === $first_child_token_id
+			|| WP_MySQL_Lexer::FULLTEXT_SYMBOL === $first_child_token_id
+			|| WP_MySQL_Lexer::SPATIAL_SYMBOL === $first_child_token_id
+		) {
+			$this->record_add_index( $table_is_temporary, $table_name, $node );
+		} else {
+			$this->record_add_constraint( $table_is_temporary, $table_name, $node );
+		}
+	}
+
+	/**
+	 * Analyze index definition and record data in the information schema.
+	 *
+	 * This serves both "ALTER TABLE ... ADD ..." and "CREATE INDEX" statements.
+	 *
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param WP_Parser_Node $node               The "tableConstraintDef" or "createIndex" AST node.
+	 */
+	private function record_add_index(
+		bool $table_is_temporary,
+		string $table_name,
+		WP_Parser_Node $node
+	): void {
+		$statistics_data = $this->extract_index_statistics_data( $table_is_temporary, $table_name, $node );
+		$index_name      = $statistics_data[0]['index_name'];
+		foreach ( $statistics_data as $index_data ) {
+			try {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'statistics' ),
+					$index_data
+				);
+			} catch ( PDOException $e ) {
+				if ( '23000' === $e->getCode() ) {
+					throw WP_SQLite_Information_Schema_Exception::duplicate_key_name( $index_name );
+				}
+				throw $e;
+			}
+		}
+
+		// Sync column info from index data.
+		$this->sync_column_key_info( $table_is_temporary, $table_name );
+
+		// For UNIQUE index, save also constraint data.
+		if ( $node->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+			$constraint_data = $this->extract_table_constraint_data(
+				$node,
+				$table_name,
+				$index_name
+			);
+
+			if ( null !== $constraint_data ) {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+					$constraint_data
+				);
+			}
+		}
+	}
+
+	/**
 	 * Record DROP INDEX data in the information schema.
 	 *
 	 * @param bool   $table_is_temporary Whether the table is temporary.
 	 * @param string $table_name         The table name.
 	 * @param string $index_name         The index name.
 	 */
-	private function record_drop_index(
+	private function record_drop_index_data(
 		bool $table_is_temporary,
 		string $table_name,
 		string $index_name
@@ -979,6 +1082,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$keyword = $keyword->get_first_child_token();
 		}
 
+		// FOREIGN KEY and CHECK constraints are not supported yet.
 		if (
 			WP_MySQL_Lexer::FOREIGN_SYMBOL === $keyword->id
 			|| WP_MySQL_Lexer::CHECK_SYMBOL === $keyword->id
@@ -986,109 +1090,31 @@ class WP_SQLite_Information_Schema_Builder {
 			throw new \Exception( 'FOREIGN KEY and CHECK constraints are not supported yet.' );
 		}
 
-		// Get key parts.
-		$key_list = $node->get_first_child_node( 'keyListVariants' )->get_first_child();
-		if ( 'keyListWithExpression' === $key_list->rule_name ) {
-			$key_parts = array();
-			foreach ( $key_list->get_descendant_nodes( 'keyPartOrExpression' ) as $key_part ) {
-				$key_parts[] = $key_part->get_first_child();
-			}
-		} else {
-			$key_parts = $key_list->get_descendant_nodes( 'keyPart' );
-		}
-
-		// Get index column names.
-		$key_part_column_names = array();
-		foreach ( $key_parts as $key_part ) {
-			$key_part_column_names[] = $this->get_index_column_name( $key_part );
-		}
-
-		// Fetch column info.
-		$column_names = array_filter( $key_part_column_names );
-		if ( count( $column_names ) > 0 ) {
-			$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
-			$column_info        = $this->connection->query(
-				'
-					SELECT column_name, data_type, is_nullable, character_maximum_length
-					FROM ' . $this->connection->quote_identifier( $columns_table_name ) . '
-					WHERE table_schema = ?
-					AND table_name = ?
-					AND column_name IN (' . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
-				',
-				array_merge( array( $this->db_name, $table_name ), $column_names )
-			)->fetchAll(
-				PDO::FETCH_ASSOC // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
-			);
-		} else {
-			$column_info = array();
-		}
-
-		$column_info_map = array_combine(
-			array_column( $column_info, 'COLUMN_NAME' ),
-			$column_info
-		);
-
-		// Get first index column data type (needed for index type).
-		$first_column_name  = $this->get_index_column_name( $key_parts[0] );
-		$first_column_type  = $column_info_map[ $first_column_name ]['DATA_TYPE'] ?? null;
-		$has_spatial_column = null !== $first_column_type && $this->is_spatial_data_type( $first_column_type );
-
-		$non_unique    = $this->get_index_non_unique( $keyword );
-		$index_name    = $this->get_index_name( $node, $table_name );
-		$index_type    = $this->get_index_type( $node, $keyword, $has_spatial_column );
-		$index_comment = $this->get_index_comment( $node );
-		$seq_in_index  = 1;
-		foreach ( $key_parts as $i => $key_part ) {
-			$column_name = $key_part_column_names[ $i ];
-			$collation   = $this->get_index_column_collation( $key_part, $index_type );
-			if (
-				'PRIMARY' === $index_name
-				|| 'NO' === $column_info_map[ $column_name ]['IS_NULLABLE']
-			) {
-				$nullable = '';
-			} else {
-				$nullable = 'YES';
-			}
-
-			$sub_part = $this->get_index_column_sub_part(
-				$key_part,
-				$column_info_map[ $column_name ]['CHARACTER_MAXIMUM_LENGTH'],
-				$has_spatial_column
-			);
-
-			$index_data = array(
-				'table_schema'  => $this->db_name,
-				'table_name'    => $table_name,
-				'non_unique'    => $non_unique,
-				'index_schema'  => $this->db_name,
-				'index_name'    => $index_name,
-				'seq_in_index'  => $seq_in_index,
-				'column_name'   => $column_name,
-				'collation'     => $collation,
-				'cardinality'   => 0, // not implemented
-				'sub_part'      => $sub_part,
-				'packed'        => null, // not implemented
-				'nullable'      => $nullable,
-				'index_type'    => $index_type,
-				'comment'       => '', // not implemented
-				'index_comment' => $index_comment,
-				'is_visible'    => 'YES', // @TODO: Save actual visibility value.
-				'expression'    => null, // @TODO
-			);
-
-			try {
-				$this->insert_values(
-					$this->get_table_name( $table_is_temporary, 'statistics' ),
-					$index_data
-				);
-			} catch ( PDOException $e ) {
-				if ( '23000' === $e->getCode() ) {
-					throw WP_SQLite_Information_Schema_Exception::duplicate_key_name( $index_name );
+		// PRIMARY KEY and UNIQUE require an index.
+		if (
+			WP_MySQL_Lexer::PRIMARY_SYMBOL === $keyword->id
+			|| WP_MySQL_Lexer::UNIQUE_SYMBOL === $keyword->id
+		) {
+			$statistics_data = $this->extract_index_statistics_data( $table_is_temporary, $table_name, $node );
+			$index_name      = $statistics_data[0]['index_name'];
+			foreach ( $statistics_data as $index_data ) {
+				try {
+					$this->insert_values(
+						$this->get_table_name( $table_is_temporary, 'statistics' ),
+						$index_data
+					);
+				} catch ( PDOException $e ) {
+					if ( '23000' === $e->getCode() ) {
+						throw WP_SQLite_Information_Schema_Exception::duplicate_key_name( $index_name );
+					}
+					throw $e;
 				}
-				throw $e;
 			}
 
-			$seq_in_index += 1;
+			// Sync column info from index data.
+			$this->sync_column_key_info( $table_is_temporary, $table_name );
+		} else {
+			$index_name = null;
 		}
 
 		// Save table constraint data.
@@ -1104,8 +1130,6 @@ class WP_SQLite_Information_Schema_Builder {
 				$constraint_data
 			);
 		}
-
-		$this->sync_column_key_info( $table_is_temporary, $table_name );
 	}
 
 	/**
@@ -1197,6 +1221,128 @@ class WP_SQLite_Information_Schema_Builder {
 			);
 		}
 		return null;
+	}
+
+	/**
+	 * Analyze "tableConstraintDef" or "createIndex" AST node and extract index data.
+	 *
+	 * @param  bool           $table_is_temporary Whether the table is temporary.
+	 * @param  string         $table_name         The table name.
+	 * @param  WP_Parser_Node $node               The "tableConstraintDef" or "createIndex" AST node.
+	 * @return array                              Index statistics data for the information schema.
+	 */
+	private function extract_index_statistics_data(
+		bool $table_is_temporary,
+		string $table_name,
+		WP_Parser_Node $node
+	): array {
+		// Get first keyword.
+		$children = $node->get_children();
+		$keyword  = $children[0] instanceof WP_MySQL_Token ? $children[0] : $children[1];
+		if ( ! $keyword instanceof WP_MySQL_Token ) {
+			$keyword = $keyword->get_first_child_token();
+		}
+
+		// Get key parts.
+		$key_list = $node->get_first_descendant_node( 'keyListVariants' )->get_first_child();
+		if ( 'keyListWithExpression' === $key_list->rule_name ) {
+			$key_parts = array();
+			foreach ( $key_list->get_descendant_nodes( 'keyPartOrExpression' ) as $key_part ) {
+				$key_parts[] = $key_part->get_first_child();
+			}
+		} else {
+			$key_parts = $key_list->get_descendant_nodes( 'keyPart' );
+		}
+
+		// Get index column names.
+		$key_part_column_names = array();
+		foreach ( $key_parts as $key_part ) {
+			$key_part_column_names[] = $this->get_index_column_name( $key_part );
+		}
+
+		// Fetch column info.
+		$column_names = array_filter( $key_part_column_names );
+		if ( count( $column_names ) > 0 ) {
+			$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
+			$column_info        = $this->connection->query(
+				'
+					SELECT column_name, data_type, is_nullable, character_maximum_length
+					FROM ' . $this->connection->quote_identifier( $columns_table_name ) . '
+					WHERE table_schema = ?
+					AND table_name = ?
+					AND column_name IN (' . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
+				',
+				array_merge( array( $this->db_name, $table_name ), $column_names )
+			)->fetchAll(
+				PDO::FETCH_ASSOC // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+			);
+		} else {
+			$column_info = array();
+		}
+
+		$column_info_map = array_combine(
+			array_column( $column_info, 'COLUMN_NAME' ),
+			$column_info
+		);
+
+		// Get first index column data type (needed for index type).
+		$first_column_name  = $this->get_index_column_name( $key_parts[0] );
+		$first_column_type  = $column_info_map[ $first_column_name ]['DATA_TYPE'] ?? null;
+		$has_spatial_column = null !== $first_column_type && $this->is_spatial_data_type( $first_column_type );
+
+		$non_unique      = $this->get_index_non_unique( $keyword );
+		$index_name      = $this->get_index_name( $node, $table_name );
+		$index_type      = $this->get_index_type( $node, $keyword, $has_spatial_column );
+		$index_comment   = $this->get_index_comment( $node );
+		$seq_in_index    = 1;
+		$statistics_data = array();
+		foreach ( $key_parts as $i => $key_part ) {
+			$column_name = $key_part_column_names[ $i ];
+			$collation   = $this->get_index_column_collation( $key_part, $index_type );
+			$column_info = $column_info_map[ $column_name ] ?? null;
+
+			if ( null === $column_info ) {
+				throw WP_SQLite_Information_Schema_Exception::key_column_not_found( $column_name );
+			}
+
+			if (
+				'PRIMARY' === $index_name
+				|| 'NO' === $column_info_map[ $column_name ]['IS_NULLABLE']
+			) {
+				$nullable = '';
+			} else {
+				$nullable = 'YES';
+			}
+
+			$sub_part = $this->get_index_column_sub_part(
+				$key_part,
+				$column_info_map[ $column_name ]['CHARACTER_MAXIMUM_LENGTH'],
+				$has_spatial_column
+			);
+
+			$statistics_data[] = array(
+				'table_schema'  => $this->db_name,
+				'table_name'    => $table_name,
+				'non_unique'    => $non_unique,
+				'index_schema'  => $this->db_name,
+				'index_name'    => $index_name,
+				'seq_in_index'  => $seq_in_index,
+				'column_name'   => $column_name,
+				'collation'     => $collation,
+				'cardinality'   => 0, // not implemented
+				'sub_part'      => $sub_part,
+				'packed'        => null, // not implemented
+				'nullable'      => $nullable,
+				'index_type'    => $index_type,
+				'comment'       => '', // not implemented
+				'index_comment' => $index_comment,
+				'is_visible'    => 'YES', // @TODO: Save actual visibility value.
+				'expression'    => null, // @TODO
+			);
+
+			$seq_in_index += 1;
+		}
+		return $statistics_data;
 	}
 
 	/**
@@ -1908,7 +2054,7 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Extract index name from the "tableConstraintDef" AST node.
 	 *
-	 * @param  WP_Parser_Node $node       The "tableConstraintDef" AST node.
+	 * @param  WP_Parser_Node $node       The "tableConstraintDef" or "createIndex" AST node.
 	 * @param  string         $table_name The table name.
 	 * @return string                     The index name as stored in information schema.
 	 */
@@ -2004,7 +2150,7 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Extract index type from the "tableConstraintDef" AST node.
 	 *
-	 * @param  WP_Parser_Node $node               The "tableConstraintDef" AST node.
+	 * @param  WP_Parser_Node $node               The "tableConstraintDef" or "createIndex" AST node.
 	 * @param  WP_MySQL_Token $token              The first constraint keyword.
 	 * @param  bool           $has_spatial_column Whether the index contains a spatial column.
 	 * @return string                             The index type as stored in information schema.
@@ -2015,11 +2161,9 @@ class WP_SQLite_Information_Schema_Builder {
 		bool $has_spatial_column
 	): string {
 		// Handle "USING ..." clause.
-		$index_type = $node->get_first_descendant_node( 'indexTypeClause' );
-		if ( null !== $index_type ) {
-			$index_type = strtoupper(
-				$this->get_value( $index_type->get_first_child_node( 'indexType' ) )
-			);
+		$index_type_node = $node->get_first_descendant_node( 'indexType' );
+		if ( null !== $index_type_node ) {
+			$index_type = strtoupper( $this->get_value( $index_type_node ) );
 			if ( 'RTREE' === $index_type ) {
 				return 'SPATIAL';
 			} elseif ( 'HASH' === $index_type ) {
@@ -2047,7 +2191,7 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Extract index comment from the "tableConstraintDef" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "tableConstraintDef" AST node.
+	 * @param  WP_Parser_Node $node The "tableConstraintDef" or "createIndex" AST node.
 	 * @return string               The index comment as stored in information schema.
 	 */
 	public function get_index_comment( WP_Parser_Node $node ): string {
@@ -2084,7 +2228,7 @@ class WP_SQLite_Information_Schema_Builder {
 			return null;
 		}
 
-		$collate_node = $node->get_first_descendant_node( 'collationName' );
+		$collate_node = $node->get_first_descendant_node( 'direction' );
 		if ( null === $collate_node ) {
 			return 'A';
 		}

@@ -878,7 +878,8 @@ class WP_SQLite_Driver {
 						$this->execute_create_table_statement( $node );
 						break;
 					case 'createIndex':
-						// TODO: SQLite has a CREATE INDEX statement. We should support it.
+						$this->execute_create_index_statement( $node );
+						break;
 					default:
 						throw $this->new_not_supported_exception(
 							sprintf(
@@ -910,6 +911,9 @@ class WP_SQLite_Driver {
 				switch ( $subtree->rule_name ) {
 					case 'dropTable':
 						$this->execute_drop_table_statement( $node );
+						break;
+					case 'dropIndex':
+						$this->execute_drop_index_statement( $node );
 						break;
 					default:
 						$query = $this->translate( $node );
@@ -1454,6 +1458,97 @@ class WP_SQLite_Driver {
 			}
 		}
 		$this->set_result_from_affected_rows();
+	}
+
+	/**
+	 * Translate and execute a MySQL CREATE INDEX statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "createStatement" AST node with "createIndex" child.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_create_index_statement( WP_Parser_Node $node ): void {
+		$this->information_schema_builder->record_create_index( $node );
+
+		$create_index = $node->get_first_child_node( 'createIndex' );
+		$target       = $create_index->get_first_child_node( 'createIndexTarget' );
+
+		$table_name = $this->unquote_sqlite_identifier(
+			$this->translate( $target->get_first_child_node( 'tableRef' ) )
+		);
+		$index_name = $this->unquote_sqlite_identifier(
+			$this->translate( $create_index->get_first_child_node( 'indexName' ) )
+		);
+		$is_unique  = $create_index->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
+
+		// Get the key parts.
+		$key_list_variants = $target->get_first_child_node( 'keyListVariants' );
+		$key_list_nodes    = $key_list_variants->get_first_child_node()->get_child_nodes();
+		foreach ( $key_list_nodes as $key_list_node ) {
+			if ( 'keyPartOrExpression' === $key_list_node->rule_name ) {
+				$key_part_node = $key_list_node->get_first_child();
+			} else {
+				$key_part_node = $key_list_node;
+			}
+
+			if ( 'keyPart' === $key_part_node->rule_name ) {
+				$key_part  = $this->translate( $key_part_node->get_first_child_node( 'identifier' ) );
+				$direction = $key_part_node->get_first_child_node( 'direction' );
+				if ( null !== $direction ) {
+					$key_part .= ' ' . $this->translate( $direction );
+				}
+			} else {
+				$key_part = $this->translate( $key_part_node );
+			}
+			$key_parts[] = $key_part;
+		}
+
+		$sqlite_index_name = $this->get_sqlite_index_name( $table_name, $index_name );
+		$this->execute_sqlite_query(
+			sprintf(
+				'CREATE %sINDEX %s ON %s (%s)',
+				$is_unique ? 'UNIQUE ' : '',
+				$this->quote_sqlite_identifier( $sqlite_index_name ),
+				$this->translate( $target->get_first_child_node( 'tableRef' ) ),
+				implode( ', ', $key_parts )
+			)
+		);
+	}
+
+	/**
+	 * Translate and execute a MySQL DROP INDEX statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "dropStatement" AST node with "dropIndex" child.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_drop_index_statement( WP_Parser_Node $node ): void {
+		$this->information_schema_builder->record_drop_index( $node );
+
+		$drop_index = $node->get_first_child_node( 'dropIndex' );
+		$table_name = $this->unquote_sqlite_identifier(
+			$this->translate( $drop_index->get_first_child_node( 'tableRef' ) )
+		);
+		$index_name = $this->unquote_sqlite_identifier(
+			$this->translate( $drop_index->get_first_child_node( 'indexRef' ) )
+		);
+
+		/*
+		 * In MySQL, "DROP INDEX `PRIMARY` ON <table>" removes the PRIMARY KEY.
+		 * This is not supported in SQLite, so in such cases, we need to recreate
+		 * the table without the PRIMARY KEY using the updated information schema.
+		 */
+		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
+			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+			$this->recreate_table_from_information_schema( $table_is_temporary, $table_name );
+			return;
+		}
+
+		$sqlite_index_name = $this->get_sqlite_index_name( $table_name, $index_name );
+		$this->execute_sqlite_query(
+			sprintf(
+				'DROP INDEX %s',
+				$this->quote_sqlite_identifier( $sqlite_index_name )
+			)
+		);
 	}
 
 	/**
@@ -3426,21 +3521,23 @@ class WP_SQLite_Driver {
 
 				// Prefix the original index name with the table name.
 				// This is to avoid conflicting index names in SQLite.
-				$index_name = $this->quote_sqlite_identifier(
-					$table_name . '__' . $info['INDEX_NAME']
-				);
+				$sqlite_index_name = $this->get_sqlite_index_name( $table_name, $info['INDEX_NAME'] );
 
 				$query  = sprintf(
 					'CREATE %sINDEX %s ON %s (',
 					$is_unique ? 'UNIQUE ' : '',
-					$index_name,
+					$this->quote_sqlite_identifier( $sqlite_index_name ),
 					$this->quote_sqlite_identifier( $table_name )
 				);
 				$query .= implode(
 					', ',
 					array_map(
 						function ( $column ) {
-							return $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+							$fragment = $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+							if ( 'D' === $column['COLLATION'] ) {
+								$fragment .= ' DESC';
+							}
+							return $fragment;
 						},
 						$constraint
 					)
@@ -3613,6 +3710,9 @@ class WP_SQLite_Driver {
 							if ( null !== $column['SUB_PART'] ) {
 								$definition .= sprintf( '(%d)', $column['SUB_PART'] );
 							}
+							if ( 'D' === $column['COLLATION'] ) {
+								$definition .= ' DESC';
+							}
 							return $definition;
 						},
 						$constraint
@@ -3654,6 +3754,18 @@ class WP_SQLite_Driver {
 		return $sql;
 	}
 
+	/**
+	 * Get an unique SQLite index name from a MySQL table name and index name.
+	 *
+	 * @param string $table_name The MySQL table name.
+	 * @param string $index_name The MySQL index name.
+	 * @return string            The SQLite index name.
+	 */
+	private function get_sqlite_index_name( string $mysql_table_name, string $mysql_index_name ): string {
+		// Prefix the original index name with the table name.
+		// This is to avoid conflicting index names in SQLite.
+		return $mysql_table_name . '__' . $mysql_index_name;
+	}
 
 	/**
 	 * Get an SQLite query to emulate MySQL "ON UPDATE CURRENT_TIMESTAMP".
@@ -3891,6 +4003,14 @@ class WP_SQLite_Driver {
 						$e->get_data()['key_name']
 					),
 					'42S21'
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_KEY_COLUMN_NOT_FOUND:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42000]: Syntax error or access violation: 1072 Key column '%s' doesn't exist in table",
+						$e->get_data()['column_name']
+					),
+					'42000'
 				);
 			default:
 				return $e;
