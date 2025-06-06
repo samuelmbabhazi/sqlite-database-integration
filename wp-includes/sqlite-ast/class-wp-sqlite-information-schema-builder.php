@@ -2228,7 +2228,7 @@ class WP_SQLite_Information_Schema_Builder {
 			return null;
 		}
 
-		$collate_node = $node->get_first_descendant_node( 'collationName' );
+		$collate_node = $node->get_first_descendant_node( 'direction' );
 		if ( null === $collate_node ) {
 			return 'A';
 		}

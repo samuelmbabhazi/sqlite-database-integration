@@ -3522,7 +3522,11 @@ class WP_SQLite_Driver {
 					', ',
 					array_map(
 						function ( $column ) {
-							return $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+							$fragment = $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+							if ( 'D' === $column['COLLATION'] ) {
+								$fragment .= ' DESC';
+							}
+							return $fragment;
 						},
 						$constraint
 					)
@@ -3694,6 +3698,9 @@ class WP_SQLite_Driver {
 							$definition = $this->quote_mysql_identifier( $column['COLUMN_NAME'] );
 							if ( null !== $column['SUB_PART'] ) {
 								$definition .= sprintf( '(%d)', $column['SUB_PART'] );
+							}
+							if ( 'D' === $column['COLLATION'] ) {
+								$definition .= ' DESC';
 							}
 							return $definition;
 						},

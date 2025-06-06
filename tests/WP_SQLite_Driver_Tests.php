@@ -1795,6 +1795,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD INDEX name (name);' );
 		$this->assertNull( $result );
 
+		// Verify that the index was created in the information schema.
 		$this->assertQuery( 'SHOW INDEX FROM _tmp_table;' );
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
@@ -1819,6 +1820,22 @@ class WP_SQLite_Driver_Tests extends TestCase {
 			),
 			$results
 		);
+
+		// Verify that the index is defined in the SQLite.
+		$result = $this->engine
+			->execute_sqlite_query( "PRAGMA index_list('_tmp_table')" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => '_tmp_table__name',
+				'unique'  => '0',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
 	}
 
 	public function testAlterTableAddUniqueIndex() {
@@ -1831,6 +1848,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD UNIQUE INDEX name (name(20));' );
 		$this->assertNull( $result );
 
+		// Verify that the index was created in the information schema.
 		$this->assertQuery( 'SHOW INDEX FROM _tmp_table;' );
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
@@ -1855,6 +1873,22 @@ class WP_SQLite_Driver_Tests extends TestCase {
 			),
 			$results
 		);
+
+		// Verify that the index is defined in the SQLite.
+		$result = $this->engine
+			->execute_sqlite_query( "PRAGMA index_list('_tmp_table')" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => '_tmp_table__name',
+				'unique'  => '1',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
 	}
 
 	public function testAlterTableAddFulltextIndex() {
@@ -1867,6 +1901,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD FULLTEXT INDEX name (name);' );
 		$this->assertNull( $result );
 
+		// Verify that the index was created in the information schema.
 		$this->assertQuery( 'SHOW INDEX FROM _tmp_table;' );
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
@@ -1890,6 +1925,66 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				),
 			),
 			$results
+		);
+
+		// Verify that the index is defined in the SQLite.
+		$result = $this->engine
+			->execute_sqlite_query( "PRAGMA index_list('_tmp_table')" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => '_tmp_table__name',
+				'unique'  => '0',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
+	}
+
+	public function testAlterTableAddIndexWithOrder(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value VARCHAR(255))' );
+		$this->assertQuery( 'ALTER TABLE t ADD INDEX idx_value (value DESC)' );
+
+		// Verify that the order was saved in the information schema.
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'D', $result[0]->Collation );
+
+		// Verify that the order is included in the CREATE TABLE statement.
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  `value` varchar(255) DEFAULT NULL,',
+					'  KEY `idx_value` (`value` DESC)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		// Verify that the order is defined in the SQLite index.
+		$result = $this->engine
+			->execute_sqlite_query( "SELECT * FROM pragma_index_xinfo('t__idx_value') WHERE cid != -1" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seqno' => '0',
+				'cid'   => '1',
+				'name'  => 'value',
+				'desc'  => '1',
+				'coll'  => 'NOCASE',
+				'key'   => '1',
+			),
+			$result[0]
 		);
 	}
 
@@ -5494,6 +5589,50 @@ QUERY
 		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
 		$this->assertCount( 1, $result );
 		$this->assertEquals( 'SPATIAL', $result[0]->Index_type );
+	}
+
+	public function testCreateIndexWithOrder(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value VARCHAR(255))' );
+		$this->assertQuery( 'CREATE INDEX idx_value ON t (value DESC)' );
+
+		// Verify that the order was saved in the information schema.
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'D', $result[0]->Collation );
+
+		// Verify that the order is included in the CREATE TABLE statement.
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertCount( 1, $result );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  `value` varchar(255) DEFAULT NULL,',
+					'  KEY `idx_value` (`value` DESC)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		// Verify that the order is defined in the SQLite index.
+		$result = $this->engine
+			->execute_sqlite_query( "SELECT * FROM pragma_index_xinfo('t__idx_value') WHERE cid != -1" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seqno' => '0',
+				'cid'   => '1',
+				'name'  => 'value',
+				'desc'  => '1',
+				'coll'  => 'NOCASE',
+				'key'   => '1',
+			),
+			$result[0]
+		);
 	}
 
 	public function testCreateIndexWithComment(): void {
