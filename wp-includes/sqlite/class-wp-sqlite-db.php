@@ -308,7 +308,10 @@ class WP_SQLite_DB extends wpdb {
 		}
 		if ( defined( 'WP_SQLITE_AST_DRIVER' ) && WP_SQLITE_AST_DRIVER ) {
 			if ( null === $this->dbname || '' === $this->dbname ) {
-				$this->bail( 'The database name was not set.', 'db_connect_fail' );
+				$this->bail(
+					'The database name was not set. The SQLite driver requires a database name to be set to emulate MySQL information schema tables.',
+					'db_connect_fail'
+				);
 				return false;
 			}
 
