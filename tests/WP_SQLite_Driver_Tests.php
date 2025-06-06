@@ -5665,12 +5665,57 @@ QUERY
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, val_unique INT UNIQUE, val_index INT)' );
 		$this->assertQuery( 'CREATE INDEX idx_val_index ON t (val_index)' );
 
+		// Verify that the indexes were saved in the information schema.
 		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
 		$this->assertCount( 3, $result );
 		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
 		$this->assertEquals( 'val_unique', $result[1]->Key_name );
 		$this->assertEquals( 'idx_val_index', $result[2]->Key_name );
 
+		// Verify that the indexes exist in the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 3, $result );
+		$this->assertEquals( 't__idx_val_index', $result[0]['name'] );
+		$this->assertEquals( 't__val_unique', $result[1]['name'] );
+		$this->assertEquals( 'sqlite_autoindex_t_1', $result[2]['name'] );
+
+		// DROP the explicitly named index.
 		$this->assertQuery( 'DROP INDEX idx_val_index ON t' );
+
+		// Verify that the index was removed from the information schema.
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
+		$this->assertEquals( 'val_unique', $result[1]->Key_name );
+
+		// Verify that the index was removed from the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 't__val_unique', $result[0]['name'] );
+		$this->assertEquals( 'sqlite_autoindex_t_1', $result[1]['name'] );
+
+		// DROP the UNIQUE index.
+		$this->assertQuery( 'DROP INDEX val_unique ON t' );
+
+		// Verify that the index was removed from the information schema.
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
+
+		// Verify that the index was removed from the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'sqlite_autoindex_t_1', $result[0]['name'] );
+
+		// DROP the PRIMARY KEY index.
+		$this->assertQuery( 'DROP INDEX `PRIMARY` ON t' );
+
+		// Verify that the index was removed from the information schema.
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 0, $result );
+
+		// Verify that the index was removed from the SQLite database.
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 0, $result );
 	}
 }

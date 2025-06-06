@@ -1531,6 +1531,17 @@ class WP_SQLite_Driver {
 			$this->translate( $drop_index->get_first_child_node( 'indexRef' ) )
 		);
 
+		/*
+		 * In MySQL, "DROP INDEX `PRIMARY` ON <table>" removes the PRIMARY KEY.
+		 * This is not supported in SQLite, so in such cases, we need to recreate
+		 * the table without the PRIMARY KEY using the updated information schema.
+		 */
+		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
+			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+			$this->recreate_table_from_information_schema( $table_is_temporary, $table_name );
+			return;
+		}
+
 		$sqlite_index_name = $this->get_sqlite_index_name( $table_name, $index_name );
 		$this->execute_sqlite_query(
 			sprintf(
