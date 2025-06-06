@@ -66,5 +66,5 @@ if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK && file_exi
 	require_once $crosscheck_tests_file_path;
 	$GLOBALS['wpdb'] = new WP_SQLite_Crosscheck_DB( DB_NAME );
 } else {
-	$GLOBALS['wpdb'] = new WP_SQLite_DB( DB_NAME );
+	$GLOBALS['wpdb'] = new WP_SQLite_DB( defined( 'DB_NAME' ) ? DB_NAME : '' );
 }

@@ -307,6 +307,14 @@ class WP_SQLite_DB extends wpdb {
 			$pdo = $GLOBALS['@pdo'];
 		}
 		if ( defined( 'WP_SQLITE_AST_DRIVER' ) && WP_SQLITE_AST_DRIVER ) {
+			if ( null === $this->dbname || '' === $this->dbname ) {
+				$this->bail(
+					'The database name was not set. The SQLite driver requires a database name to be set to emulate MySQL information schema tables.',
+					'db_connect_fail'
+				);
+				return false;
+			}
+
 			require_once __DIR__ . '/../../wp-includes/parser/class-wp-parser-grammar.php';
 			require_once __DIR__ . '/../../wp-includes/parser/class-wp-parser.php';
 			require_once __DIR__ . '/../../wp-includes/parser/class-wp-parser-node.php';
