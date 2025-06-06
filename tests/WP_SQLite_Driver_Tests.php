@@ -5708,6 +5708,100 @@ QUERY
 		$this->assertQuery( 'CREATE INDEX idx_value ON t (val)' );
 	}
 
+	public function testCreateComplexIndex(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				name TEXT,
+				score INT,
+				created_at DATETIME
+			)'
+		);
+
+		$this->assertQuery(
+			'CREATE UNIQUE INDEX idx_complex
+			ON t (score ASC, name(16) DESC, created_at DESC)
+			USING BTREE
+			COMMENT "Test comment"
+			ALGORITHM INPLACE
+			LOCK SHARED'
+		);
+
+		// Verify that the index was saved in the information schema.
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int NOT NULL,',
+					'  `name` text DEFAULT NULL,',
+					'  `score` int DEFAULT NULL,',
+					'  `created_at` datetime DEFAULT NULL,',
+					'  PRIMARY KEY (`id`),',
+					"  UNIQUE KEY `idx_complex` (`score`, `name`(16) DESC, `created_at` DESC) COMMENT 'Test comment'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		// Verify that the index exists in the SQLite database.
+		$result = $this->engine
+			->execute_sqlite_query( "SELECT * FROM pragma_index_list('t') WHERE origin != 'pk'" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertSame(
+			array(
+				'seq'     => '0',
+				'name'    => 't__idx_complex',
+				'unique'  => '1',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
+		);
+
+		$result = $this->engine
+			->execute_sqlite_query( "SELECT * FROM pragma_index_xinfo('t__idx_complex') WHERE cid != -1" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 3, $result );
+		$this->assertEquals(
+			array(
+				'seqno' => '0',
+				'cid'   => '2',
+				'name'  => 'score',
+				'desc'  => '0',
+				'coll'  => 'BINARY',
+				'key'   => '1',
+			),
+			$result[0]
+		);
+		$this->assertEquals(
+			array(
+				'seqno' => '1',
+				'cid'   => '1',
+				'name'  => 'name',
+				'desc'  => '1',
+				'coll'  => 'NOCASE',
+				'key'   => '1',
+			),
+			$result[1]
+		);
+		$this->assertEquals(
+			array(
+				'seqno' => '2',
+				'cid'   => '3',
+				'name'  => 'created_at',
+				'desc'  => '1',
+				'coll'  => 'NOCASE',
+				'key'   => '1',
+			),
+			$result[2]
+		);
+	}
+
 	public function testDropIndex(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, val_unique INT UNIQUE, val_index INT)' );
 		$this->assertQuery( 'CREATE INDEX idx_val_index ON t (val_index)' );
