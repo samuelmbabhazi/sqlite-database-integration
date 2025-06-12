@@ -39,7 +39,7 @@ class WP_SQLite_Information_Schema_Exception extends Exception {
 		string $type,
 		string $message,
 		array $data = array(),
-		Throwable $previous = null
+		?Throwable $previous = null
 	) {
 		parent::__construct( $message, 0, $previous );
 		$this->type = $type;
