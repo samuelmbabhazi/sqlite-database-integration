@@ -168,9 +168,25 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @return array<string, WP_Parser_Node> The WordPress CREATE TABLE statements.
 	 */
 	private function get_wp_create_table_statements(): array {
+		// Bail out when not in a WordPress environment.
 		if ( ! defined( 'ABSPATH' ) ) {
 			return array();
 		}
+
+		/*
+		 * In WP CLI, $wpdb may not be set. In that case, we can't load the schema.
+		 * We need to bail out and use the standard non-WordPress-specific behavior.
+		 */
+		global $wpdb;
+		if ( ! isset( $wpdb ) ) {
+			// Outside of WP CLI, let's trigger a warning.
+			if ( ! defined( 'WP_CLI' ) || ! WP_CLI ) {
+				trigger_error( 'The $wpdb global is not initialized.', E_USER_WARNING );
+			}
+			return array();
+		}
+
+		// Ensure the "wp_get_db_schema()" function is defined.
 		if ( file_exists( ABSPATH . 'wp-admin/includes/schema.php' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/schema.php';
 		}
@@ -183,7 +199,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		 * the database connection. Let's only populate the table names using
 		 * the "$table_prefix" global so we can get correct table names.
 		 */
-		global $wpdb, $table_prefix;
+		global $table_prefix;
 		$wpdb->set_prefix( $table_prefix );
 
 		// Get schema for global tables.
