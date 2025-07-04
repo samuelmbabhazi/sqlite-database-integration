@@ -5859,4 +5859,120 @@ QUERY
 		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertCount( 0, $result );
 	}
+
+	public function testComplexInformationSchemaQueries(): void {
+		$create_table_query = <<<END
+CREATE TABLE `wp_users` (
+  `ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `user_login` varchar(60) NOT NULL DEFAULT '',
+  `user_pass` varchar(255) NOT NULL DEFAULT '',
+  `user_nicename` varchar(50) NOT NULL DEFAULT '',
+  `user_email` varchar(100) NOT NULL DEFAULT '',
+  `user_url` varchar(100) NOT NULL DEFAULT '',
+  `user_registered` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+  `user_activation_key` varchar(255) NOT NULL DEFAULT '',
+  `user_status` int(11) NOT NULL DEFAULT '0',
+  `display_name` varchar(250) NOT NULL DEFAULT '',
+  PRIMARY KEY (`ID`),
+  KEY `user_login_key` (`user_login`),
+  KEY `user_nicename` (`user_nicename`),
+  KEY `user_email` (`user_email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+END;
+
+		$this->assertQuery( $create_table_query );
+
+		// 1) JOIN multiple information schema tables.
+		$result = $this->assertQuery(
+			"SELECT
+				cols.DATA_TYPE,
+				stats.INDEX_NAME,
+				stats.COLUMN_NAME
+			FROM INFORMATION_SCHEMA.COLUMNS AS cols
+			JOIN INFORMATION_SCHEMA.STATISTICS AS stats
+				ON cols.TABLE_SCHEMA = stats.TABLE_SCHEMA
+				AND cols.TABLE_NAME = stats.TABLE_NAME
+				AND cols.COLUMN_NAME = stats.COLUMN_NAME
+			WHERE
+				cols.TABLE_SCHEMA = 'wp'
+				AND cols.TABLE_NAME = 'wp_users'
+			ORDER BY INDEX_NAME ASC"
+		);
+
+		$this->assertCount( 4, $result );
+		$this->assertEquals(
+			(object) array(
+				'DATA_TYPE'   => 'bigint',
+				'INDEX_NAME'  => 'PRIMARY',
+				'COLUMN_NAME' => 'ID',
+			),
+			$result[0]
+		);
+		$this->assertEquals(
+			(object) array(
+				'DATA_TYPE'   => 'varchar',
+				'INDEX_NAME'  => 'user_email',
+				'COLUMN_NAME' => 'user_email',
+			),
+			$result[1]
+		);
+		$this->assertEquals(
+			(object) array(
+				'DATA_TYPE'   => 'varchar',
+				'INDEX_NAME'  => 'user_login_key',
+				'COLUMN_NAME' => 'user_login',
+			),
+			$result[2]
+		);
+		$this->assertEquals(
+			(object) array(
+				'DATA_TYPE'   => 'varchar',
+				'INDEX_NAME'  => 'user_nicename',
+				'COLUMN_NAME' => 'user_nicename',
+			),
+			$result[3]
+		);
+
+		// 2) UNION, DISTINCT, and CTEs with information schema tables.
+		$result = $this->assertQuery(
+			"WITH
+				cols AS (
+					SELECT COLUMN_NAME AS column_name
+					FROM INFORMATION_SCHEMA.COLUMNS
+					WHERE TABLE_SCHEMA = 'wp' AND TABLE_NAME = 'wp_users'
+				),
+				indexes AS (
+					SELECT DISTINCT INDEX_NAME AS index_name
+					FROM INFORMATION_SCHEMA.STATISTICS
+					WHERE TABLE_SCHEMA = 'wp' AND TABLE_NAME = 'wp_users'
+				)
+			SELECT CONCAT(column_name, ' (column)') AS name
+			FROM cols
+			UNION ALL
+			SELECT CONCAT(index_name, ' (index)') AS name
+			FROM indexes
+			ORDER BY name"
+		);
+
+		$this->assertCount( 14, $result );
+		$this->assertEquals( 'ID (column)', $result[0]->name );
+		$this->assertEquals( 'PRIMARY (index)', $result[1]->name );
+		$this->assertEquals( 'display_name (column)', $result[2]->name );
+		$this->assertEquals( 'user_activation_key (column)', $result[3]->name );
+		$this->assertEquals( 'user_email (column)', $result[4]->name );
+		$this->assertEquals( 'user_email (index)', $result[5]->name );
+		$this->assertEquals( 'user_login (column)', $result[6]->name );
+		$this->assertEquals( 'user_login_key (index)', $result[7]->name );
+		$this->assertEquals( 'user_nicename (column)', $result[8]->name );
+		$this->assertEquals( 'user_nicename (index)', $result[9]->name );
+		$this->assertEquals( 'user_pass (column)', $result[10]->name );
+		$this->assertEquals( 'user_registered (column)', $result[11]->name );
+		$this->assertEquals( 'user_status (column)', $result[12]->name );
+		$this->assertEquals( 'user_url (column)', $result[13]->name );
+
+		// 3) SHOW CREATE TABLE should preserve all the CREATE TABLE metadata.
+		$result = $this->assertQuery( 'SHOW CREATE TABLE wp_users' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( $create_table_query, $result[0]->{'Create Table'} );
+	}
 }
