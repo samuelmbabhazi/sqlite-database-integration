@@ -67,4 +67,7 @@ if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK && file_exi
 	$GLOBALS['wpdb'] = new WP_SQLite_Crosscheck_DB( DB_NAME );
 } else {
 	$GLOBALS['wpdb'] = new WP_SQLite_DB( defined( 'DB_NAME' ) ? DB_NAME : '' );
+
+	// Boot the Query Monitor plugin if it is active.
+	require_once dirname( __DIR__, 2 ) . '/integrations/query-monitor/boot.php';
 }
