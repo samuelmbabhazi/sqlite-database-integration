@@ -412,6 +412,32 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testShowColumnsLike(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, val1 INT, val2 INT, name TEXT)' );
+		$result = $this->assertQuery( "SHOW COLUMNS FROM t LIKE 'val%'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'val1',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'val2',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
+	}
+
 	private function assertTableEmpty( $table_name, $empty_var ) {
 
 		$this->assertQuery(
