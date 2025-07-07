@@ -46,68 +46,66 @@ function sqlite_integration_admin_screen() {
 					);
 				?>
 			</p>
-		<?php else : ?>
-			<?php if ( ! extension_loaded( 'pdo_sqlite' ) ) : ?>
-				<div class="notice notice-error">
-					<p><?php esc_html_e( 'We detected that the PDO SQLite driver is missing from your server (the pdo_sqlite extension is not loaded). Please make sure that SQLite is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' ); ?></p>
-				</div>
-			<?php elseif ( file_exists( WP_CONTENT_DIR . '/db.php' ) && ! defined( 'SQLITE_DB_DROPIN_VERSION' ) ) : ?>
-				<?php if ( defined( 'PERFLAB_SQLITE_DB_DROPIN_VERSION' ) ) : ?>
-					<div class="notice notice-warning">
-						<p>
-							<?php
-							printf(
-								/* translators: %s: db.php drop-in path */
-								esc_html__( 'An older %s file was detected. Please click the button below to update the file.', 'sqlite-database-integration' ),
-								'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
-							);
-							?>
-						</p>
-					</div>
-					<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin.php?page=sqlite-integration&confirm-install&upgrade-from-pl' ), 'sqlite-install' ) ); ?>">
+		<?php elseif ( ! extension_loaded( 'pdo_sqlite' ) ) : ?>
+			<div class="notice notice-error">
+				<p><?php esc_html_e( 'We detected that the PDO SQLite driver is missing from your server (the pdo_sqlite extension is not loaded). Please make sure that SQLite is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' ); ?></p>
+			</div>
+		<?php elseif ( file_exists( WP_CONTENT_DIR . '/db.php' ) && ! defined( 'SQLITE_DB_DROPIN_VERSION' ) ) : ?>
+			<?php if ( defined( 'PERFLAB_SQLITE_DB_DROPIN_VERSION' ) ) : ?>
+				<div class="notice notice-warning">
+					<p>
 						<?php
 						printf(
 							/* translators: %s: db.php drop-in path */
-							esc_html__( 'Update %s file', 'sqlite-database-integration' ),
+							esc_html__( 'An older %s file was detected. Please click the button below to update the file.', 'sqlite-database-integration' ),
 							'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
 						);
 						?>
-					</a>
-				<?php else : ?>
-					<div class="notice notice-error">
-						<p>
-							<?php
-							printf(
-								/* translators: %s: db.php drop-in path */
-								esc_html__( 'The SQLite plugin cannot be activated because a different %s drop-in already exists.', 'sqlite-database-integration' ),
-								'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
-							);
-							?>
-						</p>
-					</div>
-				<?php endif; ?>
-			<?php elseif ( ! is_writable( WP_CONTENT_DIR ) ) : ?>
+					</p>
+				</div>
+				<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin.php?page=sqlite-integration&confirm-install&upgrade-from-pl' ), 'sqlite-install' ) ); ?>">
+					<?php
+					printf(
+						/* translators: %s: db.php drop-in path */
+						esc_html__( 'Update %s file', 'sqlite-database-integration' ),
+						'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
+					);
+					?>
+				</a>
+			<?php else : ?>
 				<div class="notice notice-error">
 					<p>
 						<?php
 						printf(
 							/* translators: %s: db.php drop-in path */
-							esc_html__( 'The SQLite plugin cannot be activated because the %s directory is not writable.', 'sqlite-database-integration' ),
-							'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '</code>'
+							esc_html__( 'The SQLite plugin cannot be activated because a different %s drop-in already exists.', 'sqlite-database-integration' ),
+							'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
 						);
 						?>
 					</p>
 				</div>
-			<?php else : ?>
-				<div class="notice notice-success">
-					<p><?php esc_html_e( 'All checks completed successfully, your site can use an SQLite database. You can proceed with the installation.', 'sqlite-database-integration' ); ?></p>
-				</div>
-				<h2><?php esc_html_e( 'Important note', 'sqlite-database-integration' ); ?></h2>
-				<p><?php esc_html_e( 'This plugin will switch to a separate database and install WordPress in it. You will need to reconfigure your site, and start with a fresh site. Disabling the plugin you will get back to your previous MySQL database, with all your previous data intact.', 'sqlite-database-integration' ); ?></p>
-				<p><?php esc_html_e( 'By clicking the button below, you will be redirected to the WordPress installation screen to setup your new database', 'sqlite-database-integration' ); ?></p>
-
-				<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin.php?page=sqlite-integration&confirm-install' ), 'sqlite-install' ) ); ?>"><?php esc_html_e( 'Install SQLite database', 'sqlite-database-integration' ); ?></a>
 			<?php endif; ?>
+		<?php elseif ( ! is_writable( WP_CONTENT_DIR ) ) : ?>
+			<div class="notice notice-error">
+				<p>
+					<?php
+					printf(
+						/* translators: %s: db.php drop-in path */
+						esc_html__( 'The SQLite plugin cannot be activated because the %s directory is not writable.', 'sqlite-database-integration' ),
+						'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '</code>'
+					);
+					?>
+				</p>
+			</div>
+		<?php else : ?>
+			<div class="notice notice-success">
+				<p><?php esc_html_e( 'All checks completed successfully, your site can use an SQLite database. You can proceed with the installation.', 'sqlite-database-integration' ); ?></p>
+			</div>
+			<h2><?php esc_html_e( 'Important note', 'sqlite-database-integration' ); ?></h2>
+			<p><?php esc_html_e( 'This plugin will switch to a separate database and install WordPress in it. You will need to reconfigure your site, and start with a fresh site. Disabling the plugin you will get back to your previous MySQL database, with all your previous data intact.', 'sqlite-database-integration' ); ?></p>
+			<p><?php esc_html_e( 'By clicking the button below, you will be redirected to the WordPress installation screen to setup your new database', 'sqlite-database-integration' ); ?></p>
+
+			<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin.php?page=sqlite-integration&confirm-install' ), 'sqlite-install' ) ); ?>"><?php esc_html_e( 'Install SQLite database', 'sqlite-database-integration' ); ?></a>
 		<?php endif; ?>
 	</div>
 	<?php
