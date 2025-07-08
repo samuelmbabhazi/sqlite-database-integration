@@ -1713,7 +1713,7 @@ class WP_SQLite_Driver {
 		// LIKE and WHERE clauses.
 		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
 		if ( null !== $like_or_where ) {
-			$condition = $this->translate_show_like_or_where_condition( $like_or_where );
+			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'table_name' );
 		}
 
 		// Fetch table information.
@@ -1782,7 +1782,7 @@ class WP_SQLite_Driver {
 		// LIKE and WHERE clauses.
 		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
 		if ( null !== $like_or_where ) {
-			$condition = $this->translate_show_like_or_where_condition( $like_or_where );
+			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'table_name' );
 		}
 
 		// Fetch table information.
@@ -1867,7 +1867,7 @@ class WP_SQLite_Driver {
 		// LIKE and WHERE clauses.
 		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
 		if ( null !== $like_or_where ) {
-			$condition = $this->translate_show_like_or_where_condition( $like_or_where );
+			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'column_name' );
 		}
 
 		// Fetch column information.
@@ -3003,16 +3003,21 @@ class WP_SQLite_Driver {
 	 * Translate a MySQL SHOW LIKE ... or SHOW WHERE ... condition to SQLite.
 	 *
 	 * @param  WP_Parser_Node $like_or_where The "likeOrWhere" AST node.
+	 * @param  string         $like_column   The column name to use in the LIKE clause ("table_name", "column_name", etc.).
 	 * @return string                        The translated value.
 	 * @throws WP_SQLite_Driver_Exception    When the translation fails.
 	 */
-	private function translate_show_like_or_where_condition( WP_Parser_Node $like_or_where ): string {
+	private function translate_show_like_or_where_condition( WP_Parser_Node $like_or_where, string $like_column ): string {
 		$like_clause = $like_or_where->get_first_child_node( 'likeClause' );
 		if ( null !== $like_clause ) {
 			$value = $this->translate(
 				$like_clause->get_first_child_node( 'textStringLiteral' )
 			);
-			return sprintf( "AND table_name LIKE %s ESCAPE '\\'", $value );
+			return sprintf(
+				"AND %s LIKE %s ESCAPE '\\'",
+				$this->quote_sqlite_identifier( $like_column ),
+				$value
+			);
 		}
 
 		$where_clause = $like_or_where->get_first_child_node( 'whereClause' );
