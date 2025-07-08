@@ -508,6 +508,13 @@ class WP_SQLite_DB extends wpdb {
 			} else {
 				$this->queries[ $i ]['result'] = (int) $return_val;
 			}
+
+			// Add SQLite query data.
+			if ( $this->dbh instanceof WP_SQLite_Driver ) {
+				$this->queries[ $i ]['sqlite_queries'] = $this->dbh->get_last_sqlite_queries();
+			} else {
+				$this->queries[ $i ]['sqlite_queries'] = $this->dbh->executed_sqlite_queries;
+			}
 		}
 		return $return_val;
 	}
