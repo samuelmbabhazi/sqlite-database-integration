@@ -12,6 +12,15 @@
  * See: https://github.com/johnbillion/query-monitor/blob/develop/wp-content/db.php
  */
 
+/*
+ * In Playground, the SQLite plugin is preloaded without using the "db.php" file.
+ * To prevent Query Monitor from injecting its own "db.php" file, we need to set
+ * the "QM_DB_SYMLINK" constant to "false".
+ */
+if ( ! defined( 'QM_DB_SYMLINK' ) ) {
+	define( 'QM_DB_SYMLINK', false );
+}
+
 // 1. Check if we should load Query Monitor (as per the original "db.php" file).
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
