@@ -12,6 +12,13 @@
  */
 class WP_SQLite_Configurator {
 	/**
+	 * The name of the database.
+	 *
+	 * @var string
+	 */
+	private $db_name;
+
+	/**
 	 * The SQLite driver instance.
 	 *
 	 * @var WP_SQLite_Driver
@@ -35,13 +42,16 @@ class WP_SQLite_Configurator {
 	/**
 	 * Constructor.
 	 *
+	 * @param string                               $db_name        The name of the database.
 	 * @param WP_SQLite_Driver                     $driver         The SQLite driver instance.
 	 * @param WP_SQLite_Information_Schema_Builder $schema_builder The information schema builder instance.
 	 */
 	public function __construct(
+		string $db_name,
 		WP_SQLite_Driver $driver,
 		WP_SQLite_Information_Schema_Builder $schema_builder
 	) {
+		$this->db_name              = $db_name;
 		$this->driver               = $driver;
 		$this->schema_builder       = $schema_builder;
 		$this->schema_reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
@@ -62,6 +72,20 @@ class WP_SQLite_Configurator {
 		if ( version_compare( $version, $db_version ) > 0 ) {
 			$this->configure_database();
 		}
+
+		// Ensure that the database name used in the current session corresponds
+		// to the database name that is stored in the information schema tables.
+		$db_name = $this->driver->get_saved_database_name();
+		if ( $this->db_name !== $db_name ) {
+			throw new WP_SQLite_Driver_Exception(
+				$this->driver,
+				sprintf(
+					"Incorrect database name. The database was created with name '%s', but '%s' is used in the current session.",
+					$db_name,
+					$this->db_name
+				)
+			);
+		}
 	}
 
 	/**
@@ -81,6 +105,7 @@ class WP_SQLite_Configurator {
 			$this->schema_builder->ensure_information_schema_tables();
 			$this->schema_reconstructor->ensure_correct_information_schema();
 			$this->save_current_driver_version();
+			$this->save_current_database_name();
 		} catch ( Throwable $e ) {
 			$this->driver->execute_sqlite_query( 'ROLLBACK' );
 			throw $e;
@@ -100,6 +125,43 @@ class WP_SQLite_Configurator {
 				'CREATE TABLE IF NOT EXISTS %s (name TEXT PRIMARY KEY, value TEXT)',
 				WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME
 			)
+		);
+	}
+
+	/**
+	 * Save the current database name.
+	 *
+	 * This method saves the current database name to the database.
+	 */
+	public function save_current_database_name(): void {
+		/*
+		 * If a record with an existing database name value is already stored in
+		 * the information schema, we need to use that value. This ensures correct
+		 * migration from older driver versions without the database name variable.
+		 */
+		$information_schema_db_name = $this->driver->execute_sqlite_query(
+			sprintf(
+				'SELECT table_schema FROM %s LIMIT 1',
+				$this->driver->get_connection()->quote_identifier(
+					$this->schema_builder->get_table_name( false, 'tables' )
+				)
+			)
+		)->fetchColumn();
+
+		if ( false !== $information_schema_db_name ) {
+			$db_name = $information_schema_db_name;
+		} else {
+			$db_name = $this->db_name;
+		}
+
+		$this->driver->execute_sqlite_query(
+			sprintf(
+				'INSERT INTO %s (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = ?',
+				$this->driver->get_connection()->quote_identifier(
+					WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME
+				)
+			),
+			array( WP_SQLite_Driver::DATABASE_NAME_VARIABLE_NAME, $db_name )
 		);
 	}
 

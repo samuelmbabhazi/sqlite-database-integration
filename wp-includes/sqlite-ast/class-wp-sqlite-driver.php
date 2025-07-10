@@ -52,6 +52,13 @@ class WP_SQLite_Driver {
 	const DRIVER_VERSION_VARIABLE_NAME = self::RESERVED_PREFIX . 'driver_version';
 
 	/**
+	 * The name of the SQLite database name variable.
+	 *
+	 * This internal variable is used to store the name of the SQLite database.
+	 */
+	const DATABASE_NAME_VARIABLE_NAME = self::RESERVED_PREFIX . 'database_name';
+
+	/**
 	 * A map of MySQL tokens to SQLite data types.
 	 *
 	 * This is used to translate a MySQL data type to an SQLite data type.
@@ -440,6 +447,11 @@ class WP_SQLite_Driver {
 		$this->main_db_name = $database;
 		$this->db_name      = $database;
 
+		// Check the database name.
+		if ( '' === $this->db_name ) {
+			throw $this->new_driver_exception( 'The database name cannot be empty.' );
+		}
+
 		// Check the SQLite version.
 		$sqlite_version = $this->get_sqlite_version();
 		if ( version_compare( $sqlite_version, self::MINIMUM_SQLITE_VERSION, '<' ) ) {
@@ -474,7 +486,7 @@ class WP_SQLite_Driver {
 		);
 
 		// Ensure that the database is configured.
-		$migrator = new WP_SQLite_Configurator( $this, $this->information_schema_builder );
+		$migrator = new WP_SQLite_Configurator( $this->db_name, $this, $this->information_schema_builder );
 		$migrator->ensure_database_configured();
 
 		$this->connection->set_query_logger(
@@ -528,6 +540,32 @@ class WP_SQLite_Driver {
 		} catch ( PDOException $e ) {
 			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
 				return $default_version;
+			}
+			throw $e;
+		}
+	}
+
+	/**
+	 * Get the database name saved in the database.
+	 *
+	 * The saved database name represents the database name that was used when
+	 * the database was initialized and configured.
+	 *
+	 * @return string The database name.
+	 * @throws PDOException When the query execution fails.
+	 */
+	public function get_saved_database_name(): string {
+		try {
+			return $this->execute_sqlite_query(
+				sprintf(
+					'SELECT value FROM %s WHERE name = ?',
+					$this->quote_sqlite_identifier( self::GLOBAL_VARIABLES_TABLE_NAME )
+				),
+				array( self::DATABASE_NAME_VARIABLE_NAME )
+			)->fetchColumn() ?? '';
+		} catch ( PDOException $e ) {
+			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
+				return '';
 			}
 			throw $e;
 		}
