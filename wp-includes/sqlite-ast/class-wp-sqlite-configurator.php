@@ -123,7 +123,9 @@ class WP_SQLite_Configurator {
 		$this->driver->execute_sqlite_query(
 			sprintf(
 				'CREATE TABLE IF NOT EXISTS %s (name TEXT PRIMARY KEY, value TEXT)',
-				WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME
+				$this->driver->get_connection()->quote_identifier(
+					WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME
+				)
 			)
 		);
 	}
@@ -174,7 +176,9 @@ class WP_SQLite_Configurator {
 		$this->driver->execute_sqlite_query(
 			sprintf(
 				'INSERT INTO %s (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = ?',
-				WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME
+				$this->driver->get_connection()->quote_identifier(
+					WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME
+				)
 			),
 			array(
 				WP_SQLite_Driver::DRIVER_VERSION_VARIABLE_NAME,
