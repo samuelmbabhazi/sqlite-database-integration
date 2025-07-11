@@ -147,6 +147,7 @@ class WP_SQLite_Configurator {
 				VALUES (?, ?, ?) ON CONFLICT(SCHEMA_NAME) DO NOTHING',
 				$this->driver->get_connection()->quote_identifier( $schemata_table )
 			),
+			// The "INFORMATION_SCHEMA" database stays on "utf8mb3" even in MySQL 8 and 9.
 			array( 'information_schema', 'utf8mb3', 'utf8mb3_general_ci' )
 		);
 
@@ -190,6 +191,8 @@ class WP_SQLite_Configurator {
 				'INSERT INTO %s (SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME) VALUES (?, ?, ?)',
 				$this->driver->get_connection()->quote_identifier( $schemata_table )
 			),
+			// @TODO: This should probably be version-dependent.
+			//        Before MySQL 8, the default was different.
 			array( $db_name, 'utf8mb4', 'utf8mb4_0900_ai_ci' )
 		);
 	}

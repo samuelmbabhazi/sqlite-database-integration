@@ -258,7 +258,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   PRIMARY KEY (`ID`),
   UNIQUE KEY `option_name` (`option_name`),
   KEY `composite` (`option_name`, `option_value`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -286,7 +286,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   PRIMARY KEY (`ID`),
   UNIQUE KEY `option_name` (`option_name`),
   KEY `composite` (`option_name`, `option_value`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -305,7 +305,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertEquals(
 			'CREATE TABLE `_tmp_table` (
   `ID` bigint NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -338,7 +338,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   `option_value` text NOT NULL,
   PRIMARY KEY (`ID`),
   KEY `option_name` (`option_name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -389,7 +389,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					"  `special_chars_12` text NOT NULL COMMENT '🙂',",
 					"  `special_chars_13` text NOT NULL COMMENT '🙂',",
 					"  KEY `idx_id` (`id`) COMMENT 'Index comment'",
-					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Table comment'",
+					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Table comment'",
 				)
 			),
 			$results[0]->{'Create Table'}
@@ -441,7 +441,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   PRIMARY KEY (`ID`),
   KEY `option_name` (`option_name`),
   KEY `double__underscores` (`option_name`, `ID`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -466,7 +466,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   `ID_B` bigint NOT NULL,
   `ID_C` bigint NOT NULL,
   PRIMARY KEY (`ID_B`, `ID_A`, `ID_C`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -532,7 +532,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					"  `special_chars_12` text NOT NULL COMMENT '🙂',",
 					"  `special_chars_13` text NOT NULL COMMENT '🙂',",
 					'  PRIMARY KEY (`ID`)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$results[0]->{'Create Table'}
@@ -1964,7 +1964,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					'  `id` int DEFAULT NULL,',
 					'  `value` varchar(255) DEFAULT NULL,',
 					'  KEY `idx_value` (`value` DESC)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -3937,7 +3937,7 @@ QUERY
 				. "  `description` varchar(250) NOT NULL DEFAULT '',\n"
 				. "  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n"
 				. "  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n"
-				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$result[0]->{'Create Table'}
 		);
 	}
@@ -4050,7 +4050,7 @@ QUERY
   `notempty4` year DEFAULT '2024',
   `notempty5` timestamp NULL DEFAULT '1999-12-12 12:12:12',
   PRIMARY KEY (`ID`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -4085,7 +4085,7 @@ QUERY
   KEY `meta_key_value` (`meta_key`(20), `meta_value`(82)),
   KEY `order_id_meta_key_meta_value` (`order_id`, `meta_key`(100), `meta_value`(82)),
   KEY `order_id_meta_key_meta_data` (`order_id`, `meta_key`(100), `meta_data`(100))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -4225,7 +4225,7 @@ QUERY
 			"CREATE TEMPORARY TABLE `t` (\n"
 				. "  `b` int DEFAULT NULL,\n"
 				. "  KEY `ib` (`b`)\n"
-				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$result[0]->{'Create Table'}
 		);
 
@@ -5015,7 +5015,7 @@ QUERY
 					'CREATE TABLE `t` (',
 					'  `id` int DEFAULT NULL,',
 					'  UNIQUE KEY `idx_id` (`id`)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -5641,7 +5641,7 @@ QUERY
 					'  `id` int DEFAULT NULL,',
 					'  `value` varchar(255) DEFAULT NULL,',
 					'  KEY `idx_value` (`value` DESC)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -5741,7 +5741,7 @@ QUERY
 					'  `created_at` datetime DEFAULT NULL,',
 					'  PRIMARY KEY (`id`),',
 					"  UNIQUE KEY `idx_complex` (`score`, `name`(16) DESC, `created_at` DESC) COMMENT 'Test comment'",
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}

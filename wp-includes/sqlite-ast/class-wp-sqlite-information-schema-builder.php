@@ -232,7 +232,8 @@ class WP_SQLite_Information_Schema_Builder {
 		'utf16le'  => 'utf16le_general_ci',
 		'utf32'    => 'utf32_general_ci',
 		'utf8'     => 'utf8_general_ci',
-		'utf8mb4'  => 'utf8mb4_general_ci', // @TODO: From MySQL 8.0.1, this is utf8mb4_0900_ai_ci.
+		'utf8mb4'  => 'utf8mb4_0900_ai_ci', // @TODO: This should probably be version-dependent.
+											//        Before MySQL 8, the default was different.
 	);
 
 	/**
@@ -1470,7 +1471,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$collate_node = $node->get_first_descendant_node( 'collationName' );
 		if ( null === $collate_node ) {
 			// @TODO: Use default DB collation or DB_CHARSET & DB_COLLATE.
-			return 'utf8mb4_general_ci';
+			return 'utf8mb4_0900_ai_ci';
 		}
 		return strtolower( $this->get_value( $collate_node ) );
 	}

@@ -101,7 +101,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 					'  UNIQUE KEY `email` (`email`(100)),',
 					'  KEY `idx_role_score` (`role`(100), `priority`),',
 					'  KEY `idx_score` (`score`)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -152,7 +152,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 					'  KEY `type_status_date` (`post_type`, `post_status`, `post_date`, `ID`),',
 					'  KEY `post_parent` (`post_parent`),',
 					'  KEY `post_author` (`post_author`)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -200,7 +200,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 					'  SPATIAL KEY `idx_shape` (`shape`(32)),',
 					'  KEY `idx_name` (`name`(100)),',
 					'  FULLTEXT KEY `idx_description` (`description`(100))',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -258,7 +258,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 					'  `col16` datetime DEFAULT CURRENT_TIMESTAMP,',
 					'  `col17` text DEFAULT NULL,',
 					'  `col18` text DEFAULT NULL',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -299,7 +299,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 					"  `col7` varchar(65535) DEFAULT 'abc	xyz',",              // tab is preserved
 					"  `col8` varchar(65535) DEFAULT 'abc" . chr( 8 ) . "xyz',", // backspace is preserved
 					"  `col9` varchar(65535) DEFAULT 'abc" . chr( 26 ) . "xyz'", // control-Z is preserved
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
