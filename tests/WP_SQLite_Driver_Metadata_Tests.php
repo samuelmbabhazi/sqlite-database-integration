@@ -371,6 +371,64 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testShowDatabases(): void {
+		// Simple.
+		$this->assertQuery( 'SHOW DATABASES' );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array( 'Database' => 'information_schema' ),
+				(object) array( 'Database' => 'wp' ),
+			),
+			$actual
+		);
+
+		// With LIKE clause.
+		$this->assertQuery( 'SHOW DATABASES LIKE "w%"' );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals(
+			array( (object) array( 'Database' => 'wp' ) ),
+			$actual
+		);
+
+		// With WHERE clause.
+		$this->assertQuery( 'SHOW DATABASES WHERE `Database` = "wp"' );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals(
+			array( (object) array( 'Database' => 'wp' ) ),
+			$actual
+		);
+	}
+
+	public function testShowTableSchemas(): void {
+		$this->assertQuery( 'SHOW SCHEMAS' );
+
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array( 'Database' => 'information_schema' ),
+				(object) array( 'Database' => 'wp' ),
+			),
+			$actual
+		);
+
+		// With LIKE clause.
+		$this->assertQuery( 'SHOW DATABASES LIKE "inf%"' );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals(
+			array( (object) array( 'Database' => 'information_schema' ) ),
+			$actual
+		);
+
+		// With WHERE clause.
+		$this->assertQuery( 'SHOW DATABASES WHERE `Database` = "information_schema"' );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals(
+			array( (object) array( 'Database' => 'information_schema' ) ),
+			$actual
+		);
+	}
+
 	public function testShowTableStatus() {
 		$this->assertQuery( 'CREATE TABLE t ( comment_author TEXT, comment_content TEXT )' );
 

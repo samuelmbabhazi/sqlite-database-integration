@@ -1594,6 +1594,9 @@ class WP_SQLite_Driver {
 		$keyword2 = $tokens[2] ?? null;
 
 		switch ( $keyword1->id ) {
+			case WP_MySQL_Lexer::DATABASES_SYMBOL:
+				$this->execute_show_databases_statement( $node );
+				break;
 			case WP_MySQL_Lexer::COLUMNS_SYMBOL:
 			case WP_MySQL_Lexer::FIELDS_SYMBOL:
 				$this->execute_show_columns_statement( $node );
@@ -1656,6 +1659,31 @@ class WP_SQLite_Driver {
 					)
 				);
 		}
+	}
+
+	/**
+	 * Translate and execute a MySQL SHOW DATABASES statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node The "showStatement" AST node.
+	 */
+	private function execute_show_databases_statement( WP_Parser_Node $node ): void {
+		$schemata_table = $this->information_schema_builder->get_table_name( false, 'schemata' );
+
+		// LIKE and WHERE clauses.
+		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		if ( null !== $like_or_where ) {
+			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'schema_name' );
+		}
+
+		$databases = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT SCHEMA_NAME AS Database FROM %s%s ORDER BY SCHEMA_NAME',
+				$this->quote_sqlite_identifier( $schemata_table ),
+				isset( $condition ) ? ( ' WHERE TRUE ' . $condition ) : ''
+			)
+		)->fetchAll( PDO::FETCH_OBJ );
+
+		$this->set_results_from_fetched_data( $databases );
 	}
 
 	/**
