@@ -105,7 +105,7 @@ class WP_SQLite_Configurator {
 			$this->schema_builder->ensure_information_schema_tables();
 			$this->schema_reconstructor->ensure_correct_information_schema();
 			$this->save_current_driver_version();
-			$this->save_current_database_name();
+			$this->ensure_schemata_data();
 		} catch ( Throwable $e ) {
 			$this->driver->execute_sqlite_query( 'ROLLBACK' );
 			throw $e;
@@ -131,15 +131,43 @@ class WP_SQLite_Configurator {
 	}
 
 	/**
-	 * Save the current database name.
+	 * Ensure that the "SCHEMATA" table data is correctly populated.
 	 *
-	 * This method saves the current database name to the database.
+	 * This method ensures that the "INFORMATION_SCHEMA.SCHEMATA" table contains
+	 * records for both the "INFORMATION_SCHEMA" database and the user database.
+	 * At the moment, only a single user database is supported.
 	 */
-	public function save_current_database_name(): void {
+	public function ensure_schemata_data(): void {
+		$schemata_table = $this->schema_builder->get_table_name( false, 'schemata' );
+
+		// 1. Ensure that the "INFORMATION_SCHEMA" database record exists.
+		$this->driver->execute_sqlite_query(
+			sprintf(
+				'INSERT INTO %s (SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME)
+				VALUES (?, ?, ?) ON CONFLICT(SCHEMA_NAME) DO NOTHING',
+				$this->driver->get_connection()->quote_identifier( $schemata_table )
+			),
+			array( 'information_schema', 'utf8mb3', 'utf8mb3_general_ci' )
+		);
+
+		// 2. Bail out if a user database record already exists.
+		$user_db_record_exists = $this->driver->execute_sqlite_query(
+			sprintf(
+				"SELECT COUNT(*) FROM %s WHERE SCHEMA_NAME != 'information_schema'",
+				$this->driver->get_connection()->quote_identifier( $schemata_table )
+			)
+		)->fetchColumn() > 0;
+
+		if ( $user_db_record_exists ) {
+			return;
+		}
+
 		/*
+		 * 3. Migrate from older driver versions without the "SCHEMATA" table.
+		 *
 		 * If a record with an existing database name value is already stored in
-		 * the information schema, we need to use that value. This ensures correct
-		 * migration from older driver versions without the database name variable.
+		 * "INFORMATION_SCHEMA.TABLES", we need to use that value. This ensures
+		 * migration from older driver versions without the "SCHEMATA" table.
 		 */
 		$information_schema_db_name = $this->driver->execute_sqlite_query(
 			sprintf(
@@ -156,14 +184,13 @@ class WP_SQLite_Configurator {
 			$db_name = $this->db_name;
 		}
 
+		// 4. Create a user database record.
 		$this->driver->execute_sqlite_query(
 			sprintf(
-				'INSERT INTO %s (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = ?',
-				$this->driver->get_connection()->quote_identifier(
-					WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME
-				)
+				'INSERT INTO %s (SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME) VALUES (?, ?, ?)',
+				$this->driver->get_connection()->quote_identifier( $schemata_table )
 			),
-			array( WP_SQLite_Driver::DATABASE_NAME_VARIABLE_NAME, $db_name )
+			array( $db_name, 'utf8mb4', 'utf8mb4_0900_ai_ci' )
 		);
 	}
 

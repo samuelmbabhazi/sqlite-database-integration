@@ -6001,7 +6001,7 @@ END;
 		new WP_SQLite_Driver( $connection, 'db-two' );
 	}
 
-	public function testDatabaseNameMismatchWithExistingInformationSchema(): void {
+	public function testDatabaseNameMismatchWithExistingInformationSchemaTableData(): void {
 		$pdo        = new PDO( 'sqlite::memory:' );
 		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
 

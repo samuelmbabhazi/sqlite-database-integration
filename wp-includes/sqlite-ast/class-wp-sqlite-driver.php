@@ -52,13 +52,6 @@ class WP_SQLite_Driver {
 	const DRIVER_VERSION_VARIABLE_NAME = self::RESERVED_PREFIX . 'driver_version';
 
 	/**
-	 * The name of the SQLite database name variable.
-	 *
-	 * This internal variable is used to store the name of the SQLite database.
-	 */
-	const DATABASE_NAME_VARIABLE_NAME = self::RESERVED_PREFIX . 'database_name';
-
-	/**
 	 * A map of MySQL tokens to SQLite data types.
 	 *
 	 * This is used to translate a MySQL data type to an SQLite data type.
@@ -556,12 +549,12 @@ class WP_SQLite_Driver {
 	 */
 	public function get_saved_database_name(): string {
 		try {
+			$schemata_table = $this->information_schema_builder->get_table_name( false, 'schemata' );
 			return $this->execute_sqlite_query(
 				sprintf(
-					'SELECT value FROM %s WHERE name = ?',
-					$this->quote_sqlite_identifier( self::GLOBAL_VARIABLES_TABLE_NAME )
-				),
-				array( self::DATABASE_NAME_VARIABLE_NAME )
+					'SELECT SCHEMA_NAME FROM %s WHERE SCHEMA_NAME != "information_schema" LIMIT 1',
+					$this->quote_sqlite_identifier( $schemata_table )
+				)
 			)->fetchColumn() ?? '';
 		} catch ( PDOException $e ) {
 			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
