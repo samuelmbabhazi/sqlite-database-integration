@@ -17,6 +17,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 * We only implement a limited subset that is necessary for a database schema
 	 * introspection and representation, currently covering the following tables:
 	 *
+	 *  - SCHEMATA
 	 *  - TABLES
 	 *  - COLUMNS
 	 *  - STATISTICS (indexes)
@@ -30,6 +31,17 @@ class WP_SQLite_Information_Schema_Builder {
 	 *  - TRIGGERS
 	 */
 	const INFORMATION_SCHEMA_TABLE_DEFINITIONS = array(
+		// INFORMATION_SCHEMA.SCHEMATA
+		'schemata'          => "
+			CATALOG_NAME TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE,      -- always 'def'
+			SCHEMA_NAME TEXT NOT NULL COLLATE NOCASE,                     -- database name
+			DEFAULT_CHARACTER_SET_NAME TEXT NOT NULL COLLATE NOCASE,      -- default character set
+			DEFAULT_COLLATION_NAME TEXT NOT NULL COLLATE NOCASE,          -- default collation
+			SQL_PATH TEXT NULL COLLATE NOCASE,                            -- always NULL
+			DEFAULT_ENCRYPTION TEXT NOT NULL DEFAULT 'NO' COLLATE NOCASE, -- not implemented
+			PRIMARY KEY (SCHEMA_NAME)
+		",
+
 		// INFORMATION_SCHEMA.TABLES
 		'tables'            => "
 			TABLE_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE, -- always 'def'
@@ -220,7 +232,8 @@ class WP_SQLite_Information_Schema_Builder {
 		'utf16le'  => 'utf16le_general_ci',
 		'utf32'    => 'utf32_general_ci',
 		'utf8'     => 'utf8_general_ci',
-		'utf8mb4'  => 'utf8mb4_general_ci', // @TODO: From MySQL 8.0.1, this is utf8mb4_0900_ai_ci.
+		'utf8mb4'  => 'utf8mb4_0900_ai_ci', // @TODO: This should probably be version-dependent.
+											//        Before MySQL 8, the default was different.
 	);
 
 	/**
@@ -359,6 +372,11 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	public function ensure_temporary_information_schema_tables(): void {
 		foreach ( self::INFORMATION_SCHEMA_TABLE_DEFINITIONS as $table_name => $table_body ) {
+			// Skip the "schemata" table; MySQL doesn't support temporary databases.
+			if ( 'schemata' === $table_name ) {
+				continue;
+			}
+
 			$this->connection->query(
 				sprintf(
 					'CREATE TEMPORARY TABLE IF NOT EXISTS %s%s (%s) STRICT',
@@ -1453,7 +1471,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$collate_node = $node->get_first_descendant_node( 'collationName' );
 		if ( null === $collate_node ) {
 			// @TODO: Use default DB collation or DB_CHARSET & DB_COLLATE.
-			return 'utf8mb4_general_ci';
+			return 'utf8mb4_0900_ai_ci';
 		}
 		return strtolower( $this->get_value( $collate_node ) );
 	}

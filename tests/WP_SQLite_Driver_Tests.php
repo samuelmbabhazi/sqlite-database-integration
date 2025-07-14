@@ -258,7 +258,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   PRIMARY KEY (`ID`),
   UNIQUE KEY `option_name` (`option_name`),
   KEY `composite` (`option_name`, `option_value`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -286,7 +286,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   PRIMARY KEY (`ID`),
   UNIQUE KEY `option_name` (`option_name`),
   KEY `composite` (`option_name`, `option_value`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -305,7 +305,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertEquals(
 			'CREATE TABLE `_tmp_table` (
   `ID` bigint NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -338,7 +338,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   `option_value` text NOT NULL,
   PRIMARY KEY (`ID`),
   KEY `option_name` (`option_name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -389,7 +389,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					"  `special_chars_12` text NOT NULL COMMENT '🙂',",
 					"  `special_chars_13` text NOT NULL COMMENT '🙂',",
 					"  KEY `idx_id` (`id`) COMMENT 'Index comment'",
-					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Table comment'",
+					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Table comment'",
 				)
 			),
 			$results[0]->{'Create Table'}
@@ -441,7 +441,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   PRIMARY KEY (`ID`),
   KEY `option_name` (`option_name`),
   KEY `double__underscores` (`option_name`, `ID`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -466,7 +466,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
   `ID_B` bigint NOT NULL,
   `ID_C` bigint NOT NULL,
   PRIMARY KEY (`ID_B`, `ID_A`, `ID_C`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -532,7 +532,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					"  `special_chars_12` text NOT NULL COMMENT '🙂',",
 					"  `special_chars_13` text NOT NULL COMMENT '🙂',",
 					'  PRIMARY KEY (`ID`)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$results[0]->{'Create Table'}
@@ -1964,7 +1964,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					'  `id` int DEFAULT NULL,',
 					'  `value` varchar(255) DEFAULT NULL,',
 					'  KEY `idx_value` (`value` DESC)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -3937,7 +3937,7 @@ QUERY
 				. "  `description` varchar(250) NOT NULL DEFAULT '',\n"
 				. "  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n"
 				. "  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n"
-				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$result[0]->{'Create Table'}
 		);
 	}
@@ -4050,7 +4050,7 @@ QUERY
   `notempty4` year DEFAULT '2024',
   `notempty5` timestamp NULL DEFAULT '1999-12-12 12:12:12',
   PRIMARY KEY (`ID`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -4085,7 +4085,7 @@ QUERY
   KEY `meta_key_value` (`meta_key`(20), `meta_value`(82)),
   KEY `order_id_meta_key_meta_value` (`order_id`, `meta_key`(100), `meta_value`(82)),
   KEY `order_id_meta_key_meta_data` (`order_id`, `meta_key`(100), `meta_data`(100))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -4225,7 +4225,7 @@ QUERY
 			"CREATE TEMPORARY TABLE `t` (\n"
 				. "  `b` int DEFAULT NULL,\n"
 				. "  KEY `ib` (`b`)\n"
-				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+				. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 			$result[0]->{'Create Table'}
 		);
 
@@ -5015,7 +5015,7 @@ QUERY
 					'CREATE TABLE `t` (',
 					'  `id` int DEFAULT NULL,',
 					'  UNIQUE KEY `idx_id` (`id`)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -5641,7 +5641,7 @@ QUERY
 					'  `id` int DEFAULT NULL,',
 					'  `value` varchar(255) DEFAULT NULL,',
 					'  KEY `idx_value` (`value` DESC)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -5741,7 +5741,7 @@ QUERY
 					'  `created_at` datetime DEFAULT NULL,',
 					'  PRIMARY KEY (`id`),',
 					"  UNIQUE KEY `idx_complex` (`score`, `name`(16) DESC, `created_at` DESC) COMMENT 'Test comment'",
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$result[0]->{'Create Table'}
@@ -5974,5 +5974,50 @@ END;
 		$result = $this->assertQuery( 'SHOW CREATE TABLE wp_users' );
 		$this->assertCount( 1, $result );
 		$this->assertEquals( $create_table_query, $result[0]->{'Create Table'} );
+	}
+
+	public function testDatabaseNameEmpty(): void {
+		$pdo        = new PDO( 'sqlite::memory:' );
+		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
+
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'The database name cannot be empty.' );
+		new WP_SQLite_Driver( $connection, '' );
+	}
+
+	public function testDatabaseNameMismatch(): void {
+		$pdo        = new PDO( 'sqlite::memory:' );
+		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
+
+		// Create a driver with database name 'db-one'.
+		new WP_SQLite_Driver( $connection, 'db-one' );
+
+		// Create another driver with the same name - no errors.
+		new WP_SQLite_Driver( $connection, 'db-one' );
+
+		// Create a driver with a different name - failure.
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "Incorrect database name. The database was created with name 'db-one', but 'db-two' is used in the current session." );
+		new WP_SQLite_Driver( $connection, 'db-two' );
+	}
+
+	public function testDatabaseNameMismatchWithExistingInformationSchemaTableData(): void {
+		$pdo        = new PDO( 'sqlite::memory:' );
+		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
+
+		// Create a driver with database name 'db-one'.
+		$driver = new WP_SQLite_Driver( $connection, 'db-one' );
+
+		// Create a table so that there is a record in the information schema.
+		$driver->query( 'CREATE TABLE t (id INT)' );
+
+		// Delete all variables, including driver version and database name.
+		$pdo->exec( sprintf( 'DELETE FROM %s', WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME ) );
+
+		// Create a driver with a different name - failure.
+		// An information schema record with a different database name already exists.
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "Incorrect database name. The database was created with name 'db-one', but 'db-two' is used in the current session." );
+		new WP_SQLite_Driver( $connection, 'db-two' );
 	}
 }
