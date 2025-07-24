@@ -408,6 +408,12 @@ class WP_SQLite_DB extends wpdb {
 	 *                  affected/selected for all other queries. Boolean false on error.
 	 */
 	public function query( $query ) {
+		// Query Monitor integration:
+		$query_monitor_active = defined( 'SQLITE_QUERY_MONITOR_LOADED' ) && SQLITE_QUERY_MONITOR_LOADED;
+		if ( $query_monitor_active && $this->show_errors ) {
+			$this->hide_errors();
+		}
+
 		if ( ! $this->ready ) {
 			return false;
 		}
@@ -426,6 +432,9 @@ class WP_SQLite_DB extends wpdb {
 
 		// Keep track of the last query for debug.
 		$this->last_query = $query;
+
+		// Save the query count before running another query.
+		$last_query_count = count( $this->queries ?? array() );
 
 		/*
 		 * @TODO: WPDB uses "$this->check_current_query" to check table/column
@@ -478,6 +487,35 @@ class WP_SQLite_DB extends wpdb {
 			$return_val     = $num_rows;
 		}
 
+		// Query monitor integration:
+		if ( $query_monitor_active && class_exists( 'QM_Backtrace' ) ) {
+			if ( did_action( 'qm/cease' ) ) {
+				$this->queries = array();
+			}
+
+			$i = $last_query_count;
+			if ( ! isset( $this->queries[ $i ] ) ) {
+				return $return_val;
+			}
+
+			$this->queries[ $i ]['trace'] = new QM_Backtrace();
+			if ( ! isset( $this->queries[ $i ][3] ) ) {
+				$this->queries[ $i ][3] = $this->time_start;
+			}
+
+			if ( $this->last_error && ! $this->suppress_errors ) {
+				$this->queries[ $i ]['result'] = new WP_Error( 'qmdb', $this->last_error );
+			} else {
+				$this->queries[ $i ]['result'] = (int) $return_val;
+			}
+
+			// Add SQLite query data.
+			if ( $this->dbh instanceof WP_SQLite_Driver ) {
+				$this->queries[ $i ]['sqlite_queries'] = $this->dbh->get_last_sqlite_queries();
+			} else {
+				$this->queries[ $i ]['sqlite_queries'] = $this->dbh->executed_sqlite_queries;
+			}
+		}
 		return $return_val;
 	}
 
