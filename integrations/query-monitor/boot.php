@@ -39,7 +39,9 @@ if ( defined( 'WP_INSTALLING' ) && WP_INSTALLING ) {
 }
 
 if ( 'cli' === php_sapi_name() && ! defined( 'QM_TESTS' ) ) {
-	return;
+	if ( ! defined( 'QM_RUN_IN_CLI' ) || ! QM_RUN_IN_CLI ) {
+		return;
+	}
 }
 
 if ( defined( 'DOING_CRON' ) && DOING_CRON ) {
@@ -54,6 +56,10 @@ if ( is_admin() ) {
 	if ( isset( $_POST['action'] ) && 'update-plugin' === $_POST['action'] ) {
 		return;
 	}
+}
+
+if ( ! isset( $wpdb ) ) {
+	return;
 }
 
 // 2. Check if Query Monitor is active.
