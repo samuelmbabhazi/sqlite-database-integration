@@ -39,9 +39,7 @@ if ( defined( 'WP_INSTALLING' ) && WP_INSTALLING ) {
 }
 
 if ( 'cli' === php_sapi_name() && ! defined( 'QM_TESTS' ) ) {
-	if ( ! defined( 'QM_RUN_IN_CLI' ) || ! QM_RUN_IN_CLI ) {
-		return;
-	}
+	return;
 }
 
 if ( defined( 'DOING_CRON' ) && DOING_CRON ) {
