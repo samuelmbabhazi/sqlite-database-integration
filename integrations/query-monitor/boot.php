@@ -69,17 +69,20 @@ if ( null === $wpdb->options ) {
 
 $query_monitor_active = false;
 try {
-	$value                = $wpdb->get_row(
+	$value = $wpdb->get_row(
 		$wpdb->prepare(
 			"SELECT option_value FROM $wpdb->options WHERE option_name = %s LIMIT 1",
 			'active_plugins'
 		)
 	);
-	$query_monitor_active = in_array(
-		'query-monitor/query-monitor.php',
-		unserialize( $value->option_value ),
-		true
-	);
+	// $value may be null on multisites
+	if ( null !== $value ) {
+		$query_monitor_active = in_array(
+			'query-monitor/query-monitor.php',
+			unserialize( $value->option_value ),
+			true
+		);
+	}
 } catch ( Throwable $e ) {
 	return;
 }
