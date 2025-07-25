@@ -75,7 +75,10 @@ try {
 			'active_plugins'
 		)
 	);
-	// $value may be null on multisites
+	/**
+	 * $value may be null during WordPress Playground multisite setup.
+	 * @see https://github.com/WordPress/sqlite-database-integration/pull/219.
+	 */
 	if ( null !== $value ) {
 		$query_monitor_active = in_array(
 			'query-monitor/query-monitor.php',
