@@ -400,6 +400,16 @@ class WP_SQLite_Driver {
 	private $transaction_level = 0;
 
 	/**
+	 * Whether a MySQL table lock is active.
+	 *
+	 * Set to "true" when a lock is acquired using the MySQL LOCK statement.
+	 * Set to "false" when locks are released using the MySQL UNLOCK statement.
+	 *
+	 * @var bool
+	 */
+	private $table_lock_active = false;
+
+	/**
 	 * The PDO fetch mode used for the emulated query.
 	 *
 	 * @var mixed
@@ -666,64 +676,34 @@ class WP_SQLite_Driver {
 				throw $this->new_driver_exception( 'Multi-query is not supported.' );
 			}
 
-			// Handle transaction commands.
-
 			/*
+			 * Determine if we need to wrap the translated queries in a transaction.
+			 *
 			 * [GRAMMAR]
-			 * beginWork: BEGIN_SYMBOL WORK_SYMBOL?
+			 * query:
+			 *   EOF
+			 *   | (simpleStatement | beginWork) (SEMICOLON_SYMBOL EOF? | EOF)
 			 */
-			$child = $ast->get_first_child();
-			if ( $child instanceof WP_Parser_Node && 'beginWork' === $child->rule_name ) {
+			$child_node = $ast->get_first_child_node();
+			if (
+				null === $child_node
+				|| 'beginWork' === $child_node->rule_name
+				|| $child_node->has_child_node( 'transactionOrLockingStatement' )
+			) {
+				$wrap_in_transaction = false;
+			} else {
+				$wrap_in_transaction = true;
+			}
+
+			if ( $wrap_in_transaction ) {
 				$this->begin_transaction();
-				return true;
 			}
 
-			if ( $child instanceof WP_Parser_Node && 'simpleStatement' === $child->rule_name ) {
-				/*
-				 * [GRAMMAR]
-				 * transactionOrLockingStatement:
-				 *   transactionStatement | savepointStatement | lockStatement | xaStatement
-				 */
-				$subchild = $child->get_first_child_node( 'transactionOrLockingStatement' );
-				if ( null !== $subchild ) {
-					$tokens = $subchild->get_descendant_tokens();
-					$token1 = $tokens[0];
-					$token2 = $tokens[1] ?? null;
-					if (
-						WP_MySQL_Lexer::START_SYMBOL === $token1->id
-						&& WP_MySQL_Lexer::TRANSACTION_SYMBOL === $token2->id
-					) {
-						$this->begin_transaction();
-						return true;
-					}
-
-					if (
-						WP_MySQL_Lexer::BEGIN_SYMBOL === $token1->id
-					) {
-						$this->begin_transaction();
-						return true;
-					}
-
-					if (
-						WP_MySQL_Lexer::COMMIT_SYMBOL === $token1->id
-					) {
-						$this->commit();
-						return true;
-					}
-
-					if (
-						WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token1->id
-					) {
-						$this->rollback();
-						return true;
-					}
-				}
-			}
-
-			// Perform all the queries in a nested transaction.
-			$this->begin_transaction();
 			$this->execute_mysql_query( $ast );
-			$this->commit();
+
+			if ( $wrap_in_transaction ) {
+				$this->commit();
+			}
 			return $this->last_return_value;
 		} catch ( Throwable $e ) {
 			try {
@@ -832,7 +812,8 @@ class WP_SQLite_Driver {
 			 */
 			$this->execute_sqlite_query( $this->is_readonly ? 'BEGIN' : 'BEGIN IMMEDIATE' );
 		} else {
-			$this->execute_sqlite_query( 'SAVEPOINT LEVEL' . $this->transaction_level );
+			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
+			$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
 		}
 		++$this->transaction_level;
 	}
@@ -849,7 +830,8 @@ class WP_SQLite_Driver {
 		if ( 0 === $this->transaction_level ) {
 			$this->execute_sqlite_query( 'COMMIT' );
 		} else {
-			$this->execute_sqlite_query( 'RELEASE SAVEPOINT LEVEL' . $this->transaction_level );
+			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
+			$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
 		}
 	}
 
@@ -865,7 +847,8 @@ class WP_SQLite_Driver {
 		if ( 0 === $this->transaction_level ) {
 			$this->execute_sqlite_query( 'ROLLBACK' );
 		} else {
-			$this->execute_sqlite_query( 'ROLLBACK TO SAVEPOINT LEVEL' . $this->transaction_level );
+			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
+			$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
 		}
 	}
 
@@ -895,6 +878,11 @@ class WP_SQLite_Driver {
 			);
 		}
 
+		if ( 'beginWork' === $children[0]->rule_name ) {
+			$this->begin_transaction();
+			return;
+		}
+
 		if ( 'simpleStatement' !== $children[0]->rule_name ) {
 			throw $this->new_driver_exception(
 				sprintf( 'Expected "simpleStatement" node, got: "%s"', $children[0]->rule_name )
@@ -904,6 +892,9 @@ class WP_SQLite_Driver {
 		// Process the "simpleStatement" AST node.
 		$node = $children[0]->get_first_child_node();
 		switch ( $node->rule_name ) {
+			case 'transactionOrLockingStatement':
+				$this->execute_transaction_or_locking_statement( $node );
+				break;
 			case 'selectStatement':
 				$this->is_readonly = true;
 				$this->execute_select_statement( $node );
@@ -1015,6 +1006,122 @@ class WP_SQLite_Driver {
 					sprintf( 'statement type: "%s"', $node->rule_name )
 				);
 		}
+	}
+
+	/**
+	 * Execute a MySQL transaction or locking statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "transactionOrLockingStatement" AST node.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_transaction_or_locking_statement( WP_Parser_Node $node ): void {
+		$subnode = $node->get_first_child_node();
+		$token   = $node->get_first_descendant_token();
+
+		switch ( $subnode->rule_name ) {
+			case 'transactionStatement':
+				// START TRANSACTION.
+				if ( WP_MySQL_Lexer::START_SYMBOL === $token->id ) {
+					$this->begin_transaction();
+					return;
+				}
+
+				// COMMIT.
+				if ( WP_MySQL_Lexer::COMMIT_SYMBOL === $token->id ) {
+					$this->commit();
+					return;
+				}
+
+				break;
+			case 'savepointStatement':
+				$savepoint_name = $this->translate( $subnode->get_first_child_node( 'identifier' ) );
+
+				// ROLLBACK/ROLLBACK TO SAVEPOINT <identifier>.
+				if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token->id ) {
+					if ( null === $savepoint_name ) {
+						$this->rollback();
+					} else {
+						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
+					}
+					return;
+				}
+
+				// SAVEPOINT.
+				if ( WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $token->id ) {
+					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
+					return;
+				}
+
+				// RELEASE SAVEPOINT.
+				if ( WP_MySQL_Lexer::RELEASE_SYMBOL === $token->id ) {
+					$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
+					return;
+				}
+
+				break;
+			case 'lockStatement':
+				// LOCK TABLE/LOCK TABLES.
+				if (
+					WP_MySQL_Lexer::LOCK_SYMBOL === $token->id
+					&& $subnode->has_child_node( 'lockItem' )
+				) {
+					// Check if the table(s) exists.
+					$lock_items = $subnode->get_child_nodes( 'lockItem' );
+					foreach ( $lock_items as $lock_item ) {
+						$table_name = $this->unquote_sqlite_identifier(
+							$this->translate( $lock_item->get_first_child_node( 'tableRef' ) )
+						);
+						try {
+							/*
+							* Attempt to query the table directly rather than checking
+							* SQLite schema or information schema tables, so that we
+							* can handle persistent and temporary tables in one query.
+							*/
+							$this->execute_sqlite_query(
+								sprintf( 'SELECT 1 FROM %s LIMIT 0', $table_name )
+							);
+						} catch ( PDOException $e ) {
+							throw $this->new_driver_exception(
+								sprintf( "Table '%s.%s' doesn't exist", $this->db_name, $table_name ),
+								'42S02'
+							);
+						}
+					}
+
+					// Start a transaction when no top-level transaction is active.
+					if ( 0 === $this->transaction_level ) {
+						$this->begin_transaction();
+						$this->table_lock_active = true;
+					}
+					return;
+				}
+
+				// UNLOCK TABLES/UNLOCK TABLE.
+				if (
+					WP_MySQL_Lexer::UNLOCK_SYMBOL === $token->id
+					&& (
+						$subnode->has_child_token( WP_MySQL_Lexer::TABLE_SYMBOL )
+						|| $subnode->has_child_token( WP_MySQL_Lexer::TABLES_SYMBOL )
+					)
+				) {
+					// Commit the transaction when created by the LOCK statement.
+					if ( 1 === $this->transaction_level && $this->table_lock_active ) {
+						$this->commit();
+						$this->table_lock_active = false;
+					}
+					return;
+				}
+
+				break;
+		}
+
+		throw $this->new_not_supported_exception(
+			sprintf(
+				'statement type: "%s" > "%s"',
+				$node->rule_name,
+				$subnode->rule_name
+			)
+		);
 	}
 
 	/**
@@ -1621,11 +1728,11 @@ class WP_SQLite_Driver {
 		switch ( $keyword1->id ) {
 			case WP_MySQL_Lexer::DATABASES_SYMBOL:
 				$this->execute_show_databases_statement( $node );
-				break;
+				return;
 			case WP_MySQL_Lexer::COLUMNS_SYMBOL:
 			case WP_MySQL_Lexer::FIELDS_SYMBOL:
 				$this->execute_show_columns_statement( $node );
-				break;
+				return;
 			case WP_MySQL_Lexer::CREATE_SYMBOL:
 				if ( WP_MySQL_Lexer::TABLE_SYMBOL === $keyword2->id ) {
 					$table_name = $this->unquote_sqlite_identifier(
@@ -1648,7 +1755,7 @@ class WP_SQLite_Driver {
 					}
 					return;
 				}
-				// Fall through to default.
+				break;
 			case WP_MySQL_Lexer::INDEX_SYMBOL:
 			case WP_MySQL_Lexer::INDEXES_SYMBOL:
 			case WP_MySQL_Lexer::KEYS_SYMBOL:
@@ -1656,7 +1763,7 @@ class WP_SQLite_Driver {
 					$this->translate( $node->get_first_child_node( 'tableRef' ) )
 				);
 				$this->execute_show_index_statement( $table_name );
-				break;
+				return;
 			case WP_MySQL_Lexer::GRANTS_SYMBOL:
 				$this->set_results_from_fetched_data(
 					array(
@@ -1668,22 +1775,22 @@ class WP_SQLite_Driver {
 				return;
 			case WP_MySQL_Lexer::TABLE_SYMBOL:
 				$this->execute_show_table_status_statement( $node );
-				break;
+				return;
 			case WP_MySQL_Lexer::TABLES_SYMBOL:
 				$this->execute_show_tables_statement( $node );
-				break;
+				return;
 			case WP_MySQL_Lexer::VARIABLES_SYMBOL:
 				$this->last_result = true;
 				return;
-			default:
-				throw $this->new_not_supported_exception(
-					sprintf(
-						'statement type: "%s" > "%s"',
-						$node->rule_name,
-						$keyword1->get_value()
-					)
-				);
 		}
+
+		throw $this->new_not_supported_exception(
+			sprintf(
+				'statement type: "%s" > "%s"',
+				$node->rule_name,
+				$keyword1->get_value()
+			)
+		);
 	}
 
 	/**
@@ -2706,6 +2813,17 @@ class WP_SQLite_Driver {
 	private function translate_pure_identifier( WP_Parser_Node $node ): string {
 		$token = $node->get_first_child_token();
 		$value = $token->get_value();
+
+		if ( str_starts_with( $value, self::RESERVED_PREFIX ) ) {
+			throw $this->new_driver_exception(
+				sprintf(
+					"Invalid identifier '%s', prefix '%s' is reserved",
+					$value,
+					self::RESERVED_PREFIX
+				)
+			);
+		}
+
 		return '`' . str_replace( '`', '``', $value ) . '`';
 	}
 
@@ -2726,8 +2844,7 @@ class WP_SQLite_Driver {
 		?WP_Parser_Node $object_node = null,
 		?WP_Parser_Node $child_node = null
 	): string {
-		$parts                = array();
-		$uses_reserved_prefix = false;
+		$parts = array();
 
 		// Database name.
 		$is_information_schema = 'information_schema' === $this->db_name;
@@ -2776,38 +2893,16 @@ class WP_SQLite_Driver {
 				);
 				$parts[]     = $this->information_schema_builder->get_table_name( false, $object_name );
 			} else {
-				$quoted_object_name = $this->translate( $object_node );
-				$object_name        = $this->unquote_sqlite_identifier( $quoted_object_name );
-				if ( str_starts_with( $object_name, self::RESERVED_PREFIX ) ) {
-					$uses_reserved_prefix = true;
-				}
-				$parts[] = $quoted_object_name;
+				$parts[] = $this->translate( $object_node );
 			}
 		}
 
 		// Object child name (column, index, etc.).
 		if ( null !== $child_node ) {
-			$quoted_object_name = $this->translate( $child_node );
-			$object_name        = $this->unquote_sqlite_identifier( $quoted_object_name );
-			if ( str_starts_with( $object_name, self::RESERVED_PREFIX ) ) {
-				$uses_reserved_prefix = true;
-			}
-			$parts[] = $quoted_object_name;
+			$parts[] = $this->translate( $child_node );
 		}
 
-		$identifier = implode( '.', $parts );
-
-		if ( true === $uses_reserved_prefix ) {
-			throw $this->new_driver_exception(
-				sprintf(
-					"Invalid identifier %s, prefix '%s' is reserved",
-					$identifier,
-					self::RESERVED_PREFIX
-				)
-			);
-		}
-
-		return $identifier;
+		return implode( '.', $parts );
 	}
 
 	/**
@@ -4034,6 +4129,19 @@ class WP_SQLite_Driver {
 		// Prefix the original index name with the table name.
 		// This is to avoid conflicting index names in SQLite.
 		return $mysql_table_name . '__' . $mysql_index_name;
+	}
+
+	/**
+	 * Get an internal savepoint name.
+	 *
+	 * Internal savepoints are used to emulate MySQL transactions that are run
+	 * inside a wrapping SQLite transaction, as transactions can't be nested.
+	 *
+	 * @param  int $level The transaction nesting level.
+	 * @return string     The internal savepoint name.
+	 */
+	private function get_internal_savepoint_name( int $level ): string {
+		return sprintf( '%ssavepoint_%d', self::RESERVED_PREFIX, $level );
 	}
 
 	/**
