@@ -21,7 +21,7 @@ if ( ! defined( 'QM_DB_SYMLINK' ) ) {
 	define( 'QM_DB_SYMLINK', false );
 }
 
-// 1. Check if we should load Query Monitor (as per the original "db.php" file).
+// Check if we should load Query Monitor (as per the original "db.php" file).
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -56,12 +56,60 @@ if ( is_admin() ) {
 	}
 }
 
+/*
+ * Register SQLite enhancements for Query Monitor when plugins are loaded.
+ *
+ * This will also ensure that the plugin Query Monitor is fully initialized even
+ * when we can't load it eagerly, e.g. on a multisite install.
+ */
+function register_sqlite_enhancements_for_query_monitor() {
+	if ( ! class_exists( 'QM_Backtrace' ) ) {
+		return;
+	}
+
+	require_once __DIR__ . '/plugin.php';
+
+	if ( ! defined( 'SQLITE_QUERY_MONITOR_LOADED' ) ) {
+		define( 'SQLITE_QUERY_MONITOR_LOADED', true );
+	}
+}
+
+if ( function_exists( 'add_action' ) ) {
+	add_action( 'plugins_loaded', 'register_sqlite_enhancements_for_query_monitor' );
+}
+
+/*
+ * On a multisite install, we can't easily determine the current site eagerly.
+ * Therefore, let's bail out and let Query Monitor activate later as a plugin.
+ */
+if ( is_multisite() ) {
+	return;
+}
+
+/*
+ * Now, let's try to load Query Monitor eagerly, to start logging queries early.
+ * When the plugin is installed, we will check the database if it is also active.
+ */
 global $wpdb;
 if ( ! isset( $wpdb ) ) {
 	return;
 }
 
-// 2. Check if Query Monitor is active.
+// Check if Query Monitor is installed.
+if ( defined( 'WP_PLUGIN_DIR' ) ) {
+	$plugins_dir = WP_PLUGIN_DIR;
+} else {
+	$plugins_dir = WP_CONTENT_DIR . '/plugins';
+}
+
+$qm_dir = "{$plugins_dir}/query-monitor";
+$qm_php = "{$qm_dir}/classes/PHP.php";
+
+if ( ! is_readable( $qm_php ) ) {
+	return;
+}
+
+// Check if Query Monitor is active.
 if ( null === $wpdb->options ) {
 	global $table_prefix;
 	$wpdb->set_prefix( $table_prefix ?? '' );
@@ -69,16 +117,16 @@ if ( null === $wpdb->options ) {
 
 $query_monitor_active = false;
 try {
-	$value = $wpdb->get_row(
+	// Make sure no errors are displayed when the query fails.
+	$show_errors = $wpdb->hide_errors();
+	$value       = $wpdb->get_row(
 		$wpdb->prepare(
 			"SELECT option_value FROM $wpdb->options WHERE option_name = %s LIMIT 1",
 			'active_plugins'
 		)
 	);
-	/**
-	 * $value may be null during WordPress Playground multisite setup.
-	 * @see https://github.com/WordPress/sqlite-database-integration/pull/219.
-	 */
+	$wpdb->show_errors( $show_errors );
+
 	if ( null !== $value ) {
 		$query_monitor_active = in_array(
 			'query-monitor/query-monitor.php',
@@ -94,20 +142,7 @@ if ( ! $query_monitor_active ) {
 	return;
 }
 
-// 3. Determine the plugins directory.
-if ( defined( 'WP_PLUGIN_DIR' ) ) {
-	$plugins_dir = WP_PLUGIN_DIR;
-} else {
-	$plugins_dir = WP_CONTENT_DIR . '/plugins';
-}
-
-// 4. Load Query Monitor (as per the original "db.php" file).
-$qm_dir = "{$plugins_dir}/query-monitor";
-$qm_php = "{$qm_dir}/classes/PHP.php";
-
-if ( ! is_readable( $qm_php ) ) {
-	return;
-}
+// Load Query Monitor eagerly (as per the original "db.php" file).
 require_once $qm_php;
 
 if ( ! QM_PHP::version_met() ) {
@@ -129,14 +164,5 @@ if ( ! defined( 'SAVEQUERIES' ) ) {
 	define( 'SAVEQUERIES', true );
 }
 
-// 5. Mark the Query Monitor integration as loaded.
+// Mark the Query Monitor integration as loaded.
 define( 'SQLITE_QUERY_MONITOR_LOADED', true );
-
-// 6. Register the SQLite enhancements for Query Monitor.
-function register_sqlite_enhancements_for_query_monitor() {
-	require_once __DIR__ . '/plugin.php';
-}
-
-if ( function_exists( 'add_action' ) ) {
-	add_action( 'plugins_loaded', 'register_sqlite_enhancements_for_query_monitor' );
-}
