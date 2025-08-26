@@ -2486,6 +2486,217 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * Translate a MySQL queryExpression with ORDER BY ambiguous column fix.
+	 *
+	 * When an ORDER BY clause contains unqualified column references that would be
+	 * ambiguous in SQLite but are unambiguous in the SELECT list, we qualify them 
+	 * using the SELECT list context.
+	 *
+	 * @param  WP_Parser_Node $node The "queryExpression" AST node.
+	 * @return string               The translated query fragment.
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	private function translate_query_expression_with_order_by_fix( WP_Parser_Node $node ): string {
+		// Check if this queryExpression has an orderClause
+		$order_clause = $node->get_first_descendant_node( 'orderClause' );
+		if ( null === $order_clause ) {
+			// No ORDER BY clause, proceed with normal translation
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		// Extract column qualifications from SELECT list
+		$select_column_qualifications = $this->extract_select_column_qualifications( $node );
+		
+		if ( empty( $select_column_qualifications ) ) {
+			// No qualified columns in SELECT, proceed with normal translation
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		// Translate all parts, but handle ORDER BY clause specially
+		$parts = array();
+		foreach ( $node->get_children() as $child ) {
+			if ( $child instanceof WP_Parser_Node && 'orderClause' === $child->rule_name ) {
+				$parts[] = $this->translate_order_clause_with_qualification( $child, $select_column_qualifications );
+			} else {
+				$part = $this->translate( $child );
+				if ( null !== $part ) {
+					$parts[] = $part;
+				}
+			}
+		}
+
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Extract column qualifications from the SELECT list of a query.
+	 *
+	 * Returns an associative array mapping unqualified column names to their
+	 * qualified equivalents when there's exactly one qualified reference.
+	 *
+	 * @param  WP_Parser_Node $query_expression The queryExpression node.
+	 * @return array                           Map of unqualified name => qualified name.
+	 */
+	private function extract_select_column_qualifications( WP_Parser_Node $query_expression ): array {
+		$qualifications = array();
+		
+		// Find all querySpecification nodes (there could be multiple in UNION queries)
+		$query_specs = $query_expression->get_descendant_nodes( 'querySpecification' );
+		
+		foreach ( $query_specs as $query_spec ) {
+			$select_item_list = $query_spec->get_first_child_node( 'selectItemList' );
+			if ( null === $select_item_list ) {
+				continue;
+			}
+
+			foreach ( $select_item_list->get_child_nodes( 'selectItem' ) as $select_item ) {
+				$this->analyze_select_item_for_qualification( $select_item, $qualifications );
+			}
+		}
+
+		// Filter to only include unambiguous qualifications
+		$unambiguous = array();
+		foreach ( $qualifications as $unqualified => $qualified_list ) {
+			if ( count( $qualified_list ) === 1 ) {
+				$unambiguous[ $unqualified ] = $qualified_list[0];
+			}
+		}
+
+		return $unambiguous;
+	}
+
+	/**
+	 * Analyze a SELECT item to extract column qualifications.
+	 *
+	 * @param WP_Parser_Node $select_item     The selectItem node.
+	 * @param array          $qualifications  Reference to qualifications array.
+	 */
+	private function analyze_select_item_for_qualification( WP_Parser_Node $select_item, array &$qualifications ): void {
+		// Look for columnRef nodes in the select item
+		$column_refs = $select_item->get_descendant_nodes( 'columnRef' );
+		
+		foreach ( $column_refs as $column_ref ) {
+			$field_identifier = $column_ref->get_first_descendant_node( 'fieldIdentifier' );
+			if ( null === $field_identifier ) {
+				continue;
+			}
+
+			$identifiers = $field_identifier->get_descendant_nodes( 'identifier' );
+			
+			// We're interested in qualified column references (table.column)
+			if ( count( $identifiers ) === 2 ) {
+				$table_name = $this->unquote_sqlite_identifier( $this->translate( $identifiers[0] ) );
+				$column_name = $this->unquote_sqlite_identifier( $this->translate( $identifiers[1] ) );
+				$qualified_name = $this->translate( $column_ref );
+				
+				// Store the qualification mapping
+				if ( ! isset( $qualifications[ $column_name ] ) ) {
+					$qualifications[ $column_name ] = array();
+				}
+				if ( ! in_array( $qualified_name, $qualifications[ $column_name ], true ) ) {
+					$qualifications[ $column_name ][] = $qualified_name;
+				}
+			}
+		}
+	}
+
+	/**
+	 * Translate an ORDER BY clause with column qualification.
+	 *
+	 * @param WP_Parser_Node $order_clause      The orderClause node.
+	 * @param array          $qualifications    Map of unqualified => qualified names.
+	 * @return string                          The translated ORDER BY clause.
+	 */
+	private function translate_order_clause_with_qualification( WP_Parser_Node $order_clause, array $qualifications ): string {
+		$parts = array();
+		
+		foreach ( $order_clause->get_children() as $child ) {
+			if ( $child instanceof WP_Parser_Node && 'orderList' === $child->rule_name ) {
+				$parts[] = $this->translate_order_list_with_qualification( $child, $qualifications );
+			} else {
+				$part = $this->translate( $child );
+				if ( null !== $part ) {
+					$parts[] = $part;
+				}
+			}
+		}
+		
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Translate an ORDER BY list with column qualification.
+	 *
+	 * @param WP_Parser_Node $order_list       The orderList node.
+	 * @param array          $qualifications   Map of unqualified => qualified names.
+	 * @return string                         The translated ORDER BY list.
+	 */
+	private function translate_order_list_with_qualification( WP_Parser_Node $order_list, array $qualifications ): string {
+		$parts = array();
+		
+		foreach ( $order_list->get_child_nodes( 'orderExpression' ) as $order_expr ) {
+			$parts[] = $this->translate_order_expression_with_qualification( $order_expr, $qualifications );
+		}
+		
+		return implode( ', ', $parts );
+	}
+
+	/**
+	 * Translate an ORDER BY expression with column qualification.
+	 *
+	 * @param WP_Parser_Node $order_expr       The orderExpression node.
+	 * @param array          $qualifications   Map of unqualified => qualified names.
+	 * @return string                         The translated ORDER BY expression.
+	 */
+	private function translate_order_expression_with_qualification( WP_Parser_Node $order_expr, array $qualifications ): string {
+		$parts = array();
+		
+		foreach ( $order_expr->get_children() as $child ) {
+			if ( $child instanceof WP_Parser_Node && 'expr' === $child->rule_name ) {
+				$parts[] = $this->translate_expr_with_qualification( $child, $qualifications );
+			} else {
+				$part = $this->translate( $child );
+				if ( null !== $part ) {
+					$parts[] = $part;
+				}
+			}
+		}
+		
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Translate an expression with column qualification for ORDER BY.
+	 *
+	 * @param WP_Parser_Node $expr            The expr node.
+	 * @param array          $qualifications  Map of unqualified => qualified names.
+	 * @return string                        The translated expression.
+	 */
+	private function translate_expr_with_qualification( WP_Parser_Node $expr, array $qualifications ): string {
+		// Check if this expression is a simple unqualified column reference
+		$column_ref = $expr->get_first_descendant_node( 'columnRef' );
+		if ( null !== $column_ref ) {
+			$field_identifier = $column_ref->get_first_descendant_node( 'fieldIdentifier' );
+			if ( null !== $field_identifier ) {
+				$identifiers = $field_identifier->get_descendant_nodes( 'identifier' );
+				
+				// Check if this is an unqualified column reference (just column name)
+				if ( count( $identifiers ) === 1 ) {
+					$column_name = $this->unquote_sqlite_identifier( $this->translate( $identifiers[0] ) );
+					
+					// If we have a qualification for this column, use it
+					if ( isset( $qualifications[ $column_name ] ) ) {
+						return $qualifications[ $column_name ];
+					}
+				}
+			}
+		}
+		
+		// Not a simple unqualified column reference, or no qualification available
+		return $this->translate( $expr );
+	}
+
+	/**
 	 * Translate a MySQL AST node or token to an SQLite query fragment.
 	 *
 	 * @param  WP_Parser_Node|WP_MySQL_Token $node The AST node to translate.
@@ -2512,6 +2723,8 @@ class WP_SQLite_Driver {
 
 		$rule_name = $node->rule_name;
 		switch ( $rule_name ) {
+			case 'queryExpression':
+				return $this->translate_query_expression_with_order_by_fix( $node );
 			case 'querySpecification':
 				// Translate "HAVING ..." without "GROUP BY ..." to "GROUP BY 1 HAVING ...".
 				if ( $node->has_child_node( 'havingClause' ) && ! $node->has_child_node( 'groupByClause' ) ) {
