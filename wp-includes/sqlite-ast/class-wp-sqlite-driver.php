@@ -227,6 +227,38 @@ class WP_SQLite_Driver {
 	);
 
 	/**
+	 * A stack of maps for resolving ORDER BY unqualified names to select-item expressions.
+	 *
+	 * Motivation:
+	 * - MySQL allows ORDER BY to reference output columns by their column names (or aliases)
+	 *   without qualification (e.g., ORDER BY name), and it resolves the reference against
+	 *   the SELECT list when unambiguous. SQLite requires the term to be either a positional
+	 *   index or a resolvable expression (e.g., t1.name) and will error on ambiguity. To provide
+	 *   MySQL-compatible behavior, we keep track of SELECT output names and their corresponding
+	 *   translated expressions so ORDER BY terms can be rewritten to safe expressions.
+	 *
+	 * Lifecycle:
+	 * - We push an empty frame at the start of translating a querySpecification (single SELECT).
+	 * - As each selectItem is translated, we record an output name → translated expression mapping:
+	 *   - Explicit alias: SELECT expr AS alias → alias → expr
+	 *   - Plain column ref: SELECT t1.name → name → t1.name
+	 *   - Computed expression without alias: SELECT CONCAT('a','b') → 'CONCAT(…)'
+	 * - If the same output name appears more than once, the entry is marked ambiguous (null).
+	 * - ORDER BY translation consults the top stack frame to resolve simple unqualified terms.
+	 * - We pop any frames pushed during the current queryExpression after its children are translated.
+	 *
+	 * Semantics:
+	 * - Only simple unqualified ORDER BY tokens (name or `name`) are considered for rewrite.
+	 * - If the name uniquely matches an output column in the current SELECT list, we rewrite the
+	 *   term to the recorded translated expression (e.g., `name` → `t1`.`name` or alias token).
+	 * - If the name is ambiguous or not found, we leave the ORDER BY term unchanged so SQLite can
+	 *   raise a meaningful error consistent with MySQL’s ambiguity rules.
+	 *
+	 * @var array<int, array<string, string|null>> Stack of frames: name(lowercase) → expression|null
+	 */
+	private $select_output_name_to_ordinal_stack = array();
+
+	/**
 	 * A map of MySQL data types to implicit default values for non-strict mode.
 	 *
 	 * In MySQL, when STRICT_TRANS_TABLES and STRICT_ALL_TABLES modes are disabled,
@@ -2513,6 +2545,11 @@ class WP_SQLite_Driver {
 		$rule_name = $node->rule_name;
 		switch ( $rule_name ) {
 			case 'querySpecification':
+				// Start a new SELECT-output frame so ORDER BY can resolve names against its related
+				// SELECT column list (and not, e.g., an unrelated subquery).
+				// We defer popping until the enclosing queryExpression finishes to ensure ORDER BY sees it.
+				$this->select_output_name_to_ordinal_stack[] = array();
+
 				// Translate "HAVING ..." without "GROUP BY ..." to "GROUP BY 1 HAVING ...".
 				if ( $node->has_child_node( 'havingClause' ) && ! $node->has_child_node( 'groupByClause' ) ) {
 					$parts = array();
@@ -2528,6 +2565,17 @@ class WP_SQLite_Driver {
 					return implode( ' ', $parts );
 				}
 				return $this->translate_sequence( $node->get_children() );
+			case 'queryExpression':
+				// Pop the recorded SELECT column names to avoid using them when translating a higher-level
+				// ORDER BY clause.
+				$depth_before = count( $this->select_output_name_to_ordinal_stack );
+				$result = $this->translate_sequence( $node->get_children() );
+				while ( count( $this->select_output_name_to_ordinal_stack ) > $depth_before ) {
+					array_pop( $this->select_output_name_to_ordinal_stack );
+				}
+				return $result;
+			case 'orderClause':
+				return $this->translate_order_clause_with_select_alias_resolution( $node );
 			case 'qualifiedIdentifier':
 			case 'tableRefWithWildcard':
 				$parts = $node->get_descendant_nodes( 'identifier' );
@@ -2927,6 +2975,159 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * Record a SELECT columns list to resolve ambiguous ORDER BY terms.
+	 *
+	 * @see https://github.com/WordPress/sqlite-database-integration/issues/228
+	 * @param string      $output_name             Output column name (alias, inferred name).
+	 * @param string|null $full_column_expression  Translated expression that produces the column value
+	 *                                            If null, defaults to quoting the name as an identifier.
+	 * @return void
+	 */
+	private function record_select_column_name_for_ambiguous_column_resolution( string $output_name, ?string $full_column_expression = null ): void {
+		if ( empty( $this->select_output_name_to_ordinal_stack ) ) {
+			return;
+		}
+		$normalized = strtolower( $output_name );
+		$frame_index = count( $this->select_output_name_to_ordinal_stack ) - 1;
+		$frame = $this->select_output_name_to_ordinal_stack[ $frame_index ];
+		if ( array_key_exists( $normalized, $frame ) ) {
+			$frame[ $normalized ] = null; // ambiguous
+		} else {
+			// Store the translated expression used in the SELECT list.
+			$frame[ $normalized ] = $full_column_expression ?? ('`' . $output_name . '`');
+		}
+		$this->select_output_name_to_ordinal_stack[ $frame_index ] = $frame;
+	}
+
+	/**
+	 * Translate ORDER BY and resolve ambiguous unqualified names against the current SELECT list.
+	 *
+	 * ## Problem
+	 * 
+	 * MySQL allows ORDER BY to reference output columns by their column names (or aliases)
+	 * without qualification (e.g., ORDER BY name), and it resolves the reference against
+	 * the SELECT list when unambiguous. SQLite requires the term to be either a positional
+	 * index or a resolvable expression (e.g., t1.name) and will error on ambiguity.
+	 * 
+	 * For example, given the following tables and data:
+	 * 
+	 * ```sql
+	 * CREATE TABLE t1 (id INT, name TEXT);
+	 * CREATE TABLE t2 (t1_id INT, name TEXT);
+	 *
+	 * INSERT INTO t1 (id, name) VALUES (1, "T1 A");
+	 * INSERT INTO t1 (id, name) VALUES (2, "T1 B");
+	 * INSERT INTO t2 (t1_id, name) VALUES (1, "T2 B");
+	 * INSERT INTO t2 (t1_id, name) VALUES (2, "T2 A");
+	 * ```
+	 * 
+	 * The following queries **error in SQLite but not in MySQL**:
+	 * 
+	 * ```sql
+	 * SELECT t1.name  -- name column used for ORDER BY in MySQL
+	 * FROM t1
+	 * JOIN t2 ON t2.t1_id = t1.id
+	 * ORDER BY name;
+	 * -- [MySQL]  T1 A, T1 B
+	 * -- [SQLite] Query Error: ambiguous column name: name
+	 * 
+	 * SELECT t2.name  -- name column used for ORDER BY in MySQL
+	 * FROM t1
+	 * JOIN t2 ON t2.t1_id = t1.id
+	 * ORDER BY name;
+	 * -- [MySQL]  T2 A, T2 B
+	 * -- [SQLite] Query Error: ambiguous column name: name
+	 * ```
+	 * 
+	 * ## Solution
+	 *
+	 * When we see a non-fully qualified column in an `ORDER BY` clause and the same column
+	 * is fully qualified and non-ambiguous in the `SELECT` list, we can use the same full
+	 * qualifier in the `ORDER BY` clause.
+	 * 
+	 * For example, the above queries are rewritten as:
+	 * 
+	 * ```sql
+	 * SELECT t1.name
+	 * FROM t1
+	 * JOIN t2 ON t2.t1_id = t1.id
+	 * ORDER BY t1.name;
+	 * 
+	 * SELECT t2.name
+	 * FROM t1
+	 * JOIN t2 ON t2.t1_id = t1.id
+	 * ORDER BY t2.name;
+	 * -- [MySQL]  T2 A, T2 B
+	 * -- [SQLite] T2 A, T2 B
+	 * ```
+	 * 
+	 * ## Limitations
+	 * 
+	 * This solution is limited to simple unqualified ORDER BY terms. Complex computed
+	 * expressions, wildcards, and other non-simple terms are not supported.
+	 *
+	 * @param WP_Parser_Node $order_clause The orderClause node.
+	 * @return string The translated ORDER BY clause.
+	 */
+	private function translate_order_clause_with_select_alias_resolution( WP_Parser_Node $order_clause ): string {
+		$order_list = $order_clause->get_first_child_node( 'orderList' );
+		if ( null === $order_list ) {
+			return $this->translate_sequence( $order_clause->get_children() );
+		}
+		$parts = array( 'ORDER BY' );
+		$order_items = array();
+		foreach ( $order_list->get_child_nodes( 'orderExpression' ) as $order_expr ) {
+			$expr_nodes = $order_expr->get_children();
+			$expr = $this->translate( $expr_nodes[0] );
+			$direction = null;
+			if ( isset( $expr_nodes[1] ) ) {
+				$direction = $this->translate( $expr_nodes[1] );
+			}
+
+			$resolved = $this->maybe_resolve_unqualified_order_term_to_select_expression( $expr );
+			if ( null !== $resolved ) {
+				$expr = (string) $resolved;
+			}
+			$order_items[] = trim( $expr . ( $direction ? ( ' ' . $direction ) : '' ) );
+		}
+		$parts[] = implode( ', ', $order_items );
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Try to resolve an ORDER BY term like `name` to a select-item ordinal when uniquely present.
+	 *
+	 * @param string $translated_expr The already-translated expression string for the term.
+	 * @return int|null Ordinal (1-based) if resolved; null otherwise.
+	 */
+	private function maybe_resolve_unqualified_order_term_to_select_expression( string $translated_expr ): ?string {
+		if ( empty( $this->select_output_name_to_ordinal_stack ) ) {
+			return null;
+		}
+		$frame = $this->select_output_name_to_ordinal_stack[ count( $this->select_output_name_to_ordinal_stack ) - 1 ];
+		// Only consider simple unqualified identifiers: `name` or name
+		$trimmed = trim( $translated_expr );
+		// Remove backticks if present for lookup purposes.
+		if ( strlen( $trimmed ) >= 2 && $trimmed[0] === '`' && substr( $trimmed, -1 ) === '`' ) {
+			$key = strtolower( substr( $trimmed, 1, -1 ) );
+		} else {
+			$key = strtolower( $trimmed );
+		}
+		// If expression contains a dot, function call, parentheses, or spaces, do not resolve.
+		if ( strpbrk( $key, ".() ") !== false ) {
+			return null;
+		}
+		if ( ! array_key_exists( $key, $frame ) ) {
+			return null;
+		}
+		$select_expr = $frame[ $key ];
+		if ( null === $select_expr ) {
+			return null; // ambiguous
+		}
+		return (string) $select_expr;
+	}
+
+	/**
 	 * Translate a MySQL LIKE expression to SQLite.
 	 *
 	 * @param WP_Parser_Node $node        The "predicateOperations" AST node.
@@ -3219,6 +3420,11 @@ class WP_SQLite_Driver {
 		// When an explicit alias is provided, we can use it as is.
 		$alias = $node->get_first_child_node( 'selectAlias' );
 		if ( $alias ) {
+			// Record explicit alias in the current select output map.
+			$this->record_select_column_name_for_ambiguous_column_resolution(
+				$this->unquote_sqlite_identifier( $this->translate( $alias->get_first_child() ) ),
+				$item
+			);
 			return $item;
 		}
 
@@ -3233,7 +3439,17 @@ class WP_SQLite_Driver {
 		 * In this case, SQLite uses the same logic as MySQL, so using the value
 		 * as is without adding an explicit alias will produce the correct result.
 		 */
-		$column_ref    = $node->get_first_descendant_node( 'columnRef' );
+		$column_ref = $node->get_first_descendant_node( 'columnRef' );
+		if ( $column_ref ) {
+			// Record inferred output name from column reference (the final column name part).
+			$identifiers = $column_ref->get_descendant_nodes( 'identifier' );
+			if ( ! empty( $identifiers ) ) {
+				// For qualified references like t1.name, the last identifier is the column name.
+				$last_identifier = end( $identifiers );
+				$column_name = $this->unquote_sqlite_identifier( $this->translate( $last_identifier ) );
+				$this->record_select_column_name_for_ambiguous_column_resolution( $column_name, $item );
+			}
+		}
 		$is_column_ref = $column_ref && $item === $this->translate( $column_ref );
 		if ( $is_column_ref ) {
 			return $item;
@@ -3256,6 +3472,7 @@ class WP_SQLite_Driver {
 			// let's avoid unnecessary aliases ("SELECT `id` AS `id` FROM t").
 			return $item;
 		}
+		$this->record_select_column_name_for_ambiguous_column_resolution( $raw_alias );
 		return sprintf( '%s AS %s', $item, $alias );
 	}
 
