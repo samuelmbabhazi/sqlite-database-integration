@@ -94,25 +94,21 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	}
 
 	/**
-	 * Test MySQL-compatible ORDER BY name resolution with unqualified columns.
-	 * When a column name appears unqualified in ORDER BY and is unique in the SELECT list,
-	 * it should resolve to the SELECT expression (or alias) instead of causing an ambiguity error.
-	 *
-	 * This demonstrates the core issue: In MySQL this works, while SQLite would normally error on ambiguity.
-	 * We rewrite unqualified ORDER BY terms to the SELECT expression recorded for that output name.
+ 	 * Test for Query Error: ambiguous column name in ORDER BY clause
+ 	 * @see https://github.com/wordpress/sqlite-database-integration/issues/228
 	 */
 	public function testSelectOrderByAmbiguousColumnResolution(): void {
+		// This query works in MySQL, but in SQLite `ORDER BY name` is ambiguous. Let's confirm
+		// the SQLite driver can handle it.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`t1_id` = `t1`.`id` ORDER BY `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY name'
+		);
+
 		// Test with explicit aliases - should resolve to alias name
 		$this->assertQuery(
 			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`t1_id` = `t1`.`id` ORDER BY `t1_name`',
 			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY `t1_name`'
-		);
-
-		// This demonstrates the core issue: In MySQL this works, in SQLite it errors
-		// MySQL resolves the unqualified 'name' in ORDER BY to the unique 'name' in SELECT list
-		$this->assertQuery(
-			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`t1_id` = `t1`.`id` ORDER BY `t1`.`name`',
-			'SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY name'
 		);
 
 		// It should also work with multiple ambiguous columns.
