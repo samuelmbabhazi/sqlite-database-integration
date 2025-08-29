@@ -227,33 +227,19 @@ class WP_SQLite_Driver {
 	);
 
 	/**
-	 * A stack of maps for resolving ORDER BY unqualified names to select-item expressions.
+	 * A stack of column maps for resolving unqualified ORDER BY names to select-item expressions.
+  	 *
+	 * Every query is a tree consisting of zero or more sub-SELECT queries. This stack keeps track
+  	 * of selected columns per SELECT. This map is then used to resolve ambiguities in the ORDER BY
+	 * clause, e.g.
 	 *
-	 * Motivation:
-	 * - MySQL allows ORDER BY to reference output columns by their column names (or aliases)
-	 *   without qualification (e.g., ORDER BY name), and it resolves the reference against
-	 *   the SELECT list when unambiguous. SQLite requires the term to be either a positional
-	 *   index or a resolvable expression (e.g., t1.name) and will error on ambiguity. To provide
-	 *   MySQL-compatible behavior, we keep track of SELECT output names and their corresponding
-	 *   translated expressions so ORDER BY terms can be rewritten to safe expressions.
-	 *
-	 * Lifecycle:
-	 * - We push an empty frame at the start of translating a querySpecification (single SELECT).
-	 * - As each selectItem is translated, we record an output name → translated expression mapping:
-	 *   - Explicit alias: SELECT expr AS alias → alias → expr
-	 *   - Plain column ref: SELECT t1.name → name → t1.name
-	 *   - Computed expression without alias: SELECT CONCAT('a','b') → 'CONCAT(…)'
-	 * - If the same output name appears more than once, the entry is marked ambiguous (null).
-	 * - ORDER BY translation consults the top stack frame to resolve simple unqualified terms.
-	 * - We pop any frames pushed during the current queryExpression after its children are translated.
-	 *
-	 * Semantics:
-	 * - Only simple unqualified ORDER BY tokens (name or `name`) are considered for rewrite.
-	 * - If the name uniquely matches an output column in the current SELECT list, we rewrite the
-	 *   term to the recorded translated expression (e.g., `name` → `t1`.`name` or alias token).
-	 * - If the name is ambiguous or not found, we leave the ORDER BY term unchanged so SQLite can
-	 *   raise a meaningful error consistent with MySQL’s ambiguity rules.
-	 *
+	 *     SELECT name from t1 JOIN t2 ORDER BY name
+  	 *
+	 * Becomes
+  	 *
+	 *     SELECT name from t1 JOIN t2 ORDER BY t1.name
+  	 *
+	 * @see https://github.com/wordpress/sqlite-database-integration/issues/228
 	 * @var array<int, array<string, string|null>> Stack of frames: name(lowercase) → expression|null
 	 */
 	private $select_output_name_to_ordinal_stack = array();
