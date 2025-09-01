@@ -2959,6 +2959,7 @@ class WP_SQLite_Driver {
 					continue;
 				}
 
+				$select_item_expr  = $this->unnest_parenthesized_expression( $select_item_expr );
 				$select_column_ref = $select_item->get_first_descendant_node( 'columnRef' );
 				if (
 					$select_column_ref
@@ -3022,6 +3023,46 @@ class WP_SQLite_Driver {
 		}
 
 		return $this->translate_sequence( $node->get_children() );
+	}
+
+	/**
+	 * Unnest parenthesized MySQL expression node.
+	 *
+	 * In MySQL, extra parentheses around simple expressions are not considered.
+	 *
+	 * For example, the "SELECT (((id)))" clause is equivalent to "SELECT id".
+	 * This means that the "(((id)))" part will behave as a column name rather
+	 * than as an expression, and the resulting column name will be just "id".
+	 *
+	 * @param  WP_Parser_Node $node The expression AST node.
+	 * @return WP_Parser_Node       The unnested expression.
+	 */
+	private function unnest_parenthesized_expression( WP_Parser_Node $node ): WP_Parser_Node {
+		$children = $node->get_children();
+
+		// Descend the "expr -> boolPri -> predicate -> bitExpr -> simpleExpr" tree,
+		// when on each level we have only a single child node (expression nesting).
+		if (
+			1 === count( $children )
+			&& $children[0] instanceof WP_Parser_Node
+			&& in_array( $children[0]->rule_name, array( 'expr', 'boolPri', 'predicate', 'bitExpr', 'simpleExpr' ), true )
+		) {
+			$unnested = $this->unnest_parenthesized_expression( $children[0] );
+			return $unnested === $children[0] ? $node : $unnested;
+		}
+
+		// Unnest "OPEN_PAR_SYMBOL exprList CLOSE_PAR_SYMBOL" to "exprList".
+		if (
+			count( $children ) === 3
+			&& $children[0] instanceof WP_MySQL_Token && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $children[0]->id
+			&& $children[1] instanceof WP_Parser_Node && 'exprList' === $children[1]->rule_name
+			&& $children[2] instanceof WP_MySQL_Token && WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $children[2]->id
+			&& 1 === count( $children[1]->get_children() )
+		) {
+			return $this->unnest_parenthesized_expression( $children[1] );
+		}
+
+		return $node;
 	}
 
 	/**
