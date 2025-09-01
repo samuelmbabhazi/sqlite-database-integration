@@ -1328,6 +1328,53 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testSelectOrderByAmbiguousColumnResolution(): void {
+		$this->driver->query( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->driver->query( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		// Ambiguous column in ORDER BY clause is disambiguated by the SELECT item list.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name'
+		);
+
+		// The ORDER BY direction is preserved when a column is disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name` DESC',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC'
+		);
+
+		// Multiple ambiguous columns in ORDER BY clause are also disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`id` , `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`id` DESC, `t1`.`name` ASC',
+			'SELECT t1.id, t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY id DESC, name ASC'
+		);
+
+		// The disambiguation works with subqueries.
+		$this->assertQuery(
+			'SELECT `name` FROM ( SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name` ) ORDER BY `name`',
+			'SELECT name FROM (SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name) ORDER BY name'
+		);
+
+		// The disambiguation works in both root and subquery contexts at the same time.
+		$this->assertQuery(
+			'SELECT `ta`.`name` FROM ( SELECT `t2`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t2`.`name` ) `ta` ORDER BY `ta`.`name`',
+			'SELECT ta.name FROM (SELECT t2.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name) ta ORDER BY name'
+		);
+
+		// When the SELECT list item uses an alias, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `name` DESC',
+			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC'
+		);
+
+		// When the ORDER BY item uses an alias, there is no ambiguity.
+		$this->assertQuery(
+			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`t1_id` = `t1`.`id` ORDER BY `t1_name` DESC',
+			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY `t1_name` DESC'
+		);
+	}
+
 	private function assertQuery( $expected, string $query ): void {
 		$error = null;
 		try {

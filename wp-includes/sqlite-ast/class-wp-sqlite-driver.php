@@ -2512,6 +2512,8 @@ class WP_SQLite_Driver {
 
 		$rule_name = $node->rule_name;
 		switch ( $rule_name ) {
+			case 'queryExpression':
+				return $this->translate_query_expression( $node );
 			case 'querySpecification':
 				// Translate "HAVING ..." without "GROUP BY ..." to "GROUP BY 1 HAVING ...".
 				if ( $node->has_child_node( 'havingClause' ) && ! $node->has_child_node( 'groupByClause' ) ) {
@@ -2903,6 +2905,123 @@ class WP_SQLite_Driver {
 		}
 
 		return implode( '.', $parts );
+	}
+
+	/**
+	 * Translate a MySQL query expression to SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "queryExpression" AST node.
+	 * @return string                     The translated value.
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	private function translate_query_expression( WP_Parser_Node $node ): string {
+		/*
+		 * When the ORDER BY clause is present, we need to make sure it doesn't
+		 * cause an "ambiguous column name" error.
+		 *
+		 * In SQLite, all column names that exist in multiple tables used in the
+		 * query must be fully qualified in the ORDER BY clause. In MySQL, these
+		 * can be disambiguated in the SELECT item list.
+		 *
+		 * For example, with tables "t1" and "t2" both having a "name" column,
+		 * the following query will cause an "ambiguous column name" error in
+		 * SQLite, but not in MySQL:
+		 *
+		 *   SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY name
+		 *
+		 * This is because MySQL first considers the "name" column that was used
+		 * in the SELECT list. If it is unambiguous, it will be used in ORDER BY.
+		 *
+		 * To address this, let's look for unqualified column references in the
+		 * ORDER BY clause and try to qualify them using the SELECT item list.
+		 * In other words, the above query will be rewritten as follows:
+		 *
+		 *   SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY t1.name
+		 *
+		 * Note that the ORDER BY column was rewritten from "name" to "t1.name".
+		 */
+		$disambiguated_order_list = array();
+		$order_clause             = $node->get_first_child_node( 'orderClause' );
+		if ( $order_clause ) {
+			$order_list       = $order_clause->get_first_child_node( 'orderList' );
+			$select_item_list = $node->get_first_descendant_node( 'selectItemList' );
+
+			// Get a list of column references used in the SELECT item list.
+			$select_column_refs = array();
+			foreach ( $select_item_list->get_child_nodes() as $select_item ) {
+				// When the SELECT item uses an alias, the column is not disambiguated.
+				if ( $select_item->has_child_node( 'selectAlias' ) ) {
+					continue;
+				}
+
+				$select_item_expr = $select_item->get_first_child_node( 'expr' );
+				if ( ! $select_item_expr ) {
+					continue;
+				}
+
+				$select_column_ref = $select_item->get_first_descendant_node( 'columnRef' );
+				if (
+					$select_column_ref
+					&& $this->translate( $select_item_expr ) === $this->translate( $select_column_ref )
+				) {
+					$select_column_refs[] = $select_column_ref;
+				}
+			}
+
+			// For each ORDER BY item, try to find a corresponding SELECT item.
+			foreach ( $order_list->get_child_nodes() as $order_item ) {
+				$order_expr       = $order_item->get_first_child_node( 'expr' );
+				$order_column_ref = $order_expr->get_first_descendant_node( 'columnRef' );
+
+				$select_item_matches = array();
+				if (
+					$order_column_ref
+					&& $this->translate( $order_column_ref ) === $this->translate( $order_expr )
+					&& null === $order_column_ref->get_first_descendant_node( 'dotIdentifier' )
+				) {
+					// Look for select items that match the column reference.
+					foreach ( $select_column_refs as $select_column_ref ) {
+						$dot_identifiers = $select_column_ref->get_descendant_nodes( 'dotIdentifier' );
+						if ( count( $dot_identifiers ) === 0 ) {
+							continue;
+						}
+
+						$last_dot_identifier = end( $dot_identifiers );
+						$select_column_name  = $this->translate( $last_dot_identifier->get_first_child_node() );
+						$order_column_name   = $this->translate( $order_column_ref );
+						if ( $select_column_name === $order_column_name ) {
+							$select_item_matches[] = $this->translate( $select_column_ref );
+						}
+					}
+				}
+
+				if ( 1 === count( $select_item_matches ) ) {
+					$direction             = $order_item->get_first_child_node( 'direction' );
+					$translated_order_item = sprintf(
+						'%s%s',
+						$select_item_matches[0],
+						null !== $direction ? ( ' ' . $this->translate( $direction ) ) : ''
+					);
+				} else {
+					$translated_order_item = $this->translate( $order_item );
+				}
+				$disambiguated_order_list[] = $translated_order_item;
+			}
+
+			// Translate the query expression, replacing the ORDER BY list with
+			// the one that was constructed using the disambiguation algorithm.
+			$parts = array();
+			foreach ( $node->get_children() as $child ) {
+				if ( $child instanceof WP_Parser_Node && 'orderClause' === $child->rule_name ) {
+					$parts[] = 'ORDER BY ' . implode( ', ', $disambiguated_order_list );
+				} else {
+					$parts[] = $this->translate( $child );
+				}
+			}
+			return implode( ' ', $parts );
+		}
+
+		return $this->translate_sequence( $node->get_children() );
 	}
 
 	/**
