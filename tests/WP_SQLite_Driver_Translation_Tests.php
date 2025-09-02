@@ -1380,6 +1380,18 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC'
 		);
 
+		// When the SELECT item list is ambiguous, the ORDER BY column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			'SELECT `t1`.`name` , `t2`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `name` DESC',
+			'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC'
+		);
+
+		// When the SELECT item list is ambiguous with an alias, the ORDER BY column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			"SELECT `t1`.`name` , 'test' AS `name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `name` DESC",
+			"SELECT t1.name, 'test' AS `name` FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC"
+		);
+
 		// When the ORDER BY item uses an alias, there is no ambiguity.
 		$this->assertQuery(
 			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`t1_id` = `t1`.`id` ORDER BY `t1_name` DESC',

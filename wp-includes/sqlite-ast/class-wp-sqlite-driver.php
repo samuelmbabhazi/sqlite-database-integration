@@ -2946,56 +2946,90 @@ class WP_SQLite_Driver {
 			$order_list       = $order_clause->get_first_child_node( 'orderList' );
 			$select_item_list = $node->get_first_descendant_node( 'selectItemList' );
 
-			// Get a list of column references used in the SELECT item list.
-			$select_column_refs = array();
+			// Create a map of SELECT item column names to their qualified values.
+			$disambiguation_map = array();
 			foreach ( $select_item_list->get_child_nodes() as $select_item ) {
-				// When the SELECT item uses an alias, the column is not disambiguated.
-				if ( $select_item->has_child_node( 'selectAlias' ) ) {
-					continue;
-				}
+				/*
+				 * [GRAMMAR]
+				 * selectItem: tableWild | (expr selectAlias?)
+				 */
 
+				// Skip when a "tableWild" node is used (no "expr" node).
 				$select_item_expr = $select_item->get_first_child_node( 'expr' );
 				if ( ! $select_item_expr ) {
 					continue;
 				}
 
-				$select_item_expr  = $this->unnest_parenthesized_expression( $select_item_expr );
-				$select_column_ref = $select_item->get_first_descendant_node( 'columnRef' );
-				if (
-					$select_column_ref
-					&& $this->translate( $select_item_expr ) === $this->translate( $select_column_ref )
-				) {
-					$select_column_refs[] = $select_column_ref;
+				// A SELECT item alias always needs to be preserved as-is.
+				$alias = $select_item->get_first_child_node( 'selectAlias' );
+				if ( $alias ) {
+					$alias_value                        = $this->translate( $alias->get_first_child_node() );
+					$disambiguation_map[ $alias_value ] = array( $alias_value );
+					continue;
 				}
+
+				// Skip when there is no column listed (no "columnRef" node).
+				$select_column_ref = $select_item_expr->get_first_descendant_node( 'columnRef' );
+				if ( ! $select_column_ref ) {
+					continue;
+				}
+
+				// Skip when the column reference is not qualified (no "dotIdentifier" node).
+				$dot_identifiers = $select_column_ref->get_descendant_nodes( 'dotIdentifier' );
+				if ( 0 === count( $dot_identifiers ) ) {
+					continue;
+				}
+
+				// Support also parenthesized column references (e.g. "(t.id)").
+				$select_item_expr = $this->unnest_parenthesized_expression( $select_item_expr );
+
+				// Consider only simple and parenthesized column references.
+				$expr_value   = $this->translate( $select_item_expr );
+				$column_value = $this->translate( $select_column_ref );
+				if ( $expr_value !== $column_value ) {
+					continue;
+				}
+
+				// The column name is the last "dotIdentifier" node.
+				$key = $this->translate( end( $dot_identifiers )->get_first_child_node() );
+
+				$disambiguation_map[ $key ]   = $disambiguation_map[ $key ] ?? array();
+				$disambiguation_map[ $key ][] = $column_value;
 			}
 
 			// For each ORDER BY item, try to find a corresponding SELECT item.
 			foreach ( $order_list->get_child_nodes() as $order_item ) {
+				/*
+				 * [GRAMMAR]
+				 * orderExpression: expr direction?
+				 */
 				$order_expr       = $order_item->get_first_child_node( 'expr' );
 				$order_column_ref = $order_expr->get_first_descendant_node( 'columnRef' );
 
-				$select_item_matches = array();
+				// Skip when there is no column in the ORDER BY item (no "columnRef" node),
+				// or when the item is already qualified (has a "dotIdentifier" node).
 				if (
-					$order_column_ref
-					&& $this->translate( $order_column_ref ) === $this->translate( $order_expr )
-					&& null === $order_column_ref->get_first_descendant_node( 'dotIdentifier' )
+					! $order_column_ref
+					|| null !== $order_column_ref->get_first_descendant_node( 'dotIdentifier' )
 				) {
-					// Look for select items that match the column reference.
-					foreach ( $select_column_refs as $select_column_ref ) {
-						$dot_identifiers = $select_column_ref->get_descendant_nodes( 'dotIdentifier' );
-						if ( count( $dot_identifiers ) === 0 ) {
-							continue;
-						}
-
-						$last_dot_identifier = end( $dot_identifiers );
-						$select_column_name  = $this->translate( $last_dot_identifier->get_first_child_node() );
-						$order_column_name   = $this->translate( $order_column_ref );
-						if ( $select_column_name === $order_column_name ) {
-							$select_item_matches[] = $this->translate( $select_column_ref );
-						}
-					}
+					$disambiguated_order_list[] = $this->translate( $order_item );
+					continue;
 				}
 
+				// Consider only simple and parenthesized order column references.
+				$order_expr_value   = $this->translate( $order_expr );
+				$order_column_value = $this->translate( $order_column_ref );
+				if ( $order_expr_value !== $order_column_value ) {
+					$disambiguated_order_list[] = $this->translate( $order_item );
+					continue;
+				}
+
+				// Look for select items that match the column reference.
+				$order_column_name   = $this->translate( $order_column_ref );
+				$select_item_matches = $disambiguation_map[ $order_column_name ] ?? array();
+
+				// When we find exactly one SELECT item, we can disambiguate the
+				// reference. Otherwise, fall back to the original ORDER BY item.
 				if ( 1 === count( $select_item_matches ) ) {
 					$direction             = $order_item->get_first_child_node( 'direction' );
 					$translated_order_item = sprintf(
