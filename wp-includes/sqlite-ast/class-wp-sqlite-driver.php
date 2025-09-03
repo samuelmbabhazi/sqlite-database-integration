@@ -2939,6 +2939,9 @@ class WP_SQLite_Driver {
 		 *   SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY t1.name
 		 *
 		 * Note that the ORDER BY column was rewritten from "name" to "t1.name".
+		 *
+		 * @TODO: When multi-database support is implemented, we'll also need to
+		 *        consider column references in forms like "db.table.column".
 		 */
 		$disambiguated_order_list = array();
 		$order_clause             = $node->get_first_child_node( 'orderClause' );
