@@ -3016,6 +3016,9 @@ class WP_SQLite_Driver {
 					continue;
 				}
 
+				// Support also parenthesized ORDER BY column references (e.g. "(id)").
+				$order_expr = $this->unnest_parenthesized_expression( $order_expr );
+
 				// Consider only simple and parenthesized order column references.
 				$order_expr_value   = $this->translate( $order_expr );
 				$order_column_value = $this->translate( $order_column_ref );

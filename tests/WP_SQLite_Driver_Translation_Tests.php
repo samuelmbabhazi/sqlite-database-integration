@@ -1368,10 +1368,22 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'SELECT (((t1.name))) FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name'
 		);
 
+		// When the ORDER BY item is nested in a simple parentheses expression, the disambiguation still works.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY (((name)))'
+		);
+
 		// When the SELECT item is nested in a complex expression, the column is not disambiguated (like in MySQL).
 		$this->assertQuery(
 			"SELECT (`t1`.`name` || 'test') AS `CONCAT(t1.name, 'test')` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `name`",
 			"SELECT CONCAT(t1.name, 'test') FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name"
+		);
+
+		// When the ORDER BY item is nested in a complex expression, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			"SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY ( `name` || 'test' )",
+			"SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY (name || 'test')"
 		);
 
 		// When the SELECT list item uses an alias, the column is not disambiguated (like in MySQL).
