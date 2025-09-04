@@ -2916,32 +2916,8 @@ class WP_SQLite_Driver {
 	 */
 	private function translate_query_expression( WP_Parser_Node $node ): string {
 		/*
-		 * When the ORDER BY clause is present, we need to make sure it doesn't
-		 * cause an "ambiguous column name" error.
-		 *
-		 * In SQLite, all column names that exist in multiple tables used in the
-		 * query must be fully qualified in the ORDER BY clause. In MySQL, these
-		 * can be disambiguated in the SELECT item list.
-		 *
-		 * For example, with tables "t1" and "t2" both having a "name" column,
-		 * the following query will cause an "ambiguous column name" error in
-		 * SQLite, but not in MySQL:
-		 *
-		 *   SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY name
-		 *
-		 * This is because MySQL first considers the "name" column that was used
-		 * in the SELECT list. If it is unambiguous, it will be used in ORDER BY.
-		 *
-		 * To address this, let's look for unqualified column references in the
-		 * ORDER BY clause and try to qualify them using the SELECT item list.
-		 * In other words, the above query will be rewritten as follows:
-		 *
-		 *   SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY t1.name
-		 *
-		 * Note that the ORDER BY column was rewritten from "name" to "t1.name".
-		 *
-		 * @TODO: When multi-database support is implemented, we'll also need to
-		 *        consider column references in forms like "db.table.column".
+		 * When the ORDER BY clause is present, we need to disambiguate the item
+		 * list and make sure they don't cause an "ambiguous column name" error.
 		 */
 		$disambiguated_order_list = array();
 		$order_clause             = $node->get_first_child_node( 'orderClause' );
@@ -2949,104 +2925,24 @@ class WP_SQLite_Driver {
 			$order_list       = $order_clause->get_first_child_node( 'orderList' );
 			$select_item_list = $node->get_first_descendant_node( 'selectItemList' );
 
-			// Create a map of SELECT item column names to their qualified values.
-			$disambiguation_map = array();
-			foreach ( $select_item_list->get_child_nodes() as $select_item ) {
-				/*
-				 * [GRAMMAR]
-				 * selectItem: tableWild | (expr selectAlias?)
-				 */
+			$disambiguation_map = $this->create_select_item_disambiguation_map( $select_item_list );
 
-				// Skip when a "tableWild" node is used (no "expr" node).
-				$select_item_expr = $select_item->get_first_child_node( 'expr' );
-				if ( ! $select_item_expr ) {
-					continue;
-				}
-
-				// A SELECT item alias always needs to be preserved as-is.
-				$alias = $select_item->get_first_child_node( 'selectAlias' );
-				if ( $alias ) {
-					$alias_value                        = $this->translate( $alias->get_first_child_node() );
-					$disambiguation_map[ $alias_value ] = array( $alias_value );
-					continue;
-				}
-
-				// Skip when there is no column listed (no "columnRef" node).
-				$select_column_ref = $select_item_expr->get_first_descendant_node( 'columnRef' );
-				if ( ! $select_column_ref ) {
-					continue;
-				}
-
-				// Skip when the column reference is not qualified (no "dotIdentifier" node).
-				$dot_identifiers = $select_column_ref->get_descendant_nodes( 'dotIdentifier' );
-				if ( 0 === count( $dot_identifiers ) ) {
-					continue;
-				}
-
-				// Support also parenthesized column references (e.g. "(t.id)").
-				$select_item_expr = $this->unnest_parenthesized_expression( $select_item_expr );
-
-				// Consider only simple and parenthesized column references.
-				$expr_value   = $this->translate( $select_item_expr );
-				$column_value = $this->translate( $select_column_ref );
-				if ( $expr_value !== $column_value ) {
-					continue;
-				}
-
-				// The column name is the last "dotIdentifier" node.
-				$key = $this->translate( end( $dot_identifiers )->get_first_child_node() );
-
-				$disambiguation_map[ $key ]   = $disambiguation_map[ $key ] ?? array();
-				$disambiguation_map[ $key ][] = $column_value;
-			}
-
-			// For each ORDER BY item, try to find a corresponding SELECT item.
+			// For each "orderList" item, search for a matching SELECT item.
+			$disambiguated_order_list = array();
 			foreach ( $order_list->get_child_nodes() as $order_item ) {
 				/*
 				 * [GRAMMAR]
 				 * orderExpression: expr direction?
 				 */
-				$order_expr       = $order_item->get_first_child_node( 'expr' );
-				$order_column_ref = $order_expr->get_first_descendant_node( 'columnRef' );
+				$order_expr         = $order_item->get_first_child_node( 'expr' );
+				$order_direction    = $order_item->get_first_child_node( 'direction' );
+				$disambiguated_item = $this->disambiguate_item( $disambiguation_map, $order_expr );
 
-				// Skip when there is no column in the ORDER BY item (no "columnRef" node),
-				// or when the item is already qualified (has a "dotIdentifier" node).
-				if (
-					! $order_column_ref
-					|| null !== $order_column_ref->get_first_descendant_node( 'dotIdentifier' )
-				) {
-					$disambiguated_order_list[] = $this->translate( $order_item );
-					continue;
-				}
-
-				// Support also parenthesized ORDER BY column references (e.g. "(id)").
-				$order_expr = $this->unnest_parenthesized_expression( $order_expr );
-
-				// Consider only simple and parenthesized order column references.
-				$order_expr_value   = $this->translate( $order_expr );
-				$order_column_value = $this->translate( $order_column_ref );
-				if ( $order_expr_value !== $order_column_value ) {
-					$disambiguated_order_list[] = $this->translate( $order_item );
-					continue;
-				}
-
-				// Look for select items that match the column reference.
-				$order_column_name   = $this->translate( $order_column_ref );
-				$select_item_matches = $disambiguation_map[ $order_column_name ] ?? array();
-
-				// When we find exactly one SELECT item, we can disambiguate the
-				// reference. Otherwise, fall back to the original ORDER BY item.
-				if ( 1 === count( $select_item_matches ) ) {
-					$direction             = $order_item->get_first_child_node( 'direction' );
-					$translated_order_item = sprintf(
-						'%s%s',
-						$select_item_matches[0],
-						null !== $direction ? ( ' ' . $this->translate( $direction ) ) : ''
-					);
-				} else {
-					$translated_order_item = $this->translate( $order_item );
-				}
-				$disambiguated_order_list[] = $translated_order_item;
+				$disambiguated_order_list[] = sprintf(
+					'%s%s',
+					$disambiguated_item ?? $this->translate( $order_expr ),
+					null !== $order_direction ? ( ' ' . $this->translate( $order_direction ) ) : ''
+				);
 			}
 
 			// Translate the query expression, replacing the ORDER BY list with
@@ -3063,46 +2959,6 @@ class WP_SQLite_Driver {
 		}
 
 		return $this->translate_sequence( $node->get_children() );
-	}
-
-	/**
-	 * Unnest parenthesized MySQL expression node.
-	 *
-	 * In MySQL, extra parentheses around simple expressions are not considered.
-	 *
-	 * For example, the "SELECT (((id)))" clause is equivalent to "SELECT id".
-	 * This means that the "(((id)))" part will behave as a column name rather
-	 * than as an expression, and the resulting column name will be just "id".
-	 *
-	 * @param  WP_Parser_Node $node The expression AST node.
-	 * @return WP_Parser_Node       The unnested expression.
-	 */
-	private function unnest_parenthesized_expression( WP_Parser_Node $node ): WP_Parser_Node {
-		$children = $node->get_children();
-
-		// Descend the "expr -> boolPri -> predicate -> bitExpr -> simpleExpr" tree,
-		// when on each level we have only a single child node (expression nesting).
-		if (
-			1 === count( $children )
-			&& $children[0] instanceof WP_Parser_Node
-			&& in_array( $children[0]->rule_name, array( 'expr', 'boolPri', 'predicate', 'bitExpr', 'simpleExpr' ), true )
-		) {
-			$unnested = $this->unnest_parenthesized_expression( $children[0] );
-			return $unnested === $children[0] ? $node : $unnested;
-		}
-
-		// Unnest "OPEN_PAR_SYMBOL exprList CLOSE_PAR_SYMBOL" to "exprList".
-		if (
-			count( $children ) === 3
-			&& $children[0] instanceof WP_MySQL_Token && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $children[0]->id
-			&& $children[1] instanceof WP_Parser_Node && 'exprList' === $children[1]->rule_name
-			&& $children[2] instanceof WP_MySQL_Token && WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $children[2]->id
-			&& 1 === count( $children[1]->get_children() )
-		) {
-			return $this->unnest_parenthesized_expression( $children[1] );
-		}
-
-		return $node;
 	}
 
 	/**
@@ -3831,6 +3687,175 @@ class WP_SQLite_Driver {
 			$fragment .= $value;
 		}
 		return $fragment;
+	}
+
+	/**
+	 * Unnest parenthesized MySQL expression node.
+	 *
+	 * In MySQL, extra parentheses around simple expressions are not considered.
+	 *
+	 * For example, the "SELECT (((id)))" clause is equivalent to "SELECT id".
+	 * This means that the "(((id)))" part will behave as a column name rather
+	 * than as an expression, and the resulting column name will be just "id".
+	 *
+	 * @param  WP_Parser_Node $node The expression AST node.
+	 * @return WP_Parser_Node       The unnested expression.
+	 */
+	private function unnest_parenthesized_expression( WP_Parser_Node $node ): WP_Parser_Node {
+		$children = $node->get_children();
+
+		// Descend the "expr -> boolPri -> predicate -> bitExpr -> simpleExpr" tree,
+		// when on each level we have only a single child node (expression nesting).
+		if (
+			1 === count( $children )
+			&& $children[0] instanceof WP_Parser_Node
+			&& in_array( $children[0]->rule_name, array( 'expr', 'boolPri', 'predicate', 'bitExpr', 'simpleExpr' ), true )
+		) {
+			$unnested = $this->unnest_parenthesized_expression( $children[0] );
+			return $unnested === $children[0] ? $node : $unnested;
+		}
+
+		// Unnest "OPEN_PAR_SYMBOL exprList CLOSE_PAR_SYMBOL" to "exprList".
+		if (
+			count( $children ) === 3
+			&& $children[0] instanceof WP_MySQL_Token && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $children[0]->id
+			&& $children[1] instanceof WP_Parser_Node && 'exprList' === $children[1]->rule_name
+			&& $children[2] instanceof WP_MySQL_Token && WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $children[2]->id
+			&& 1 === count( $children[1]->get_children() )
+		) {
+			return $this->unnest_parenthesized_expression( $children[1] );
+		}
+
+		return $node;
+	}
+
+	/**
+	 * Disambiguate and translate an expression with a simple or parenthesized
+	 * column reference for use within an ORDER BY, GROUP BY, or HAVING clause.
+	 *
+	 * In SQLite, columns that exist in multiple tables used within a query must
+	 * be fully qualified when used in the ORDER BY, GROUP BY, or HAVING clause.
+	 * In MySQL, these can be disambiguated using the SELECT item list.
+	 *
+	 * For example, when tables "t1" and "t2" both have a column called "name",
+	 * the following query will cause an "ambiguous column name" error in SQLite,
+	 * but it will succeed in MySQL, using the "t1.name" from the SELECT clause:
+	 *
+	 *   SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY name
+	 *
+	 * This is because MySQL primarily considers the "name" column that was used
+	 * in the SELECT list - when it is unambiguous, it will be used in ORDER BY.
+	 *
+	 * To emulate this behavior in SQLite, we will search for unqualified column
+	 * references in the ORDER BY, GROUP BY, or HAVING item expression, and try
+	 * to qualify them using the SELECT item list.
+	 *
+	 * In other words, the above query will be rewritten as follows:
+	 *
+	 *   SELECT t1.name FROM t1 JOIN t2 ON t2.t1_id = t1.id ORDER BY t1.name
+	 *
+	 * Note that the ORDER BY column was rewritten from "name" to "t1.name".
+	 *
+	 * @TODO: When multi-database support is implemented, we'll also need to
+	 *        consider column references in forms like "db.table.column".
+	 *
+	 * @param  array          $disambiguation_map The SELECT item disambiguation map (column name => array of select items).
+	 *                                            @see WP_SQLite_Driver::create_select_item_disambiguation_map()
+	 * @param  WP_Parser_Node $expr               The expression AST node or subnode.
+	 * @return string|null                        The disambiguated and translated expression;
+	 *                                            null when the expression cannot be disambiguated.
+	 */
+	private function disambiguate_item( array $disambiguation_map, WP_Parser_Node $expr ) {
+		// Skip when there is no column in the expression (no "columnRef" node),
+		// or when the column is already qualified (has a "dotIdentifier" node).
+		$column_ref = $expr->get_first_descendant_node( 'columnRef' );
+		if ( ! $column_ref || $column_ref->get_first_descendant_node( 'dotIdentifier' ) ) {
+			return null;
+		}
+
+		// Support also parenthesized column references (e.g. "(id)").
+		$expr = $this->unnest_parenthesized_expression( $expr );
+
+		// Consider only simple and parenthesized column references (as per MySQL).
+		$expr_value   = $this->translate( $expr );
+		$column_value = $this->translate( $column_ref );
+		if ( $expr_value !== $column_value ) {
+			return null;
+		}
+
+		// Look for SELECT items that match the column reference.
+		$column_name         = $this->translate( $column_ref );
+		$select_item_matches = $disambiguation_map[ $column_name ] ?? array();
+
+		// When we find exactly one matching SELECT list item, we can disambiguate
+		// the column reference. Otherwise, fall back to the original expression.
+		if ( 1 === count( $select_item_matches ) ) {
+			return $select_item_matches[0];
+		}
+		return null;
+	}
+
+	/**
+	 * Create a SELECT item disambiguation map from a SELECT item list for use
+	 * with the ORDER BY, GROUP BY, and HAVING clause disambiguation algorithm.
+	 *
+	 * @see WP_SQLite_Driver::disambiguate_item()
+	 *
+	 * @param  WP_Parser_Node $select_item_list The "selectItemList" AST node.
+	 * @return array                            The SELECT item disambiguation map (column name => array of select items).
+	 */
+	private function create_select_item_disambiguation_map( WP_Parser_Node $select_item_list ): array {
+		// Create a map of SELECT item column names to their qualified values.
+		$disambiguation_map = array();
+		foreach ( $select_item_list->get_child_nodes() as $select_item ) {
+			/*
+			 * [GRAMMAR]
+			 * selectItem: tableWild | (expr selectAlias?)
+			 */
+
+			// Skip when a "tableWild" node is used (no "expr" node).
+			$select_item_expr = $select_item->get_first_child_node( 'expr' );
+			if ( ! $select_item_expr ) {
+				continue;
+			}
+
+			// A SELECT item alias always needs to be preserved as-is.
+			$alias = $select_item->get_first_child_node( 'selectAlias' );
+			if ( $alias ) {
+				$alias_value                        = $this->translate( $alias->get_first_child_node() );
+				$disambiguation_map[ $alias_value ] = array( $alias_value );
+				continue;
+			}
+
+			// Skip when there is no column listed (no "columnRef" node).
+			$select_column_ref = $select_item_expr->get_first_descendant_node( 'columnRef' );
+			if ( ! $select_column_ref ) {
+				continue;
+			}
+
+			// Skip when the column reference is not qualified (no "dotIdentifier" node).
+			$dot_identifiers = $select_column_ref->get_descendant_nodes( 'dotIdentifier' );
+			if ( 0 === count( $dot_identifiers ) ) {
+				continue;
+			}
+
+			// Support also parenthesized column references (e.g. "(t.id)").
+			$select_item_expr = $this->unnest_parenthesized_expression( $select_item_expr );
+
+			// Consider only simple and parenthesized column references (as per MySQL).
+			$expr_value   = $this->translate( $select_item_expr );
+			$column_value = $this->translate( $select_column_ref );
+			if ( $expr_value !== $column_value ) {
+				continue;
+			}
+
+			// The column name is the last "dotIdentifier" node.
+			$key = $this->translate( end( $dot_identifiers )->get_first_child_node() );
+
+			$disambiguation_map[ $key ]   = $disambiguation_map[ $key ] ?? array();
+			$disambiguation_map[ $key ][] = $column_value;
+		}
+		return $disambiguation_map;
 	}
 
 	/**
