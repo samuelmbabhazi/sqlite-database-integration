@@ -2512,24 +2512,10 @@ class WP_SQLite_Driver {
 
 		$rule_name = $node->rule_name;
 		switch ( $rule_name ) {
+			case 'querySpecification':
+				return $this->translate_query_specification( $node );
 			case 'queryExpression':
 				return $this->translate_query_expression( $node );
-			case 'querySpecification':
-				// Translate "HAVING ..." without "GROUP BY ..." to "GROUP BY 1 HAVING ...".
-				if ( $node->has_child_node( 'havingClause' ) && ! $node->has_child_node( 'groupByClause' ) ) {
-					$parts = array();
-					foreach ( $node->get_children() as $child ) {
-						if ( $child instanceof WP_Parser_Node && 'havingClause' === $child->rule_name ) {
-							$parts[] = 'GROUP BY 1';
-						}
-						$part = $this->translate( $child );
-						if ( null !== $part ) {
-							$parts[] = $part;
-						}
-					}
-					return implode( ' ', $parts );
-				}
-				return $this->translate_sequence( $node->get_children() );
 			case 'qualifiedIdentifier':
 			case 'tableRefWithWildcard':
 				$parts = $node->get_descendant_nodes( 'identifier' );
@@ -2905,6 +2891,66 @@ class WP_SQLite_Driver {
 		}
 
 		return implode( '.', $parts );
+	}
+
+	private function translate_query_specification( WP_Parser_Node $node ): string {
+		$group_by = $node->get_first_child_node( 'groupByClause' );
+		$having   = $node->get_first_child_node( 'havingClause' );
+
+		$group_by_clause = null;
+		$having_clause   = null;
+		if ( $group_by || $having ) {
+			$select_item_list   = $node->get_first_child_node( 'selectItemList' );
+			$disambiguation_map = $this->create_select_item_disambiguation_map( $select_item_list );
+
+			// Disambiguate the GROUP BY clause column references.
+			$disambiguated_group_by_list = array();
+			if ( $group_by ) {
+				$group_by_list = $group_by->get_first_child_node( 'orderList' );
+				foreach ( $group_by_list->get_child_nodes() as $group_by_item ) {
+					$group_by_expr                 = $group_by_item->get_first_child_node( 'expr' );
+					$disambiguated_item            = $this->disambiguate_item( $disambiguation_map, $group_by_expr );
+					$disambiguated_group_by_list[] = $disambiguated_item ?? $this->translate( $group_by_expr );
+				}
+				$group_by_clause = 'GROUP BY ' . implode( ', ', $disambiguated_group_by_list );
+			}
+
+			// Disambiguate the HAVING clause column references.
+			$disambiguated_having_list = array();
+			if ( $having ) {
+				$having_expr          = $having->get_first_child_node();
+				$having_expr_children = $having_expr->get_children();
+				foreach ( $having_expr_children as $having_item ) {
+					if ( $having_item instanceof WP_Parser_Node ) {
+						$disambiguated_item          = $this->disambiguate_item( $disambiguation_map, $having_item );
+						$disambiguated_having_list[] = $disambiguated_item ?? $this->translate( $having_item );
+					} else {
+						$disambiguated_having_list[] = $this->translate( $having_item );
+					}
+				}
+				$having_clause = 'HAVING ' . implode( ' ', $disambiguated_having_list );
+			}
+
+			$parts = array();
+			foreach ( $node->get_children() as $child ) {
+				if ( $child instanceof WP_Parser_Node && 'groupByClause' === $child->rule_name ) {
+					$parts[] = $group_by_clause;
+				} elseif ( $child instanceof WP_Parser_Node && 'havingClause' === $child->rule_name ) {
+					// Translate "HAVING ..." without "GROUP BY ..." to "GROUP BY 1 HAVING ...".
+					if ( ! $group_by ) {
+						$parts[] = 'GROUP BY 1';
+					}
+					$parts[] = $having_clause;
+				} else {
+					$part = $this->translate( $child );
+					if ( null !== $part ) {
+						$parts[] = $part;
+					}
+				}
+			}
+			return implode( ' ', $parts );
+		}
+		return $this->translate_sequence( $node->get_children() );
 	}
 
 	/**
