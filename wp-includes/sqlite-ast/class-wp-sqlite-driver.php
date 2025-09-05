@@ -2961,20 +2961,39 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
 	private function translate_query_expression( WP_Parser_Node $node ): string {
+		// Get the query expression subnode under which we need to look for the
+		// SELECT item list node. This prevents searching under "withClause".
+		$query_expr_main = (
+			$node->get_first_child_node( 'queryExpressionBody' )
+			?? $node->get_first_child_node( 'queryExpressionParens' )
+		);
+		$query_term      = $query_expr_main->get_first_descendant_node( 'queryTerm' );
+		$has_union       = $query_expr_main->has_child_token( WP_MySQL_Lexer::UNION_SYMBOL );
+		$has_except      = $query_expr_main->has_child_token( WP_MySQL_Lexer::EXCEPT_SYMBOL );
+		$has_intersect   = $query_term->has_child_token( WP_MySQL_Lexer::INTERSECT_SYMBOL );
+
 		/*
 		 * When the ORDER BY clause is present, we need to disambiguate the item
 		 * list and make sure they don't cause an "ambiguous column name" error.
 		 */
 		$disambiguated_order_list = array();
 		$order_clause             = $node->get_first_child_node( 'orderClause' );
-		if ( $order_clause ) {
-			$order_list       = $order_clause->get_first_child_node( 'orderList' );
-			$select_item_list = $node->get_first_descendant_node( 'selectItemList' );
+		if ( $order_clause && ! $has_union && ! $has_except && ! $has_intersect ) {
+			/*
+			 * [GRAMMAR]
+			 * queryExpression: (withClause)? (
+			 *   queryExpressionBody orderClause? limitClause?
+			 *   | queryExpressionParens orderClause? limitClause?
+			 * ) (procedureAnalyseClause)?
+			 */
 
+			// Create the SELECT item disambiguation map.
+			$select_item_list   = $query_expr_main->get_first_descendant_node( 'selectItemList' );
 			$disambiguation_map = $this->create_select_item_disambiguation_map( $select_item_list );
 
 			// For each "orderList" item, search for a matching SELECT item.
 			$disambiguated_order_list = array();
+			$order_list               = $order_clause->get_first_child_node( 'orderList' );
 			foreach ( $order_list->get_child_nodes() as $order_item ) {
 				/*
 				 * [GRAMMAR]

@@ -1409,6 +1409,57 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1_name` DESC',
 			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY `t1_name` DESC'
 		);
+
+		// With a parenthesized query body, the column should be disambiguated.
+		$this->assertQuery(
+			'( ( ( SELECT `t1`.`name` FROM `t1` ) ) ) ORDER BY `t1`.`name`',
+			'(((SELECT t1.name FROM t1))) ORDER BY name'
+		);
+
+		// The root query should not disambiguate from a nested SELECT item.
+		$this->assertQuery(
+			'SELECT ( SELECT `t1`.`name` FROM `t1` ) AS `t1_name` ORDER BY `name`',
+			'SELECT (SELECT t1.name FROM t1) AS t1_name ORDER BY name'
+		);
+
+		// With UNION, the column should not be disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` UNION ALL SELECT `t2`.`name` FROM `t2` ORDER BY `name`',
+			'SELECT t1.name FROM t1 UNION ALL SELECT t2.name FROM t2 ORDER BY name'
+		);
+
+		// With EXCEPT, the column should not be disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` EXCEPT SELECT `t2`.`name` FROM `t2` ORDER BY `name`',
+			'SELECT t1.name FROM t1 EXCEPT SELECT t2.name FROM t2 ORDER BY name'
+		);
+
+		// With INTERSECT, the column should not be disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` INTERSECT SELECT `t2`.`name` FROM `t2` ORDER BY `name`',
+			'SELECT t1.name FROM t1 INTERSECT SELECT t2.name FROM t2 ORDER BY name'
+		);
+
+		// Test a complex query with CTEs.
+		$this->assertQuery(
+			'WITH'
+				. " `cte1` ( `name` ) AS ( SELECT 'a' UNION ALL SELECT 'b' ) ,"
+				. ' `cte2` ( `name` ) AS ( SELECT `t2`.`name` FROM `t2` JOIN `t1` ON `t1`.`id` = `t2`.`id` ORDER BY `t2`.`name` )'
+				. ' SELECT `t1`.`name` , ( SELECT `name` FROM `cte1` WHERE `id` = 1 ) AS `cte1_name` , ( SELECT `name` FROM `cte2` WHERE `id` = 2 ) AS `cte2_name`'
+				. ' FROM `t1`'
+				. ' ORDER BY `t1`.`name`',
+			"
+				WITH
+					cte1(name) AS (SELECT 'a' UNION ALL SELECT 'b'),
+					cte2(name) AS (SELECT t2.name FROM t2 JOIN t1 ON t1.id = t2.id ORDER BY name)
+				SELECT
+					t1.name,
+					(SELECT name FROM cte1 WHERE id = 1) AS cte1_name,
+					(SELECT name FROM cte2 WHERE id = 2) AS cte2_name
+				FROM t1
+				ORDER BY name
+			"
+		);
 	}
 
 	public function testSelectGroupByAmbiguousColumnResolution(): void {
@@ -1493,6 +1544,24 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertQuery(
 			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t1_name`',
 			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY `t1_name`'
+		);
+
+		// With UNION, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` UNION ALL SELECT `t2`.`name` FROM `t2` GROUP BY `t2`.`name`',
+			'SELECT t1.name FROM t1 UNION ALL SELECT t2.name FROM t2 GROUP BY name'
+		);
+
+		// With EXCEPT, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` EXCEPT SELECT `t2`.`name` FROM `t2` GROUP BY `t2`.`name`',
+			'SELECT t1.name FROM t1 EXCEPT SELECT t2.name FROM t2 GROUP BY name'
+		);
+
+		// With INTERSECT, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` INTERSECT SELECT `t2`.`name` FROM `t2` GROUP BY `t2`.`name`',
+			'SELECT t1.name FROM t1 INTERSECT SELECT t2.name FROM t2 GROUP BY name'
 		);
 	}
 
@@ -1580,6 +1649,24 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertQuery(
 			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `name` = 1',
 			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name = 1'
+		);
+
+		// With UNION, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` UNION ALL SELECT `t2`.`name` FROM `t2` GROUP BY 1 HAVING `t2`.`name`',
+			'SELECT t1.name FROM t1 UNION ALL SELECT t2.name FROM t2 HAVING name'
+		);
+
+		// With EXCEPT, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` EXCEPT SELECT `t2`.`name` FROM `t2` GROUP BY 1 HAVING `t2`.`name`',
+			'SELECT t1.name FROM t1 EXCEPT SELECT t2.name FROM t2 HAVING name'
+		);
+
+		// With INTERSECT, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` INTERSECT SELECT `t2`.`name` FROM `t2` GROUP BY 1 HAVING `t2`.`name`',
+			'SELECT t1.name FROM t1 INTERSECT SELECT t2.name FROM t2 HAVING name'
 		);
 	}
 
