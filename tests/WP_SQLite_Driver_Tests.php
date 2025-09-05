@@ -6323,6 +6323,259 @@ END;
 		$this->assertSame( array(), (array) array_column( $result, 'id' ) );
 	}
 
+	public function testSelectOrderByAmbiguousColumnResolution(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+		$this->assertQuery( 'INSERT INTO t1 (id, name) VALUES (1, "A1"), (2, "A2")' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (1, "B2"), (2, "B1")' );
+
+		// The "name" column will be resolved to "t1.name" as per the SELECT item.
+		$result = $this->assertQuery( 'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC' );
+		$this->assertEquals(
+			array(
+				(object) array( 'name' => 'A2' ),
+				(object) array( 'name' => 'A1' ),
+			),
+			$result
+		);
+
+		// The "name" column will be resolved to "t2.name" as per the SELECT item.
+		$result = $this->assertQuery( 'SELECT t2.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC' );
+		$this->assertEquals(
+			array(
+				(object) array( 'name' => 'B2' ),
+				(object) array( 'name' => 'B1' ),
+			),
+			$result
+		);
+
+		// The "name" column will be resolved to "t1.name", the "id" column will be resolved to "t2.id".
+		$this->assertQuery( 'INSERT INTO t1 (id, name) VALUES (3, "A2")' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (3, "A2")' );
+		$result = $this->assertQuery( 'SELECT t2.id, t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name, id DESC' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'   => '1',
+					'name' => 'A1',
+				),
+				(object) array(
+					'id'   => '3',
+					'name' => 'A2',
+				),
+				(object) array(
+					'id'   => '2',
+					'name' => 'A2',
+				),
+			),
+			$result
+		);
+
+		// The "name" column will be resolved to "t1.name" in the subquery and to "t2.name" in the root query.
+		$result = $this->assertQuery(
+			'
+			SELECT t2.name, s.name AS subquery_name
+			FROM (SELECT t1.id, t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC LIMIT 1) s
+			JOIN t2 ON true
+			ORDER BY name DESC
+		'
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name'          => 'B2',
+					'subquery_name' => 'A2',
+				),
+				(object) array(
+					'name'          => 'B1',
+					'subquery_name' => 'A2',
+				),
+				(object) array(
+					'name'          => 'A2',
+					'subquery_name' => 'A2',
+				),
+			),
+			$result
+		);
+
+		// Parenthesized column reference can be used in both SELECT and ORDER BY lists.
+		$result = $this->assertQuery( 'SELECT (t1.name) FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY (((name))) DESC' );
+		$this->assertEquals(
+			array(
+				(object) array( '(t1.name)' => 'A2' ),
+				(object) array( '(t1.name)' => 'A2' ),
+				(object) array( '(t1.name)' => 'A1' ),
+			),
+			$result
+		);
+
+		/*
+		 * With multiple identical aliases and no ambiguous column references,
+		 * it just works, although sometimes the order may differ from MySQL.
+		 * It may be nondeterministic, but it seems like MySQL picks the first
+		 * non-column alias, while SQLite sorts by the first alias in the list.
+		 *
+		 * When we replace "SELECT t1.name" with "SELECT t2.name" in the query
+		 * below, the SQLite order will differ from MySQL.
+		 */
+		$result = $this->assertQuery(
+			"
+			SELECT t1.name AS name, CONCAT(t1.name, '-one') AS name, CONCAT(t2.name, '-two') AS name
+			FROM t1 JOIN t2 ON t2.id = t1.id
+			ORDER BY name DESC
+		"
+		);
+		$this->assertEquals(
+			array(
+				(object) array( 'name' => 'B1-two' ),
+				(object) array( 'name' => 'A2-two' ),
+				(object) array( 'name' => 'B2-two' ),
+			),
+			$result
+		);
+
+		/*
+		 * The following query fails with "ambiguous column name" in MySQL, but
+		 * in SQLite, it works. It's OK to keep this difference as MySQL behaves
+		 * rather strangely in this case:
+		 *
+		 *   1) This is OK in MySQL:
+		 *        SELECT t1.name AS col, 123 AS col ... ORDER BY col
+		 *   2) This fails in MySQL:
+		 *        SELECT t1.name AS col, t2.name AS col ... ORDER BY col
+		 */
+		$this->assertQuery( 'SELECT t1.name AS col, t2.name AS col FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY col' );
+	}
+
+	public function testSelectOrderByAmbiguousColumnError(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'ambiguous column name: name' );
+		$this->assertQuery( 'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC' );
+	}
+
+
+	public function testSelectOrderByAmbiguousColumnErrorWithoutSelectList(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'ambiguous column name: name' );
+		$this->assertQuery( 'SELECT 1 FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name' );
+	}
+
+	public function testSelectGroupByAmbiguousColumnResolution(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+		$this->assertQuery( 'INSERT INTO t1 (id, name) VALUES (1, "A"), (2, "A")' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (1, "B1"), (2, "B2")' );
+
+		// The "name" column will be resolved to "t1.name" as per the SELECT item.
+		$result = $this->assertQuery( 'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name' );
+		$this->assertEquals(
+			array( (object) array( 'name' => 'A' ) ),
+			$result
+		);
+
+		// The "name" column will be resolved to "t2.name" as per the SELECT item.
+		$result = $this->assertQuery( 'SELECT t2.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name' );
+		$this->assertEquals(
+			array(
+				(object) array( 'name' => 'B1' ),
+				(object) array( 'name' => 'B2' ),
+			),
+			$result
+		);
+
+		// Parenthesized column reference can be used in both SELECT and GROUP BY lists.
+		$result = $this->assertQuery( 'SELECT (t1.name) FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY (((name)))' );
+		$this->assertEquals(
+			array( (object) array( '(t1.name)' => 'A' ) ),
+			$result
+		);
+
+		/*
+		 * The following query fails with "ambiguous column name" in MySQL, but
+		 * in SQLite, it works. It's OK to keep this difference as MySQL behaves
+		 * rather strangely in this case:
+		 *
+		 *   1) This is OK in MySQL:
+		 *        SELECT t1.name AS col, 123 AS col ... GROUP BY col
+		 *   2) This fails in MySQL:
+		 *        SELECT t1.name AS col, t2.name AS col ... GROUP BY col
+		 */
+		$this->assertQuery( 'SELECT t1.name AS col, t2.name AS col FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY col' );
+	}
+
+	public function testSelectGroupByAmbiguousColumnError(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'ambiguous column name: name' );
+		$this->assertQuery( 'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name' );
+	}
+
+	public function testSelectGroupByAmbiguousColumnErrorWithoutSelectList(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'ambiguous column name: name' );
+		$this->assertQuery( 'SELECT 1 FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name' );
+	}
+
+	public function testSelectHavingAmbiguousColumnResolution(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+		$this->assertQuery( 'INSERT INTO t1 (id, name) VALUES (1, "A"), (2, "A")' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (1, "B1"), (2, "B2")' );
+
+		// The "name" column will be resolved to "t1.name" as per the SELECT item.
+		$result = $this->assertQuery( 'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name' );
+		$this->assertEquals( array(), $result );
+
+		// The "name" column will be resolved to "t2.name" as per the SELECT item.
+		$result = $this->assertQuery( 'SELECT t2.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name' );
+		$this->assertEquals( array(), $result );
+
+		// Parenthesized column reference can be used in both SELECT and GROUP BY lists.
+		$result = $this->assertQuery( 'SELECT (t1.name) FROM t1 JOIN t2 ON t2.id = t1.id HAVING (((name)))' );
+		$this->assertEquals( array(), $result );
+
+		/*
+		 * The following query fails with "ambiguous column name" in MySQL, but
+		 * in SQLite, it works. It's OK to keep this difference as MySQL behaves
+		 * rather strangely in this case:
+		 *
+		 *   1) This is OK in MySQL:
+		 *        SELECT t1.name AS col, 123 AS col ... HAVING col
+		 *   2) This fails in MySQL:
+		 *        SELECT t1.name AS col, t2.name AS col ... HAVING col
+		 */
+		$this->assertQuery( 'SELECT t1.name AS col, t2.name AS col FROM t1 JOIN t2 ON t2.id = t1.id HAVING col' );
+	}
+
+	public function testSelectHavingAmbiguousColumnError(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'ambiguous column name: name' );
+		$this->assertQuery( 'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name' );
+	}
+
+	public function testSelectHavingAmbiguousColumnErrorWithoutSelectList(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'ambiguous column name: name' );
+		$this->assertQuery( 'SELECT 1 FROM t1 JOIN t2 ON t2.id = t1.id HAVING name' );
+	}
+
 	public function testRollbackNonExistentTransactionSavepoint(): void {
 		$this->expectException( 'WP_SQLite_Driver_Exception' );
 		$this->expectExceptionMessage( 'no such savepoint: sp1' );

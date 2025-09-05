@@ -1328,6 +1328,348 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testSelectOrderByAmbiguousColumnResolution(): void {
+		$this->driver->query( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->driver->query( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		// Ambiguous column in ORDER BY clause is disambiguated by the SELECT item list.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name'
+		);
+
+		// The ORDER BY direction is preserved when a column is disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name` DESC',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC'
+		);
+
+		// Multiple ambiguous columns in ORDER BY clause are also disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`id` , `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`id` DESC, `t1`.`name` ASC',
+			'SELECT t1.id, t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY id DESC, name ASC'
+		);
+
+		// The disambiguation works with subqueries.
+		$this->assertQuery(
+			'SELECT `name` FROM ( SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name` ) ORDER BY `name`',
+			'SELECT name FROM (SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name) ORDER BY name'
+		);
+
+		// The disambiguation works in both root and subquery contexts at the same time.
+		$this->assertQuery(
+			'SELECT `ta`.`name` FROM ( SELECT `t2`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t2`.`name` ) `ta` ORDER BY `ta`.`name`',
+			'SELECT ta.name FROM (SELECT t2.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name) ta ORDER BY name'
+		);
+
+		// When the SELECT item is nested in a simple parentheses expression, the disambiguation still works.
+		$this->assertQuery(
+			'SELECT ( ( ( `t1`.`name` ) ) ) AS `(((t1.name)))` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name`',
+			'SELECT (((t1.name))) FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name'
+		);
+
+		// When the ORDER BY item is nested in a simple parentheses expression, the disambiguation still works.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY (((name)))'
+		);
+
+		// When the SELECT item is nested in a complex expression, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			"SELECT (`t1`.`name` || 'test') AS `CONCAT(t1.name, 'test')` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `name`",
+			"SELECT CONCAT(t1.name, 'test') FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name"
+		);
+
+		// When the ORDER BY item is nested in a complex expression, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			"SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY ( `name` || 'test' )",
+			"SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY (name || 'test')"
+		);
+
+		// When the SELECT list item uses an alias, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `name` DESC',
+			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC'
+		);
+
+		// When the SELECT item list is ambiguous, the ORDER BY column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			'SELECT `t1`.`name` , `t2`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `name` DESC',
+			'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC'
+		);
+
+		// When the SELECT item list is ambiguous with an alias, the ORDER BY column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			"SELECT `t1`.`name` , 'test' AS `name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `name` DESC",
+			"SELECT t1.name, 'test' AS `name` FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC"
+		);
+
+		// When the ORDER BY item uses an alias, there is no ambiguity.
+		$this->assertQuery(
+			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` ORDER BY `t1_name` DESC',
+			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY `t1_name` DESC'
+		);
+
+		// With a parenthesized query body, the column should be disambiguated.
+		$this->assertQuery(
+			'( ( ( SELECT `t1`.`name` FROM `t1` ) ) ) ORDER BY `t1`.`name`',
+			'(((SELECT t1.name FROM t1))) ORDER BY name'
+		);
+
+		// The root query should not disambiguate from a nested SELECT item.
+		$this->assertQuery(
+			'SELECT ( SELECT `t1`.`name` FROM `t1` ) AS `t1_name` ORDER BY `name`',
+			'SELECT (SELECT t1.name FROM t1) AS t1_name ORDER BY name'
+		);
+
+		// With UNION, the column should not be disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` UNION ALL SELECT `t2`.`name` FROM `t2` ORDER BY `name`',
+			'SELECT t1.name FROM t1 UNION ALL SELECT t2.name FROM t2 ORDER BY name'
+		);
+
+		// With EXCEPT, the column should not be disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` EXCEPT SELECT `t2`.`name` FROM `t2` ORDER BY `name`',
+			'SELECT t1.name FROM t1 EXCEPT SELECT t2.name FROM t2 ORDER BY name'
+		);
+
+		// With INTERSECT, the column should not be disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` INTERSECT SELECT `t2`.`name` FROM `t2` ORDER BY `name`',
+			'SELECT t1.name FROM t1 INTERSECT SELECT t2.name FROM t2 ORDER BY name'
+		);
+
+		// Test a complex query with CTEs.
+		$this->assertQuery(
+			'WITH'
+				. " `cte1` ( `name` ) AS ( SELECT 'a' UNION ALL SELECT 'b' ) ,"
+				. ' `cte2` ( `name` ) AS ( SELECT `t2`.`name` FROM `t2` JOIN `t1` ON `t1`.`id` = `t2`.`id` ORDER BY `t2`.`name` )'
+				. ' SELECT `t1`.`name` , ( SELECT `name` FROM `cte1` WHERE `id` = 1 ) AS `cte1_name` , ( SELECT `name` FROM `cte2` WHERE `id` = 2 ) AS `cte2_name`'
+				. ' FROM `t1`'
+				. ' ORDER BY `t1`.`name`',
+			"
+				WITH
+					cte1(name) AS (SELECT 'a' UNION ALL SELECT 'b'),
+					cte2(name) AS (SELECT t2.name FROM t2 JOIN t1 ON t1.id = t2.id ORDER BY name)
+				SELECT
+					t1.name,
+					(SELECT name FROM cte1 WHERE id = 1) AS cte1_name,
+					(SELECT name FROM cte2 WHERE id = 2) AS cte2_name
+				FROM t1
+				ORDER BY name
+			"
+		);
+	}
+
+	public function testSelectGroupByAmbiguousColumnResolution(): void {
+		$this->driver->query( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->driver->query( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		// Ambiguous column in GROUP BY clause is disambiguated by the SELECT item list.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name'
+		);
+
+		// Multiple ambiguous columns in GROUP BY clause are also disambiguated.
+		$this->assertQuery(
+			'SELECT `t1`.`id` , `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t1`.`id`, `t1`.`name`',
+			'SELECT t1.id, t1.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY id, name'
+		);
+
+		// The disambiguation works with subqueries.
+		$this->assertQuery(
+			'SELECT `name` FROM ( SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t1`.`name` ) GROUP BY `name`',
+			'SELECT name FROM (SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name) GROUP BY name'
+		);
+
+		// The disambiguation works in both root and subquery contexts at the same time.
+		$this->assertQuery(
+			'SELECT `ta`.`name` FROM ( SELECT `t2`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t2`.`name` ) `ta` GROUP BY `ta`.`name`',
+			'SELECT ta.name FROM (SELECT t2.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name) ta GROUP BY name'
+		);
+
+		// When the SELECT item is nested in a simple parentheses expression, the disambiguation still works.
+		$this->assertQuery(
+			'SELECT ( ( ( `t1`.`name` ) ) ) AS `(((t1.name)))` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t1`.`name`',
+			'SELECT (((t1.name))) FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name'
+		);
+
+		// When the GROUP BY item is nested in a simple parentheses expression, the disambiguation still works.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY (((name)))'
+		);
+
+		// When the SELECT item is nested in a complex expression, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			"SELECT (`t1`.`name` || 'test') AS `CONCAT(t1.name, 'test')` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `name`",
+			"SELECT CONCAT(t1.name, 'test') FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name"
+		);
+
+		// When the GROUP BY item is nested in a complex expression, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			"SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY ( `name` || 'test' )",
+			"SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY (name || 'test')"
+		);
+
+		// When the SELECT list item uses an alias, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `name`',
+			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name'
+		);
+
+		// When the SELECT item list is ambiguous, the GROUP BY column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			'SELECT `t1`.`name` , `t2`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `name`',
+			'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name'
+		);
+
+		/*
+		 * The following edge case behaves differently than in MySQL.
+		 * This seems to be due to a quirk in SQLite, where the behavior of the
+		 * GROUP BY clause is different from the ORDER BY clause:
+		 *   - ORDER BY: SQLite will pick the first column or alias for sorting.
+		 *   - GROUP BY: SQLite will fail with an "ambiguous column name" error.
+		 *
+		 * @TODO: We can consider fixing this more correctly.
+		 */
+		$this->assertQuery(
+			"SELECT `t1`.`name` , 'test' AS `name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t1`.`name`, `name`",
+			"SELECT t1.name, 'test' AS `name` FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY t1.name, name"
+		);
+
+		// When the GROUP BY item uses an alias, there is no ambiguity.
+		$this->assertQuery(
+			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY `t1_name`',
+			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY `t1_name`'
+		);
+
+		// With UNION, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` UNION ALL SELECT `t2`.`name` FROM `t2` GROUP BY `t2`.`name`',
+			'SELECT t1.name FROM t1 UNION ALL SELECT t2.name FROM t2 GROUP BY name'
+		);
+
+		// With EXCEPT, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` EXCEPT SELECT `t2`.`name` FROM `t2` GROUP BY `t2`.`name`',
+			'SELECT t1.name FROM t1 EXCEPT SELECT t2.name FROM t2 GROUP BY name'
+		);
+
+		// With INTERSECT, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` INTERSECT SELECT `t2`.`name` FROM `t2` GROUP BY `t2`.`name`',
+			'SELECT t1.name FROM t1 INTERSECT SELECT t2.name FROM t2 GROUP BY name'
+		);
+	}
+
+	public function testSelectHavingAmbiguousColumnResolution(): void {
+		$this->driver->query( 'CREATE TABLE t1 (id INT, name TEXT)' );
+		$this->driver->query( 'CREATE TABLE t2 (id INT, name TEXT)' );
+
+		// Ambiguous column in HAVING clause is disambiguated by the SELECT item list.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name'
+		);
+
+		// Multiple ambiguous columns in HAVING clause are also disambiguated (AND).
+		$this->assertQuery(
+			'SELECT `t1`.`id` , `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `t1`.`id` AND `t1`.`name`',
+			'SELECT t1.id, t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING id AND name'
+		);
+
+		// Multiple ambiguous columns in HAVING clause are also disambiguated (OR).
+		$this->assertQuery(
+			'SELECT `t1`.`id` , `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `t1`.`id` OR `t1`.`name`',
+			'SELECT t1.id, t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING id OR name'
+		);
+
+		// The disambiguation works with subqueries.
+		$this->assertQuery(
+			'SELECT `name` FROM ( SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `t1`.`name` ) GROUP BY 1 HAVING `name`',
+			'SELECT name FROM (SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name) HAVING name'
+		);
+
+		// The disambiguation works in both root and subquery contexts at the same time.
+		$this->assertQuery(
+			'SELECT `ta`.`name` FROM ( SELECT `t2`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `t2`.`name` ) `ta` GROUP BY 1 HAVING `ta`.`name`',
+			'SELECT ta.name FROM (SELECT t2.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name) ta HAVING name'
+		);
+
+		// When the HAVING item is nested in a simple parentheses expression, the disambiguation still works.
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `t1`.`name`',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING (((name)))'
+		);
+
+		// When the SELECT item is nested in a complex expression, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			"SELECT (`t1`.`name` || 'test') AS `CONCAT(t1.name, 'test')` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `name`",
+			"SELECT CONCAT(t1.name, 'test') FROM t1 JOIN t2 ON t2.id = t1.id HAVING name"
+		);
+
+		// When the HAVING item is used in an aggregate function, the column is not disambiguated (like in MySQL).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING COUNT ( `name` ) > 1',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING COUNT(name) > 1'
+		);
+
+		/*
+		 * The following edge case behaves differently than in MySQL.
+		 * This seems to be due to a quirk in SQLite, where the behavior of the
+		 * HAVING clause is different from the ORDER BY clause:
+		 *   - ORDER BY: SQLite will pick the first column or alias for sorting.
+		 *   - HAVING:   SQLite will fail with an "ambiguous column name" error.
+		 *
+		 * @TODO: We can consider fixing this more correctly.
+		 */
+		$this->assertQuery(
+			"SELECT `t1`.`name` , 'test' AS `name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `name`",
+			"SELECT t1.name, 'test' AS `name` FROM t1 JOIN t2 ON t2.id = t1.id HAVING name"
+		);
+
+		// When the HAVING item uses an alias, there is no ambiguity.
+		$this->assertQuery(
+			'SELECT `t1`.`name` AS `t1_name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `t1_name`',
+			'SELECT t1.name AS t1_name FROM t1 JOIN t2 ON t2.id = t1.id HAVING `t1_name`'
+		);
+
+		/*
+		 * The following edge case should actually be disambiguated, as it is in MySQL.
+		 * THe HAVING clause behaves strangely in MySQL:
+		 *   - HAVING COUNT(name), HAVING SUM(name), etc. are not disambiguated.
+		 *   - HAVING name = 1, HAVING (name = (name + 1)), etc. are disambiguated.
+		 *   - With HAVING, MySQL seems to only recognize the columns listed in the SELECT clause.
+		 *
+		 * @TODO: We can consider fixing this more correctly.
+		 */
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` JOIN `t2` ON `t2`.`id` = `t1`.`id` GROUP BY 1 HAVING `name` = 1',
+			'SELECT t1.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name = 1'
+		);
+
+		// With UNION, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` UNION ALL SELECT `t2`.`name` FROM `t2` GROUP BY 1 HAVING `t2`.`name`',
+			'SELECT t1.name FROM t1 UNION ALL SELECT t2.name FROM t2 HAVING name'
+		);
+
+		// With EXCEPT, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` EXCEPT SELECT `t2`.`name` FROM `t2` GROUP BY 1 HAVING `t2`.`name`',
+			'SELECT t1.name FROM t1 EXCEPT SELECT t2.name FROM t2 HAVING name'
+		);
+
+		// With INTERSECT, the column should be disambiguated in its subquery (differs from ORDER BY).
+		$this->assertQuery(
+			'SELECT `t1`.`name` FROM `t1` INTERSECT SELECT `t2`.`name` FROM `t2` GROUP BY 1 HAVING `t2`.`name`',
+			'SELECT t1.name FROM t1 INTERSECT SELECT t2.name FROM t2 HAVING name'
+		);
+	}
+
 	private function assertQuery( $expected, string $query ): void {
 		$error = null;
 		try {

@@ -37,14 +37,16 @@ services:
       - ../:/var/www/src/wp-content/plugins/sqlite-database-integration
 
   php:
-    image: wordpressdevelop/php:8.3-fpm
+    # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
+    image: wordpressdevelop/php@sha256:c0ba85936a9d1ac2c98bf3da2d62ceb0e5787a6b11e383630df0c5a5bf2534b5
     environment:
       WP_SQLITE_AST_DRIVER: true
     volumes:
       - ../:/var/www/src/wp-content/plugins/sqlite-database-integration
 
   cli:
-    image: wordpressdevelop/cli:8.3-fpm
+    # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
+    image: wordpressdevelop/cli@sha256:85ad7d7a9c3bd9a8775fc83aea7f7dfc0aad25b2bc4f7d740696b28cd2a0ef89
     environment:
       WP_SQLITE_AST_DRIVER: true
     volumes:
