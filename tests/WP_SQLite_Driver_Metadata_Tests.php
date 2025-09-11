@@ -893,4 +893,989 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't'" );
 		$this->assertEquals( array(), $result );
 	}
+
+	public function testInformationSchemaForeignKeys(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				FOREIGN KEY (id) REFERENCES t1 (id),
+				FOREIGN KEY idx_name (id) REFERENCES t1 (id),
+				CONSTRAINT fk1 FOREIGN KEY (id) REFERENCES t1 (id),
+				CONSTRAINT fk2 FOREIGN KEY idx_name (id) REFERENCES t1 (id),
+				CONSTRAINT fk3 FOREIGN KEY (id) REFERENCES t1 (id) ON DELETE CASCADE,
+				CONSTRAINT fk4 FOREIGN KEY (id) REFERENCES t1 (id) ON UPDATE CASCADE,
+				CONSTRAINT fk5 FOREIGN KEY (id) REFERENCES t1 (id) ON DELETE CASCADE ON UPDATE CASCADE
+			)'
+		);
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't2_ibfk_1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't2_ibfk_2',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'fk1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'fk2',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'fk3',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'fk4',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'fk5',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 't2_ibfk_1',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 't2_ibfk_2',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'fk1',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'fk2',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'fk3',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'CASCADE',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'fk4',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'CASCADE',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'fk5',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'CASCADE',
+					'DELETE_RULE'               => 'CASCADE',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 't2_ibfk_1',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 't2_ibfk_2',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 'fk1',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 'fk2',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 'fk3',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 'fk4',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 'fk5',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+			),
+			$result
+		);
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  CONSTRAINT `fk1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`),',
+							'  CONSTRAINT `fk2` FOREIGN KEY (`id`) REFERENCES `t1` (`id`),',
+							'  CONSTRAINT `fk3` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE,',
+							'  CONSTRAINT `fk4` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON UPDATE CASCADE,',
+							'  CONSTRAINT `fk5` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,',
+							'  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`),',
+							'  CONSTRAINT `t2_ibfk_2` FOREIGN KEY (`id`) REFERENCES `t1` (`id`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaInlineForeignKeys(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				t1_id INT REFERENCES t1 (id),
+				t1_name VARCHAR(255) REFERENCES t1 (name) ON DELETE CASCADE
+			)'
+		);
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't2_ibfk_1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't2_ibfk_2',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 't2_ibfk_1',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => null,
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 't2_ibfk_2',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => null,
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'CASCADE',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 't2_ibfk_1',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 't1_id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 't2_ibfk_2',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 't1_name',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'name',
+				),
+			),
+			$result
+		);
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL,',
+							'  `t1_name` varchar(255) DEFAULT NULL,',
+							'  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`),',
+							'  CONSTRAINT `t2_ibfk_2` FOREIGN KEY (`t1_name`) REFERENCES `t1` (`name`) ON DELETE CASCADE',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaForeignKeysWithMultipleColumns(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				name VARCHAR(255),
+				FOREIGN KEY (id, name) REFERENCES t1 (id, name)
+			)'
+		);
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't2_ibfk_1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 't2_ibfk_1',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => null,
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 't2_ibfk_1',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 't2_ibfk_1',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'name',
+					'ORDINAL_POSITION'              => '2',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '2',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'name',
+				),
+			),
+			$result
+		);
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `name` varchar(255) DEFAULT NULL,',
+							'  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`id`, `name`) REFERENCES `t1` (`id`, `name`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableAddForeignKeys(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT)' );
+		$this->assertQuery( 'ALTER TABLE t2 ADD FOREIGN KEY (id) REFERENCES t1 (id)' );
+		$this->assertQuery( 'ALTER TABLE t2 ADD CONSTRAINT fk1 FOREIGN KEY (id) REFERENCES t1 (id) ON DELETE CASCADE' );
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't2_ibfk_1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'fk1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't2',
+					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
+					'ENFORCED'           => 'YES',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 't2_ibfk_1',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'fk1',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'CASCADE',
+					'TABLE_NAME'                => 't2',
+					'REFERENCED_TABLE_NAME'     => 't1',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 't2_ibfk_1',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG'            => 'def',
+					'CONSTRAINT_SCHEMA'             => 'wp',
+					'CONSTRAINT_NAME'               => 'fk1',
+					'TABLE_CATALOG'                 => 'def',
+					'TABLE_SCHEMA'                  => 'wp',
+					'TABLE_NAME'                    => 't2',
+					'COLUMN_NAME'                   => 'id',
+					'ORDINAL_POSITION'              => '1',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 't1',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+			),
+			$result
+		);
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  CONSTRAINT `fk1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE,',
+							'  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableDropForeignKeys(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				t1_id INT REFERENCES t1 (id),
+				FOREIGN KEY (t1_id) REFERENCES t1 (id),
+				CONSTRAINT fk1 FOREIGN KEY (t1_id) REFERENCES t1 (id) ON DELETE CASCADE
+			)'
+		);
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 3, $result );
+
+		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 3, $result );
+
+		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 3, $result );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL,',
+							'  CONSTRAINT `fk1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`) ON DELETE CASCADE,',
+							'  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`),',
+							'  CONSTRAINT `t2_ibfk_2` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+
+		// DROP the first foreign key.
+		$this->assertQuery( 'ALTER TABLE t2 DROP FOREIGN KEY t2_ibfk_1' );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 't2_ibfk_2', $result[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'fk1', $result[1]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 't2_ibfk_2', $result[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'fk1', $result[1]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 't2_ibfk_2', $result[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'fk1', $result[1]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL,',
+							'  CONSTRAINT `fk1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`) ON DELETE CASCADE,',
+							'  CONSTRAINT `t2_ibfk_2` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+
+		// DROP the second foreign key.
+		$this->assertQuery( 'ALTER TABLE t2 DROP FOREIGN KEY t2_ibfk_2' );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'fk1', $result[0]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'fk1', $result[0]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'fk1', $result[0]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL,',
+							'  CONSTRAINT `fk1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`) ON DELETE CASCADE',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+
+		// DROP the third foreign key.
+		$this->assertQuery( 'ALTER TABLE t2 DROP FOREIGN KEY fk1' );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableDropPrimaryKey(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(255))' );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t` (',
+							'  `id` int NOT NULL,',
+							'  `name` varchar(255) DEFAULT NULL,',
+							'  PRIMARY KEY (`id`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+
+		$this->assertQuery( 'ALTER TABLE t DROP PRIMARY KEY' );
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't'" );
+		$this->assertCount( 0, $result );
+
+		// INFORMATION_SCHEMA.STATISTICS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't'" );
+		$this->assertCount( 0, $result );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t` (',
+							'  `id` int NOT NULL,',
+							'  `name` varchar(255) DEFAULT NULL',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableDropUniqueKey(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, name TEXT, CONSTRAINT c UNIQUE (name))' );
+		$this->assertQuery( 'ALTER TABLE t DROP INDEX c' );
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't'" );
+
+		// INFORMATION_SCHEMA.STATISTICS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't'" );
+		$this->assertCount( 0, $result );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t` (',
+							'  `id` int DEFAULT NULL,',
+							'  `name` text DEFAULT NULL',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableDropConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT PRIMARY KEY,
+				name VARCHAR(255),
+				CONSTRAINT fk FOREIGN KEY (id) REFERENCES t1 (id),
+				CONSTRAINT name_unique UNIQUE (name)
+			)'
+		);
+
+		// Check the constraint records.
+		$table_constraints       = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$key_column_usage        = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$statistics              = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't2'" );
+		$this->assertCount( 3, $table_constraints );
+		$this->assertCount( 1, $referential_constraints );
+		$this->assertCount( 3, $key_column_usage );
+		$this->assertCount( 2, $statistics );
+
+		// Drop the primary key constraint.
+		$this->assertQuery( 'ALTER TABLE t2 DROP PRIMARY KEY' );
+		$table_constraints       = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$key_column_usage        = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$statistics              = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't2'" );
+		$this->assertCount( 2, $table_constraints );
+		$this->assertCount( 1, $referential_constraints );
+		$this->assertCount( 2, $key_column_usage );
+		$this->assertCount( 1, $statistics );
+
+		// Drop the unique key constraint.
+		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT name_unique' );
+		$table_constraints       = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$key_column_usage        = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$statistics              = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't2'" );
+		$this->assertCount( 1, $table_constraints );
+		$this->assertCount( 1, $referential_constraints );
+		$this->assertCount( 1, $key_column_usage );
+		$this->assertCount( 0, $statistics );
+
+		// Drop the foreign key constraint.
+		$this->assertQuery( 'ALTER TABLE t2 DROP FOREIGN KEY fk' );
+		$table_constraints       = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$key_column_usage        = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$statistics              = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't2'" );
+		$this->assertCount( 0, $table_constraints );
+		$this->assertCount( 0, $referential_constraints );
+		$this->assertCount( 0, $key_column_usage );
+		$this->assertCount( 0, $statistics );
+	}
+
+	public function testInformationSchemaAlterTableDropMissingConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "SQLSTATE[HY000]: General error: 3940 Constraint 'cnst' does not exist." );
+		$this->expectExceptionCode( 'HY000' );
+		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT cnst' );
+	}
+
+	public function testInformationSchemaAlterTableDropConstraintWithAmbiguousName(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				CONSTRAINT cnst UNIQUE (id),
+				CONSTRAINT cnst FOREIGN KEY (id) REFERENCES t1 (id)
+			)'
+		);
+
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "SQLSTATE[HY000]: General error: 3939 Table has multiple constraints with the name 'cnst'. Please use constraint specific 'DROP' clause." );
+		$this->expectExceptionCode( 'HY000' );
+		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT cnst' );
+	}
 }
