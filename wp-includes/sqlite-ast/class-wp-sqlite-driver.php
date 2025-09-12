@@ -1277,41 +1277,187 @@ class WP_SQLite_Driver {
 			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
 		);
 
-		// Iterate and translate the update statement children.
-		$parts = array();
-		foreach ( $node->get_children() as $child ) {
-			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
-				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
-				$parts[] = 'OR IGNORE';
-			} elseif (
-				$is_non_strict_mode
-				&& $child instanceof WP_Parser_Node
-				&& 'updateList' === $child->rule_name
-			) {
-				$table_ref  = $node->get_first_child_node( 'tableReferenceList' )->get_first_child_node( 'tableReference' );
-				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
-				$parts[]    = $this->translate_update_list_in_non_strict_mode( $table_name, $child );
-			} else {
-				$parts[] = $this->translate( $child );
-			}
+		/*
+		 * Translate the UPDATE statement parts.
+		 *
+		 * [GRAMMAR]
+		 * updateStatement:
+		 *   withClause? UPDATE_SYMBOL LOW_PRIORITY_SYMBOL? IGNORE_SYMBOL? tableReferenceList
+		 *     SET_SYMBOL updateList whereClause? orderClause? simpleLimitClause?
+		 */
 
-			// When using a subquery, skip WHERE, ORDER BY, and LIMIT.
-			if (
-				null !== $where_subquery
-				&& $child instanceof WP_Parser_Node
-				&& 'updateList' === $child->rule_name
-			) {
-				// We can stop here, as the update statement grammar is:
-				//   ... updateList whereClause? orderClause? simpleLimitClause?
-				break;
+		// Translate WITH clause.
+		$with = $this->translate( $node->get_first_child_node( 'withClause' ) );
+
+		// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
+		$or_ignore = $node->has_child_token( WP_MySQL_Lexer::IGNORE_SYMBOL )
+			? 'OR IGNORE'
+			: null;
+
+		// Collect all tables used in the UPDATE clause (e.g, UPDATE t1, t2 JOIN t3).
+		$table_alias_map = $this->create_table_reference_map(
+			$node->get_first_child_node( 'tableReferenceList' )
+		);
+
+		// Determine whether the UPDATE statement modifies multiple tables.
+		$update_list_node        = $node->get_first_child_node( 'updateList' );
+		$update_target           = null;
+		$updates_multiple_tables = false;
+		if ( count( $table_alias_map ) > 1 ) {
+			foreach ( $update_list_node->get_child_nodes( 'updateElement' ) as $update_element ) {
+				$column_ref       = $update_element->get_first_child_node( 'columnRef' );
+				$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
+				$table_or_alias   = count( $column_ref_parts ) > 1
+					? $this->unquote_sqlite_identifier( $this->translate( $column_ref_parts[0] ) )
+					: null;
+
+				// When the SET column reference is not qualified, we need to
+				// verify whether the column is used in multiple tables.
+				if ( null === $table_or_alias ) {
+					$persistent_table_names = array();
+					$temporary_table_names  = array();
+					foreach ( array_column( $table_alias_map, 'table_name' ) as $table_name ) {
+						$is_temporary      = $this->information_schema_builder->temporary_table_exists( $table_name );
+						$quoted_table_name = $this->connection->quote( $table_name );
+						if ( $is_temporary ) {
+							$temporary_table_names[] = $quoted_table_name;
+						} else {
+							$persistent_table_names[] = $quoted_table_name;
+						}
+					}
+
+					$column_name = $this->unquote_sqlite_identifier(
+						$this->translate( end( $column_ref_parts ) )
+					);
+
+					$matched_temporary_tables = array();
+					if ( count( $temporary_table_names ) > 0 ) {
+						$matched_temporary_tables = $this->execute_sqlite_query(
+							sprintf(
+								'SELECT table_name FROM %s WHERE table_schema = ? AND table_name IN ( %s ) AND column_name = ?',
+								$this->quote_sqlite_identifier(
+									$this->information_schema_builder->get_table_name( true, 'columns' )
+								),
+								implode( ', ', $temporary_table_names )
+							),
+							array( $this->db_name, $column_name )
+						)->fetchAll( PDO::FETCH_COLUMN );
+					}
+
+					$matched_persistent_tables = array();
+					if ( count( $persistent_table_names ) > 0 ) {
+						$matched_persistent_tables = $this->execute_sqlite_query(
+							sprintf(
+								'SELECT table_name FROM %s WHERE table_schema = ? AND table_name IN ( %s ) AND column_name = ?',
+								$this->quote_sqlite_identifier(
+									$this->information_schema_builder->get_table_name( false, 'columns' )
+								),
+								implode( ', ', $persistent_table_names )
+							),
+							array( $this->db_name, $column_name )
+						)->fetchAll( PDO::FETCH_COLUMN );
+					}
+
+					$matched_tables          = array_merge( $matched_temporary_tables, $matched_persistent_tables );
+					$updates_multiple_tables = count( $matched_tables ) > 1;
+					if ( 1 === count( $matched_tables ) ) {
+						$table_or_alias = $matched_tables[0];
+					} else {
+						break;
+					}
+				}
+
+				if ( null === $update_target ) {
+					$update_target = $table_or_alias;
+				}
+
+				if ( $update_target !== $table_or_alias ) {
+					$updates_multiple_tables = true;
+					break;
+				}
 			}
+		} else {
+			$update_target = array_keys( $table_alias_map )[0];
 		}
 
-		// Compose the update query.
-		$query = implode( ' ', $parts );
-		if ( null !== $where_subquery ) {
-			$query .= ' WHERE rowid IN ( ' . $where_subquery . ' )';
+		// TODO: Support UPDATE that modifies multiple tables.
+		//       This is non-trivial and likely requires temporary tables.
+		//       E.g.: UPDATE t1, t2 SET t1.id = t2.id, t2.id = t1.id;
+		if ( $updates_multiple_tables ) {
+			throw $this->new_not_supported_exception( 'UPDATE statement modifying multiple tables' );
 		}
+
+		// Compose the FROM clause using all tables except the one being updated.
+		// UPDATE with FROM in SQLite is equivalent to UPDATE with JOIN in MySQL.
+		$from_items = array();
+		foreach ( $table_alias_map as $alias => $data ) {
+			$table_name = $data['table_name'];
+			if ( $alias === $update_target ) {
+				continue;
+			}
+
+			$from_item = $this->quote_sqlite_identifier( $alias );
+			if ( $alias !== $table_name ) {
+				$from_item .= ' AS ' . $this->quote_sqlite_identifier( $table_name );
+			}
+			$from_items[] = $from_item;
+		}
+
+		$from = null;
+		if ( count( $from_items ) > 0 ) {
+			$from = 'FROM ' . implode( ', ', $from_items );
+		}
+
+		// Translate UPDATE list.
+		if ( $is_non_strict_mode ) {
+			$update_list = $this->translate_update_list_in_non_strict_mode( $update_target, $update_list_node );
+		} else {
+			$update_parts = array();
+			foreach ( $update_list_node->get_child_nodes() as $update_element ) {
+				$column_ref       = $update_element->get_first_child_node( 'columnRef' );
+				$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
+
+				$update_part    = $this->translate( end( $column_ref_parts ) );
+				$update_part   .= ' = ';
+				$update_part   .= $this->translate( $update_element->get_first_child_node( 'expr' ) );
+				$update_parts[] = $update_part;
+			}
+			$update_list = implode( ', ', $update_parts );
+		}
+
+		// Translate WHERE, ORDER BY, and LIMIT clauses.
+		if ( $where_subquery ) {
+			// When using a subquery, skip the original WHERE, ORDER BY, and LIMIT.
+			$where_clause = ' WHERE rowid IN ( ' . $where_subquery . ' )';
+			$order_clause = null;
+			$limit_clause = null;
+		} else {
+			$where_clause = $this->translate( $node->get_first_child_node( 'whereClause' ) );
+			$order_clause = $this->translate( $node->get_first_child_node( 'orderClause' ) );
+			$limit_clause = $this->translate( $node->get_first_child_node( 'simpleLimitClause' ) );
+		}
+
+		// With JOINs, we need to use the JOIN expressions in the WHERE clause.
+		$join_exprs = array_filter( array_column( $table_alias_map, 'join_expr' ) );
+		if ( count( $join_exprs ) > 0 ) {
+			$where_clause .= $where_clause ? ' AND ' : ' WHERE ';
+			$where_clause .= implode( ' AND ', $join_exprs );
+		}
+
+		// Compose the UPDATE query.
+		$parts = array(
+			$with,
+			'UPDATE',
+			$or_ignore,
+			$this->quote_sqlite_identifier( $update_target ),
+			'SET',
+			$update_list,
+			$from,
+			$where_clause,
+			$order_clause,
+			$limit_clause,
+		);
+		$query = implode( ' ', array_filter( $parts ) );
 
 		$this->execute_sqlite_query( $query );
 		$this->set_result_from_affected_rows();
@@ -3746,11 +3892,12 @@ class WP_SQLite_Driver {
 		// 2. Translate UPDATE list, emulating implicit defaults for NULLs values.
 		$fragment = '';
 		foreach ( $node->get_child_nodes() as $i => $update_element ) {
-			$column_ref = $update_element->get_first_child_node( 'columnRef' );
-			$expr       = $update_element->get_first_child_node( 'expr' );
+			$column_ref       = $update_element->get_first_child_node( 'columnRef' );
+			$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
+			$expr             = $update_element->get_first_child_node( 'expr' );
 
 			// Get column info.
-			$column_name = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
+			$column_name = $this->unquote_sqlite_identifier( $this->translate( end( $column_ref_parts ) ) );
 			$column_info = $column_map[ strtolower( $column_name ) ];
 			$data_type   = $column_info['DATA_TYPE'];
 			$is_nullable = 'YES' === $column_info['IS_NULLABLE'];
@@ -3775,7 +3922,7 @@ class WP_SQLite_Driver {
 
 			// Compose the UPDATE list item.
 			$fragment .= $i > 0 ? ', ' : '';
-			$fragment .= $this->translate( $column_ref );
+			$fragment .= $this->translate( end( $column_ref_parts ) );
 			$fragment .= ' = ';
 			$fragment .= $value;
 		}
@@ -3949,6 +4096,69 @@ class WP_SQLite_Driver {
 			$disambiguation_map[ $key ][] = $column_value;
 		}
 		return $disambiguation_map;
+	}
+
+	/**
+	 * Analyze a "tableReferenceList" AST node and extract table data.
+	 *
+	 * This method extracts table data for all tables that are used at the root
+	 * level of a given query, including tables that are referenced using JOINs.
+	 *
+	 * The returned array maps table aliases to table names and additional data:
+	 *   - key:   table alias, or name if no alias is used
+	 *   - value: an array of table data
+	 *       - table_name: the real name of the table
+	 *       - join_expr:  the join expression used for the table
+	 *
+	 * MySQL has a non-stand ardsyntax extension where a comma-separated list of
+	 * table references is allowed as a table reference in itself, for instance:
+	 *   SELECT * FROM (t1, t2) JOIN t3 ON 1
+	 *
+	 * Which is equivalent to:
+	 *   SELECT * FROM (t1 CROSS JOIN t2) JOIN t3 ON 1
+	 *
+	 * @param  WP_Parser_Node $node The "tableReferenceList" AST node.
+	 * @return array                The table reference map (table alias => array of table data).
+	 */
+	private function create_table_reference_map( WP_Parser_Node $node ): array {
+		$table_map = array();
+
+		// Collect all table references, including the ones used in JOINs.
+		$table_refs = array();
+		foreach ( $node->get_child_nodes( 'tableReference' ) as $table_ref ) {
+			$table_refs[] = $table_ref;
+			foreach ( $table_ref->get_child_nodes( 'joinedTable' ) as $joined_table ) {
+				$table_refs[] = $joined_table;
+			}
+		}
+
+		// Process each table reference, extracting table data.
+		foreach ( $table_refs as $table_ref ) {
+			$table_factor = $table_ref->get_first_descendant_node( 'tableFactor' );
+			$join_expr    = $table_ref->get_first_child_node( 'expr' );
+			$child        = $table_factor->get_first_child_node();
+
+			// Descend all "singleTableParens" nodes to get the "singleTable" node.
+			if ( 'singleTableParens' === $child->rule_name ) {
+				$child = $child->get_first_descendant_node( 'singleTable' );
+			}
+
+			if ( 'singleTable' === $child->rule_name ) {
+				// Extract data from the "singleTable" node.
+				$name  = $this->translate( $child->get_first_child_node( 'tableRef' ) );
+				$alias = $this->translate( $child->get_first_child_node( 'tableAlias' ) );
+
+				$table_map[ $this->unquote_sqlite_identifier( $alias ?? $name ) ] = array(
+					'table_name' => $this->unquote_sqlite_identifier( $name ),
+					'join_expr'  => $this->translate( $join_expr ),
+				);
+			} elseif ( 'tableReferenceListParens' === $child->rule_name ) {
+				// Recursively process the "tableReferenceListParens" node.
+				$table_ref_list = $child->get_first_descendant_node( 'tableReferenceList' );
+				$table_map      = array_merge( $table_map, $this->create_table_reference_map( $table_ref_list ) );
+			}
+		}
+		return $table_map;
 	}
 
 	/**
