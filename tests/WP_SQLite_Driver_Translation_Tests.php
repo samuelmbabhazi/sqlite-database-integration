@@ -1328,6 +1328,40 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testBinaryLiterals(): void {
+		// All binary literal syntaxes need to be converted to HEX strings.
+		$this->assertQuery(
+			"SELECT x'417a' AS `b'0100000101111010'`",
+			"SELECT b'0100000101111010'"
+		);
+		$this->assertQuery(
+			"SELECT x'417a' AS `B'0100000101111010'`",
+			"SELECT B'0100000101111010'"
+		);
+		$this->assertQuery(
+			"SELECT x'417a' AS `0b0100000101111010`",
+			'SELECT 0b0100000101111010'
+		);
+	}
+
+	public function testHexadecimalLiterals(): void {
+		// The x'...' and X'...' syntax should be preserved as is.
+		$this->assertQuery(
+			"SELECT x'417a'",
+			"SELECT x'417a'"
+		);
+		$this->assertQuery(
+			"SELECT X'417a'",
+			"SELECT X'417a'"
+		);
+
+		// The 0x... syntax needs to be translated to x'...'.
+		$this->assertQuery(
+			"SELECT x'417a' AS `0x417a`",
+			'SELECT 0x417a'
+		);
+	}
+
 	public function testSystemVariables(): void {
 		$this->assertQuery(
 			"SELECT 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES' AS `@@sql_mode`",
