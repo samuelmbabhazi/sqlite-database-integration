@@ -2860,6 +2860,31 @@ class WP_SQLite_Driver {
 		switch ( $token->id ) {
 			case WP_MySQL_Lexer::EOF:
 				return null;
+			case WP_MySQL_Lexer::BIN_NUMBER:
+				/*
+				 * There are no binary literals in SQLite. We need to convert all
+				 * MySQL binary string values to HEX strings in SQLite (x'...').
+				 */
+				$value = $token->get_value();
+				if ( '0' === $value[0] ) {
+					// 0b...
+					$value = substr( $value, 2 );
+				} else {
+					// b'...' or B'...'
+					$value = substr( $value, 2, -1 );
+				}
+				return sprintf( "x'%s'", base_convert( $value, 2, 16 ) );
+			case WP_MySQL_Lexer::HEX_NUMBER:
+				/*
+				 * In MySQL, "0x" prefixed values represent binary literal values,
+				 * while in SQLite, that would be a hexadecimal number. Therefore,
+				 * we need to convert the 0x... syntax to x'...'.
+				 */
+				$value = $token->get_value();
+				if ( '0' === $value[0] && 'x' === $value[1] ) {
+					return sprintf( "x'%s'", substr( $value, 2 ) );
+				}
+				return $value;
 			case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
 				return 'AUTOINCREMENT';
 			case WP_MySQL_Lexer::BINARY_SYMBOL:

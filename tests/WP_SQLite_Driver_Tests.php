@@ -6873,4 +6873,26 @@ END;
 			SET claim_id = 37, last_attempt_gmt = '2025-09-03 12:23:55', last_attempt_local = '2025-09-03 12:23:55'"
 		);
 	}
+
+	public function testBinaryLiterals(): void {
+		$result = $this->assertQuery( 'SELECT 0b0100000101111010' );
+		$this->assertEquals( array( (object) array( '0b0100000101111010' => 'Az' ) ), $result );
+
+		$result = $this->assertQuery( "SELECT b'0100000101111010'" );
+		$this->assertEquals( array( (object) array( "b'0100000101111010'" => 'Az' ) ), $result );
+
+		$result = $this->assertQuery( "SELECT B'0100000101111010'" );
+		$this->assertEquals( array( (object) array( "B'0100000101111010'" => 'Az' ) ), $result );
+	}
+
+	public function testHexadecimalLiterals(): void {
+		$result = $this->assertQuery( 'SELECT 0x417a' );
+		$this->assertEquals( array( (object) array( '0x417a' => 'Az' ) ), $result );
+
+		$result = $this->assertQuery( "SELECT x'417a'" );
+		$this->assertEquals( array( (object) array( "x'417a'" => 'Az' ) ), $result );
+
+		$result = $this->assertQuery( "SELECT X'417a'" );
+		$this->assertEquals( array( (object) array( "X'417a'" => 'Az' ) ), $result );
+	}
 }
