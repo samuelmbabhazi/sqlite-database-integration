@@ -9,6 +9,7 @@ require_once __DIR__ . '/../wp-includes/parser/class-wp-parser-token.php';
 require_once __DIR__ . '/../wp-includes/mysql/class-wp-mysql-token.php';
 require_once __DIR__ . '/../wp-includes/mysql/class-wp-mysql-lexer.php';
 require_once __DIR__ . '/../wp-includes/mysql/class-wp-mysql-parser.php';
+require_once __DIR__ . '/../wp-includes/mysql/class-wp-mysql-naive-query-stream.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-query-rewriter.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-token.php';
