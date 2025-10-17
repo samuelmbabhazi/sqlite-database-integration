@@ -381,6 +381,13 @@ class WP_SQLite_Driver {
 	);
 
 	/**
+	 * The version of the MySQL server that the driver is configured for.
+	 *
+	 * @var int
+	 */
+	private $mysql_version;
+
+	/**
 	 * The SQLite engine version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
@@ -563,10 +570,15 @@ class WP_SQLite_Driver {
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
 	 */
-	public function __construct( WP_SQLite_Connection $connection, string $database ) {
-		$this->connection   = $connection;
-		$this->main_db_name = $database;
-		$this->db_name      = $database;
+	public function __construct(
+		WP_SQLite_Connection $connection,
+		string $database,
+		int $mysql_version = 80038
+	) {
+		$this->mysql_version = $mysql_version;
+		$this->connection    = $connection;
+		$this->main_db_name  = $database;
+		$this->db_name       = $database;
 
 		// Check the database name.
 		if ( '' === $this->db_name ) {
@@ -2188,6 +2200,9 @@ class WP_SQLite_Driver {
 		$keyword2 = $tokens[2] ?? null;
 
 		switch ( $keyword1->id ) {
+			case WP_MySQL_Lexer::COLLATION_SYMBOL:
+				$this->execute_show_collation_statement();
+				return;
 			case WP_MySQL_Lexer::DATABASES_SYMBOL:
 				$this->execute_show_databases_statement( $node );
 				return;
@@ -2253,6 +2268,32 @@ class WP_SQLite_Driver {
 				$keyword1->get_value()
 			)
 		);
+	}
+
+	/**
+	 * Translate and execute a MySQL SHOW COLLATION statement in SQLite.
+	 */
+	private function execute_show_collation_statement(): void {
+		$definition = $this->information_schema_builder
+			->get_computed_information_schema_table_definition( 'collations' );
+
+		// TODO: LIKE and WHERE clauses.
+
+		$result = $this->execute_sqlite_query( $definition )->fetchAll( PDO::FETCH_ASSOC );
+
+		$collations = array();
+		foreach ( $result as $row ) {
+			$collations[] = (object) array(
+				'Collation'     => $row['COLLATION_NAME'],
+				'Charset'       => $row['CHARACTER_SET_NAME'],
+				'Id'            => $row['ID'],
+				'Default'       => $row['IS_DEFAULT'],
+				'Compiled'      => $row['IS_COMPILED'],
+				'Sortlen'       => $row['SORTLEN'],
+				'Pad_attribute' => $row['PAD_ATTRIBUTE'],
+			);
+		}
+		$this->set_results_from_fetched_data( $collations );
 	}
 
 	/**
@@ -2609,7 +2650,7 @@ class WP_SQLite_Driver {
 
 		if ( 'information_schema' === strtolower( $database_name ) ) {
 			$this->db_name = 'information_schema';
-		} elseif ( $this->db_name === $database_name ) {
+		} elseif ( $this->main_db_name === $database_name ) {
 			$this->db_name = $database_name;
 		} else {
 			throw $this->new_not_supported_exception(
@@ -3105,6 +3146,16 @@ class WP_SQLite_Driver {
 				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
 				if ( 'sql_mode' === $name ) {
 					$value = implode( ',', $this->active_sql_modes );
+				} elseif ( 'version' === $name ) {
+					$version = (string) $this->mysql_version;
+					$value   = sprintf(
+						'%d.%d.%d',
+						$version[0],
+						substr( $version, 1, 2 ),
+						substr( $version, 3, 2 )
+					);
+				} elseif ( 'version_comment' === $name ) {
+					$value = 'MySQL Community Server - GPL';
 				} elseif ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 					$value = $this->session_system_variables[ $name ] ?? null;
 				} else {
@@ -3134,11 +3185,36 @@ class WP_SQLite_Driver {
 				}
 				return (string) $value;
 			case 'castType':
-				// Translate "CAST(... AS BINARY)" to "CAST(... AS BLOB)".
-				if ( $node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
-					return 'BLOB';
+				$first_child = $node->get_first_child();
+				if ( $first_child instanceof WP_Parser_Node ) {
+					$first_token = $first_child->get_first_child_token();
+				} else {
+					$first_token = $first_child;
 				}
-				return $this->translate_sequence( $node->get_children() );
+				switch ( $first_token->id ) {
+					case WP_MySQL_Lexer::BINARY_SYMBOL:
+						return 'BLOB';
+					case WP_MySQL_Lexer::CHAR_SYMBOL:
+					case WP_MySQL_Lexer::NCHAR_SYMBOL:
+					case WP_MySQL_Lexer::NATIONAL_SYMBOL:
+					case WP_MySQL_Lexer::DATE_SYMBOL:
+					case WP_MySQL_Lexer::TIME_SYMBOL:
+					case WP_MySQL_Lexer::DATETIME_SYMBOL:
+					case WP_MySQL_Lexer::JSON_SYMBOL:
+						return 'TEXT';
+					case WP_MySQL_Lexer::SIGNED_SYMBOL:
+					case WP_MySQL_Lexer::UNSIGNED_SYMBOL:
+						return 'INTEGER';
+					case WP_MySQL_Lexer::DECIMAL_SYMBOL:
+					case WP_MySQL_Lexer::FLOAT_SYMBOL:
+					case WP_MySQL_Lexer::REAL_SYMBOL:
+					case WP_MySQL_Lexer::DOUBLE_SYMBOL:
+						return 'REAL';
+					default:
+						throw $this->new_not_supported_exception(
+							sprintf( 'cast type: %s', $first_child->get_value() )
+						);
+				}
 			case 'defaultCollation':
 				// @TODO: Check and save in information schema.
 				return null;
@@ -3961,6 +4037,17 @@ class WP_SQLite_Driver {
 			( null === $schema_name && 'information_schema' === $this->db_name )
 			|| ( null !== $schema_name && 'information_schema' === strtolower( $schema_name ) )
 		) {
+			$table_name = strtolower( $table_name );
+
+			// Some information schema tables can be computed on the fly.
+			if ( 'character_sets' === $table_name || 'collations' === $table_name ) {
+				$table_definition = $this->information_schema_builder
+					->get_computed_information_schema_table_definition( $table_name );
+				if ( null !== $table_definition ) {
+					return sprintf( '(%s)', $table_definition );
+				}
+			}
+
 			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 			$sqlite_table_name  = $this->information_schema_builder->get_table_name( $table_is_temporary, $table_name );
 
