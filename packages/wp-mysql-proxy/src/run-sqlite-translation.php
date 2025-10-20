@@ -9,10 +9,10 @@
 require_once __DIR__ . '/mysql-server.php';
 require_once __DIR__ . '/handler-sqlite-translation.php';
 
-define('WP_SQLITE_AST_DRIVER', true);
+define( 'WP_SQLITE_AST_DRIVER', true );
 
 $server = new MySQLSocketServer(
-	new SQLiteTranslationHandler(__DIR__ . '/database/test.db'),
-	['port' => 3306]
+	new SQLiteTranslationHandler( __DIR__ . '/../database/test.db' ),
+	array( 'port' => 3306 )
 );
 $server->start();

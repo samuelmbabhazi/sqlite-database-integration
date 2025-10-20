@@ -1,4 +1,4 @@
-<?php
+<?php // phpcs:disable WordPress.Files.FileName.InvalidClassFileName
 
 define( 'WP_DEBUG', false );
 
@@ -23,38 +23,38 @@ class SQLiteTranslationHandler implements MySQLQueryHandler {
 	/** @var WP_SQLite_Driver */
 	private $sqlite_driver;
 
-	public function __construct($sqlite_database_path) {
-		define('FQDB', $sqlite_database_path);
-		define('FQDBDIR', dirname(FQDB) . '/');
+	public function __construct( $sqlite_database_path ) {
+		define( 'FQDB', $sqlite_database_path );
+		define( 'FQDBDIR', dirname( FQDB ) . '/' );
 
 		$this->sqlite_driver = new WP_SQLite_Driver(
 			new WP_SQLite_Connection( array( 'path' => $sqlite_database_path ) ),
-			'wordpress'
+			'sqlite_database'
 		);
 	}
 
-	public function handleQuery(string $query): MySQLServerQueryResult {
+	public function handle_query( string $query ): MySQLServerQueryResult {
 		try {
-			$rows = $this->sqlite_driver->query($query);
+			$rows = $this->sqlite_driver->query( $query );
 			if ( $this->sqlite_driver->get_last_column_count() > 0 ) {
 				$columns = $this->computeColumnInfo();
-				return new SelectQueryResult($columns, $rows);
+				return new SelectQueryResult( $columns, $rows );
 			}
 			return new OkayPacketResult(
 				$this->sqlite_driver->get_last_return_value() ?? 0,
 				$this->sqlite_driver->get_insert_id() ?? 0
 			);
-		} catch (Throwable $e) {
-			return new ErrorQueryResult($e->getMessage());
+		} catch ( Throwable $e ) {
+			return new ErrorQueryResult( $e->getMessage() );
 		}
 	}
 
 	public function computeColumnInfo() {
-		$columns = [];
+		$columns = array();
 
 		$column_meta = $this->sqlite_driver->get_last_column_meta();
 
-		$types = [
+		$types = array(
 			'DECIMAL'     => MySQLProtocol::FIELD_TYPE_DECIMAL,
 			'TINY'        => MySQLProtocol::FIELD_TYPE_TINY,
 			'SHORT'       => MySQLProtocol::FIELD_TYPE_SHORT,
@@ -82,20 +82,20 @@ class SQLiteTranslationHandler implements MySQLQueryHandler {
 			'VAR_STRING'  => MySQLProtocol::FIELD_TYPE_VAR_STRING,
 			'STRING'      => MySQLProtocol::FIELD_TYPE_STRING,
 			'GEOMETRY'    => MySQLProtocol::FIELD_TYPE_GEOMETRY,
-		];
+		);
 
-		foreach ($column_meta as $column) {
-			$type = $types[$column['native_type']] ?? null;
+		foreach ( $column_meta as $column ) {
+			$type = $types[ $column['native_type'] ] ?? null;
 			if ( null === $type ) {
-				throw new Exception('Unknown column type: ' . $column['native_type']);
+				throw new Exception( 'Unknown column type: ' . $column['native_type'] );
 			}
-			$columns[] = [
+			$columns[] = array(
 				'name'     => $column['name'],
 				'length'   => $column['len'],
 				'type'     => $type,
 				'flags'    => 129,
-				'decimals' => $column['precision']
-			];
+				'decimals' => $column['precision'],
+			);
 		}
 		return $columns;
 	}
