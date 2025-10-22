@@ -9455,4 +9455,86 @@ END;
 			$result
 		);
 	}
+
+	public function testInsertIntoSetSyntax(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+			  id INT PRIMARY KEY AUTO_INCREMENT,
+			  name VARCHAR(255) NOT NULL,
+			  value TEXT
+			)'
+		);
+
+		$this->assertQuery( "INSERT INTO t SET name = 'one'" );
+		$this->assertQuery( "INSERT INTO t SET name = 'two', value = 'two-value'" );
+		$this->assertQuery( "INSERT INTO t SET value = 'three-value', name = 'three'" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'name'  => 'one',
+					'value' => null,
+				),
+				(object) array(
+					'id'    => '2',
+					'name'  => 'two',
+					'value' => 'two-value',
+				),
+				(object) array(
+					'id'    => '3',
+					'name'  => 'three',
+					'value' => 'three-value',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInsertIntoSetSyntaxInNonStrictMode(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		$this->assertQuery(
+			'CREATE TABLE t (
+			  id INT PRIMARY KEY AUTO_INCREMENT,
+			  created_at DATETIME NOT NULL,
+			  name VARCHAR(255) NOT NULL,
+			  value TEXT,
+			  score INT NOT NULL
+			)'
+		);
+
+		$this->assertQuery( "INSERT INTO t SET name = 'one'" );
+		$this->assertQuery( "INSERT INTO t SET name = 'two', value = 'two-value'" );
+		$this->assertQuery( "INSERT INTO t SET value = 'three-value', name = 'three'" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'         => '1',
+					'created_at' => '0000-00-00 00:00:00',
+					'name'       => 'one',
+					'value'      => null,
+					'score'      => '0',
+				),
+				(object) array(
+					'id'         => '2',
+					'created_at' => '0000-00-00 00:00:00',
+					'name'       => 'two',
+					'value'      => 'two-value',
+					'score'      => '0',
+				),
+				(object) array(
+					'id'         => '3',
+					'created_at' => '0000-00-00 00:00:00',
+					'name'       => 'three',
+					'value'      => 'three-value',
+					'score'      => '0',
+				),
+			),
+			$result
+		);
+	}
 }
