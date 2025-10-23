@@ -4427,6 +4427,9 @@ class WP_SQLite_Driver {
 		string $table_name,
 		WP_Parser_Node $node
 	): string {
+		// This method is always used with the main database.
+		$database = $this->get_saved_db_name( $this->main_db_name );
+
 		// 1. Get column metadata from information schema.
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
@@ -4438,7 +4441,7 @@ class WP_SQLite_Driver {
 				AND table_name = ?
 				ORDER BY ordinal_position
 			',
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 2. Get the list of fields explicitly defined in the INSERT statement.
@@ -4586,6 +4589,9 @@ class WP_SQLite_Driver {
 	 * @return string                     The translated UPDATE list.
 	 */
 	private function translate_update_list_in_non_strict_mode( string $table_name, WP_Parser_Node $node ): string {
+		// This method is always used with the main database.
+		$database = $this->get_saved_db_name( $this->main_db_name );
+
 		// 1. Get column metadata from information schema.
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
@@ -4596,7 +4602,7 @@ class WP_SQLite_Driver {
 				WHERE table_schema = ?
 				AND table_name = ?
 			',
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$column_map    = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
 
