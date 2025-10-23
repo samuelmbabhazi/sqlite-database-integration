@@ -4430,7 +4430,7 @@ class WP_SQLite_Driver {
 		// This method is always used with the main database.
 		$database = $this->get_saved_db_name( $this->main_db_name );
 
-		// 1. Get column metadata from information schema.
+		// Get column metadata for the target table from the information schema.
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
@@ -4444,36 +4444,41 @@ class WP_SQLite_Driver {
 			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
-		// 2. Get the list of fields explicitly defined in the INSERT statement.
+		// Get a list of columns that are targeted by the INSERT or REPLACE query.
+		// This is either an explicit column list, or all columns of the table.
 		$insert_list = array();
 		$fields_node = $node->get_first_child_node( 'fields' );
 		if ( $fields_node ) {
-			// This is the optional "INSERT INTO ... (field1, field2, ...)" list.
+			// "INSERT INTO ... (column1, column2, ...)"
 			foreach ( $fields_node->get_child_nodes() as $field ) {
 				$column_name   = $this->unquote_sqlite_identifier( $this->translate( $field ) );
 				$insert_list[] = strtolower( $column_name );
 			}
 		} elseif ( 'updateList' === $node->rule_name ) {
-			// This is the "INSERT INTO ... SET c1 = v1, c2 = v2, ... " syntax.
+			// "INSERT INTO ... SET column1 = value1, column2 = value2, ..."
 			foreach ( $node->get_child_nodes( 'updateElement' ) as $update_element ) {
 				$column_ref    = $update_element->get_first_child_node( 'columnRef' );
 				$column_name   = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
 				$insert_list[] = strtolower( $column_name );
 			}
 		} else {
-			// When no explicit field list is provided, all columns are required.
+			// "INSERT INTO ... VALUES(...)" or "INSERT INTO ... SELECT ..."
+			// No explicit column list is provided; we need to list all columns.
 			foreach ( array_column( $columns, 'COLUMN_NAME' ) as $column_name ) {
 				$insert_list[] = strtolower( $column_name );
 			}
 		}
 
-		// 3. Filter out omitted columns that will get a value from the SQLite engine.
-		//    That is, nullable columns, columns with defaults, and generated columns.
+		// Prepare a helper map of columns that are included in the INSERT list.
+		$insert_map = array_combine( $insert_list, $insert_list );
+
+		// Filter out omitted columns that will get a value from the SQLite engine.
+		// That is, nullable columns, columns with defaults, and generated columns.
 		$columns = array_values(
 			array_filter(
 				$columns,
-				function ( $column ) use ( $insert_list ) {
-					$is_omitted = ! in_array( $column['COLUMN_NAME'], $insert_list, true );
+				function ( $column ) use ( $insert_map ) {
+					$is_omitted = ! isset( $insert_map[ $column['COLUMN_NAME'] ] );
 					if ( ! $is_omitted ) {
 						return true;
 					}
@@ -4485,11 +4490,17 @@ class WP_SQLite_Driver {
 			)
 		);
 
-		// 4. Get the list of column names returned by VALUES or SELECT clause.
+		/*
+		 * Get a list of column names for the INSERT or REPLACE values clause.
+		 * These are the columns that will be used in a SELECT statement when
+		 * the values clause is wrapped in a subquery:
+		 *
+		 *   INSERT INTO ... SELECT <select-list> FROM (<values-from-original-query>)
+		 */
 		$select_list = array();
 		if ( 'insertQueryExpression' === $node->rule_name ) {
 			// When inserting from a SELECT query, we don't know the column names.
-			// Let's wrap the query with a SELECT (...) LIMIT 0 to get obtain them.
+			// Let's wrap the query with a "SELECT (...) LIMIT 0" to obtain them.
 			$expr = $node->get_first_child_node( 'queryExpressionOrParens' );
 			$stmt = $this->execute_sqlite_query(
 				'SELECT * FROM (' . $this->translate( $expr ) . ') LIMIT 1'
@@ -4500,13 +4511,14 @@ class WP_SQLite_Driver {
 				$select_list[] = $stmt->getColumnMeta( $i )['name'];
 			}
 		} else {
-			// When inserting from a VALUES list, SQLite uses "columnN" naming.
+			// When inserting from a VALUES list, SQLite uses a "columnN" naming.
+			// This also applies to the SET syntax, which is converted to VALUES.
 			foreach ( array_keys( $insert_list ) as $position ) {
 				$select_list[] = 'column' . ( $position + 1 );
 			}
 		}
 
-		// 5. Compose a new INSERT field list with all columns from the table.
+		// Compose a new INSERT column list with all columns from the table.
 		$fragment = '(';
 		foreach ( $columns as $i => $column ) {
 			$fragment .= $i > 0 ? ', ' : '';
@@ -4514,10 +4526,10 @@ class WP_SQLite_Driver {
 		}
 		$fragment .= ')';
 
-		// 6. Compose a wrapper SELECT statement emulating IMPLICIT DEFAULT values.
+		// Compose a wrapper SELECT statement emulating IMPLICIT DEFAULT values.
 		$fragment .= ' SELECT ';
 		foreach ( $columns as $i => $column ) {
-			$is_omitted = ! in_array( $column['COLUMN_NAME'], $insert_list, true );
+			$is_omitted = ! isset( $insert_map[ $column['COLUMN_NAME'] ] );
 			$fragment  .= $i > 0 ? ', ' : '';
 			if ( $is_omitted ) {
 				/*
@@ -4540,7 +4552,7 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 6. Wrap the original insert VALUES, SELECT, or SET list in a FROM clause.
+		// Wrap the original insert VALUES, SELECT, or SET list in a FROM clause.
 		if ( 'insertFromConstructor' === $node->rule_name ) {
 			// VALUES (...)
 			$from = $this->translate(
