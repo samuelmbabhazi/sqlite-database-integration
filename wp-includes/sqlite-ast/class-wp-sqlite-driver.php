@@ -4435,7 +4435,7 @@ class WP_SQLite_Driver {
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
 			'
-				SELECT column_name, is_nullable, column_default, data_type, extra
+				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, extra
 				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
@@ -4450,18 +4450,20 @@ class WP_SQLite_Driver {
 		if ( $fields_node ) {
 			// This is the optional "INSERT INTO ... (field1, field2, ...)" list.
 			foreach ( $fields_node->get_child_nodes() as $field ) {
-				$insert_list[] = $this->unquote_sqlite_identifier( $this->translate( $field ) );
+				$column_name   = $this->unquote_sqlite_identifier( $this->translate( $field ) );
+				$insert_list[] = strtolower( $column_name );
 			}
 		} elseif ( 'updateList' === $node->rule_name ) {
 			// This is the "INSERT INTO ... SET c1 = v1, c2 = v2, ... " syntax.
 			foreach ( $node->get_child_nodes( 'updateElement' ) as $update_element ) {
 				$column_ref    = $update_element->get_first_child_node( 'columnRef' );
-				$insert_list[] = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
+				$column_name   = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
+				$insert_list[] = strtolower( $column_name );
 			}
 		} else {
 			// When no explicit field list is provided, all columns are required.
 			foreach ( array_column( $columns, 'COLUMN_NAME' ) as $column_name ) {
-				$insert_list[] = $column_name;
+				$insert_list[] = strtolower( $column_name );
 			}
 		}
 
