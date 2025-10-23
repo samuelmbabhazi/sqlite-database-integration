@@ -1500,12 +1500,6 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
-		// Check if strict mode is disabled.
-		$is_non_strict_mode = (
-			! $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
-			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
-		);
-
 		$parts = array();
 		foreach ( $node->get_children() as $child ) {
 			$is_token = $child instanceof WP_MySQL_Token;
@@ -1527,8 +1521,7 @@ class WP_SQLite_Driver {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
 			} elseif (
-				$is_non_strict_mode
-				&& $is_node
+				$is_node
 				&& (
 					'insertFromConstructor' === $child->rule_name
 					|| 'insertQueryExpression' === $child->rule_name
@@ -1537,17 +1530,7 @@ class WP_SQLite_Driver {
 			) {
 				$table_ref  = $node->get_first_child_node( 'tableRef' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
-				$parts[]    = $this->translate_insert_or_replace_body_in_non_strict_mode( $table_name, $child );
-			} elseif ( $is_node && 'updateList' === $child->rule_name ) {
-				// Convert "SET c1 = v1, c2 = v2, ... to "(c1, c2, ...) VALUES (v1, v2, ...)".
-				$columns = array();
-				$values  = array();
-				foreach ( $child->get_child_nodes( 'updateElement' ) as $update_element ) {
-					$column_ref = $update_element->get_first_child_node( 'columnRef' );
-					$columns[]  = $this->translate( $column_ref );
-					$values[]   = $this->translate( $update_element->get_first_child_node( 'expr' ) );
-				}
-				$parts[] = '(' . implode( ', ', $columns ) . ') VALUES (' . implode( ', ', $values ) . ')';
+				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
 			} else {
 				$parts[] = $this->translate( $child );
 			}
@@ -4377,28 +4360,32 @@ class WP_SQLite_Driver {
 
 	/**
 	 * Translate INSERT or REPLACE statement body to SQLite, while emulating
-	 * the behavior of MySQL implicit default values in non-strict mode.
+	 * MySQL column type casting and implicit default values when saving data.
 	 *
-	 * Rewrites a statement body in the following form:
+	 * This method rewrites an INSERT or REPLACE statement body from:
 	 *   INSERT INTO table (optionally some columns) <select-or-values>
 	 * To a statement body with the following structure:
-	 *   INSERT INTO table (all table columns)
-	 *   SELECT <non-strict-mode-adjusted-values> FROM (<select-or-values>) WHERE true
+	 *   INSERT INTO table (table columns)
+	 *   SELECT <adjusted-values> FROM (<select-or-values>) WHERE true
 	 *
 	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
 	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
 	 *
-	 * By default, STRICT_TRANS_TABLES is enabled, which makes the InnoDB table
-	 * behavior correspond to the natural behavior of SQLite tables. However,
-	 * some applications, including WordPress, disable strict mode altogether.
+	 * This method applies relevant type casting and emulates IMPLICIT DEFAULT
+	 * value behavior as follows:
+	 *   1. In STRICT mode:
+	 *      - Apply relevant type casting based on the column data type.
+	 *   2. In non-STRICT mode:
+	 *      - Apply relevant type casting based on the column data type.
+	 *      - Replace invalid values with IMPLICIT DEFAULTs.
+	 *      - Replace missing values without defaults with IMPLICIT DEFAULTs.
 	 *
 	 * The strict SQL modes can be set per session, and can be changed at runtime.
-	 * In SQLite, we can emulate this using the knowledge of the table structure:
-	 *   1. Explicitly passed INSERT statement values are used without change.
-	 *   2. Values omitted from the INSERT statement are replaced with the column
-	 *      DEFAULT or an IMPLICIT DEFAULT value based on their data type.
+	 * In SQLite, we can emulate this using the knowledge of the table structure.
 	 *
-	 * Here's a summary of the strict vs. non-strict behaviors in MySQL:
+	 * -----
+	 *
+	 * Here's a summary of the strict vs. non-strict IMPLICIT DEFAULT behavior:
 	 *
 	 * When STRICT_TRANS_TABLES or STRICT_ALL_TABLES is enabled:
 	 *   1. NULL + NO DEFAULT:     No value saves NULL, NULL saves NULL, DEFAULT saves NULL.
@@ -4423,12 +4410,18 @@ class WP_SQLite_Driver {
 	 * @param  WP_Parser_Node $node       The "insertQueryExpression" or "insertValues" AST node.
 	 * @return string                     The translated INSERT query body.
 	 */
-	private function translate_insert_or_replace_body_in_non_strict_mode(
+	private function translate_insert_or_replace_body(
 		string $table_name,
 		WP_Parser_Node $node
 	): string {
 		// This method is always used with the main database.
 		$database = $this->get_saved_db_name( $this->main_db_name );
+
+		// Check if strict mode is enabled.
+		$is_strict_mode = (
+			$this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			|| $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
 
 		// Get column metadata for the target table from the information schema.
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
@@ -4472,15 +4465,23 @@ class WP_SQLite_Driver {
 		// Prepare a helper map of columns that are included in the INSERT list.
 		$insert_map = array_combine( $insert_list, $insert_list );
 
-		// Filter out omitted columns that will get a value from the SQLite engine.
-		// That is, nullable columns, columns with defaults, and generated columns.
+		/*
+		 * Filter out columns that were omitted in the INSERT list:
+		 *  1. In strict mode, filter out all omitted columns.
+		 *  2. In non-strict mode, filter out omitted columns that will get a
+		 *     value from the SQLite engine. That is, nullable columns, columns
+		 *     with defaults, and generated columns.
+		 */
 		$columns = array_values(
 			array_filter(
 				$columns,
-				function ( $column ) use ( $insert_map ) {
+				function ( $column ) use ( $is_strict_mode, $insert_map ) {
 					$is_omitted = ! isset( $insert_map[ $column['COLUMN_NAME'] ] );
 					if ( ! $is_omitted ) {
 						return true;
+					}
+					if ( $is_strict_mode ) {
+						return false;
 					}
 					$is_nullable  = 'YES' === $column['IS_NULLABLE'];
 					$has_default  = $column['COLUMN_DEFAULT'];
@@ -4526,13 +4527,18 @@ class WP_SQLite_Driver {
 		}
 		$fragment .= ')';
 
-		// Compose a wrapper SELECT statement emulating IMPLICIT DEFAULT values.
+		// Compose a wrapper SELECT statement emulating MySQL-like type casting,
+		// and, in non-strict mode, IMPLICIT DEFAULT values for omitted columns.
 		$fragment .= ' SELECT ';
 		foreach ( $columns as $i => $column ) {
 			$is_omitted = ! isset( $insert_map[ $column['COLUMN_NAME'] ] );
 			$fragment  .= $i > 0 ? ', ' : '';
 			if ( $is_omitted ) {
 				/*
+				 * This path only applies to non-strict mode. In strict mode,
+				 * omitted columns get no IMPLICIT DEFAULT values, and they were
+				 * previously filtered out from the columns list.
+				 *
 				 * When a column is omitted from the INSERT list, we need to use
 				 * an IMPLICIT DEFAULT value. Note that at this point, all omitted
 				 * columns that will not get an implicit default are filtered out.
@@ -4544,11 +4550,7 @@ class WP_SQLite_Driver {
 				// When a column value is included, we need to apply type casting.
 				$position   = array_search( $column['COLUMN_NAME'], $insert_list, true );
 				$identifier = $this->quote_sqlite_identifier( $select_list[ $position ] );
-				$fragment  .= sprintf(
-					'%s AS %s',
-					$this->cast_value_in_non_strict_mode( $column['DATA_TYPE'], $identifier ),
-					$identifier
-				);
+				$fragment  .= $this->cast_value_for_insert_or_update( $column['DATA_TYPE'], $identifier );
 			}
 		}
 
@@ -4643,7 +4645,7 @@ class WP_SQLite_Driver {
 			}
 
 			// Apply type casting.
-			$value = $this->cast_value_in_non_strict_mode( $data_type, $value );
+			$value = $this->cast_value_for_insert_or_update( $data_type, $value );
 
 			// If the column is NOT NULL, a NULL value resolves to implicit default.
 			$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
@@ -4947,23 +4949,27 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Emulate MySQL type casting for INSERT or UPDATE value in non-strict mode.
+	 * Emulate MySQL type casting for INSERT or UPDATE values.
 	 *
 	 * @param  string $mysql_data_type  The MySQL data type.
 	 * @param  string $translated_value The original translated value.
 	 * @return string                   The translated value.
 	 */
-	private function cast_value_in_non_strict_mode(
+	private function cast_value_for_insert_or_update(
 		string $mysql_data_type,
 		string $translated_value
 	): string {
-		$sqlite_data_type = self::DATA_TYPE_STRING_MAP[ $mysql_data_type ];
+		// TODO: This is also a good place to implement checks for maximum column
+		//       lengths with truncating or bailing out depending on the SQL mode.
 
-		// Get and quote the IMPLICIT DEFAULT value.
-		$implicit_default        = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $mysql_data_type ] ?? null;
-		$quoted_implicit_default = null === $implicit_default
-			? 'NULL'
-			: $this->connection->quote( $implicit_default );
+		// Check if strict mode is enabled.
+		$is_strict_mode = (
+			$this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			|| $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
+
+		$mysql_data_type  = strtolower( $mysql_data_type );
+		$sqlite_data_type = self::DATA_TYPE_STRING_MAP[ $mysql_data_type ];
 
 		/*
 		 * In MySQL, when saving a value via INSERT or UPDATE in non-strict mode,
@@ -5000,18 +5006,46 @@ class WP_SQLite_Driver {
 					$function_call = sprintf( "STRFTIME('%%Y', %s)", $translated_value );
 				}
 
-				// When the function call evaluates to NULL (invalid date/time),
-				// we need to fallback to the IMPLICIT DEFAULT value.
+				// In strict mode, invalid date/time values are rejected.
+				// In non-strict mode, they get an IMPLICIT DEFAULT value.
+				if ( $is_strict_mode ) {
+					$fallback = sprintf(
+						"THROW('Incorrect %s value: ''' || %s || '''')",
+						$mysql_data_type,
+						$translated_value
+					);
+				} else {
+					$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $mysql_data_type ] ?? null;
+					$fallback         = null === $implicit_default
+						? 'NULL'
+						: $this->connection->quote( $implicit_default );
+				}
 				return sprintf(
-					'IIF(%s IS NULL, NULL, COALESCE(%s, %s))',
+					"CASE
+						WHEN %s IS NULL THEN NULL
+						WHEN %s > '0' THEN %s
+						ELSE %s
+					END",
 					$translated_value,
 					$function_call,
-					$quoted_implicit_default
+					$function_call,
+					$fallback
 				);
 			default:
-				// For all other data types, use SQLite-native CAST expression.
-				$mysql_data_type = strtolower( $mysql_data_type );
-				return sprintf( 'CAST(%s AS %s)', $translated_value, $sqlite_data_type );
+				/*
+				 * For all other data types, cast to the SQLite types as follows:
+				 *   1. In strict mode, cast only values for TEXT and BLOB columns.
+				 *      Numeric types accept string notation in SQLite as well.
+				 *   2. In non-strict mode, cast all values.
+				 *
+				 * TODO: While close to MySQL behavior, this does't exactly match
+				 *       all special cases. We may improve this further to accept
+				 *       BLOBs for numeric types, and other special behaviors.
+				 */
+				if ( ! $is_strict_mode || 'TEXT' === $sqlite_data_type || 'BLOB' === $sqlite_data_type ) {
+					return sprintf( 'CAST(%s AS %s)', $translated_value, $sqlite_data_type );
+				}
+				return $translated_value;
 		}
 	}
 

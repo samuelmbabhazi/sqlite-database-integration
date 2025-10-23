@@ -28,7 +28,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 			"CREATE TABLE _dates (
 					ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 					option_name TEXT NOT NULL default '',
-					option_value DATE NOT NULL
+					option_value DATETIME NOT NULL
 				);"
 		);
 	}
@@ -37,6 +37,17 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$retval = $this->engine->query( $sql );
 		$this->assertNotFalse( $retval );
 		return $retval;
+	}
+
+	private function assertQueryError( $sql, $error_message ) {
+		$exception = null;
+		try {
+			$this->engine->query( $sql );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception, 'An exception was expected, but none was thrown.' );
+		$this->assertSame( $error_message, $exception->getMessage() );
 	}
 
 	public function testRegexp() {
@@ -2342,6 +2353,8 @@ class WP_SQLite_Driver_Tests extends TestCase {
 	}
 
 	public function testTruncatesInvalidDates() {
+		$this->assertQuery( "SET sql_mode = ''" );
+
 		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2022-01-01 14:24:12');" );
 		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2022-31-01 14:24:12');" );
 
@@ -10052,5 +10065,365 @@ END;
 		$this->assertQuery( 'SET @my_var = 1' );
 		$this->assertSame( 0, $this->engine->get_last_column_count() );
 		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+	}
+
+	public function testCastValuesOnInsert(): void {
+		// INTEGER
+		$this->assertQuery( 'CREATE TABLE t (value INT)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('2')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('3.0')" );
+
+		// TODO: These are supported in MySQL:
+		$this->assertQueryError( "INSERT INTO t VALUES ('4.5')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store REAL value in INTEGER column t.value' );
+		$this->assertQueryError( 'INSERT INTO t VALUES (0x05)', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
+		$this->assertQueryError( "INSERT INTO t VALUES (x'06')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0', $result[1]->value );
+		$this->assertSame( '1', $result[2]->value );
+		$this->assertSame( '0', $result[3]->value );
+		$this->assertSame( '1', $result[4]->value );
+		$this->assertSame( '2', $result[5]->value );
+		$this->assertSame( '3', $result[6]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// FLOAT
+		$this->assertQuery( 'CREATE TABLE t (value FLOAT)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (2.34)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('3.45')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (4)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('5')" );
+
+		// TODO: These are supported in MySQL:
+		$this->assertQueryError( 'INSERT INTO t VALUES (0x06)', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
+		$this->assertQueryError( "INSERT INTO t VALUES (x'07')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[1]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '1.0' : '1', $result[2]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[3]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '1.0' : '1', $result[4]->value );
+		$this->assertSame( '2.34', $result[5]->value );
+		$this->assertSame( '3.45', $result[6]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '4.0' : '4', $result[7]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '5.0' : '5', $result[8]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// STRING
+		$this->assertQuery( 'CREATE TABLE t (value TEXT)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123.456)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('a')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (0x62)' );
+		$this->assertQuery( "INSERT INTO t VALUES (x'63')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0', $result[1]->value );
+		$this->assertSame( '1', $result[2]->value );
+		$this->assertSame( '0', $result[3]->value );
+		$this->assertSame( '123', $result[4]->value );
+		$this->assertSame( '123.456', $result[5]->value );
+		$this->assertSame( 'a', $result[6]->value );
+		$this->assertSame( 'b', $result[7]->value );
+		$this->assertSame( 'c', $result[8]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// BLOB
+		$this->assertQuery( 'CREATE TABLE t (value BLOB)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123.456)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('a')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (0x62)' );
+		$this->assertQuery( "INSERT INTO t VALUES (x'63')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0', $result[1]->value );
+		$this->assertSame( '1', $result[2]->value );
+		$this->assertSame( '0', $result[3]->value );
+		$this->assertSame( '123', $result[4]->value );
+		$this->assertSame( '123.456', $result[5]->value );
+		$this->assertSame( 'a', $result[6]->value );
+		$this->assertSame( 'b', $result[7]->value );
+		$this->assertSame( 'c', $result[8]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// DATE
+		$this->assertQuery( 'CREATE TABLE t (value DATE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQueryError( 'INSERT INTO t VALUES (TRUE)', "Incorrect date value: '1'" );
+		$this->assertQueryError( 'INSERT INTO t VALUES (FALSE)', "Incorrect date value: '0'" );
+		$this->assertQueryError( 'INSERT INTO t VALUES (0)', "Incorrect date value: '0'" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00.123456')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '2025-10-23', $result[1]->value );
+		$this->assertSame( '2025-10-23', $result[2]->value );
+		$this->assertSame( '2025-10-23', $result[3]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// TIME
+		$this->assertQuery( 'CREATE TABLE t (value TIME)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('18:30:00.123456')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '12:00:00', $result[1]->value ); // TODO: 00:00:00 in MySQL
+		$this->assertSame( '12:00:00', $result[2]->value ); // TODO: 00:00:01 in MySQL
+		$this->assertSame( '12:00:00', $result[3]->value ); // TODO: 00:00:01 in MySQL
+		$this->assertSame( '12:00:00', $result[4]->value ); // TODO: 00:01:23 in MySQL
+		$this->assertSame( '18:30:00', $result[5]->value );
+		$this->assertSame( '18:30:00', $result[6]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// DATETIME
+		$this->assertQuery( 'CREATE TABLE t (value DATETIME)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQueryError( 'INSERT INTO t VALUES (FALSE)', "Incorrect datetime value: '0'" );
+		$this->assertQueryError( 'INSERT INTO t VALUES (TRUE)', "Incorrect datetime value: '1'" );
+		$this->assertQueryError( 'INSERT INTO t VALUES (0)', "Incorrect datetime value: '0'" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00.123456')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '2025-10-23 00:00:00', $result[1]->value );
+		$this->assertSame( '2025-10-23 18:30:00', $result[2]->value );
+		$this->assertSame( '2025-10-23 18:30:00', $result[3]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// TIMESTAMP
+		$this->assertQuery( 'CREATE TABLE t (value TIMESTAMP)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQueryError( 'INSERT INTO t VALUES (FALSE)', "Incorrect timestamp value: '0'" );
+		$this->assertQueryError( 'INSERT INTO t VALUES (TRUE)', "Incorrect timestamp value: '1'" );
+		$this->assertQueryError( 'INSERT INTO t VALUES (0)', "Incorrect timestamp value: '0'" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00.123456')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '2025-10-23 00:00:00', $result[1]->value );
+		$this->assertSame( '2025-10-23 18:30:00', $result[2]->value );
+		$this->assertSame( '2025-10-23 18:30:00', $result[3]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+	}
+
+	public function testCastValuesOnInsertInNonStrictMode(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		// INTEGER
+		$this->assertQuery( 'CREATE TABLE t (value INT)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('2')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('3.0')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('4.5')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (0x05)' );
+		$this->assertQuery( "INSERT INTO t VALUES (x'06')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0', $result[1]->value );
+		$this->assertSame( '1', $result[2]->value );
+		$this->assertSame( '0', $result[3]->value );
+		$this->assertSame( '1', $result[4]->value );
+		$this->assertSame( '2', $result[5]->value );
+		$this->assertSame( '3', $result[6]->value );
+		$this->assertSame( '4', $result[7]->value ); // TODO: 5 in MySQL
+		$this->assertSame( '0', $result[8]->value ); // TODO: 5 in MySQL
+		$this->assertSame( '0', $result[9]->value ); // TODO: 6 in MySQL
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// FLOAT
+		$this->assertQuery( 'CREATE TABLE t (value FLOAT)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (2.34)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('3.45')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (4)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('5')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (0x06)' );
+		$this->assertQuery( "INSERT INTO t VALUES (x'07')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[1]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '1.0' : '1', $result[2]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[3]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '1.0' : '1', $result[4]->value );
+		$this->assertSame( '2.34', $result[5]->value );
+		$this->assertSame( '3.45', $result[6]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '4.0' : '4', $result[7]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '5.0' : '5', $result[8]->value );
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[9]->value );  // TODO: 6 in MySQL
+		$this->assertSame( PHP_VERSION_ID < 80100 ? '0.0' : '0', $result[10]->value ); // TODO: 7 in MySQL
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// STRING
+		$this->assertQuery( 'CREATE TABLE t (value TEXT)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123.456)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('a')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (0x62)' );
+		$this->assertQuery( "INSERT INTO t VALUES (x'63')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0', $result[1]->value );
+		$this->assertSame( '1', $result[2]->value );
+		$this->assertSame( '0', $result[3]->value );
+		$this->assertSame( '123', $result[4]->value );
+		$this->assertSame( '123.456', $result[5]->value );
+		$this->assertSame( 'a', $result[6]->value );
+		$this->assertSame( 'b', $result[7]->value );
+		$this->assertSame( 'c', $result[8]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// BLOB
+		$this->assertQuery( 'CREATE TABLE t (value BLOB)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123.456)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('a')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (0x62)' );
+		$this->assertQuery( "INSERT INTO t VALUES (x'63')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0', $result[1]->value );
+		$this->assertSame( '1', $result[2]->value );
+		$this->assertSame( '0', $result[3]->value );
+		$this->assertSame( '123', $result[4]->value );
+		$this->assertSame( '123.456', $result[5]->value );
+		$this->assertSame( 'a', $result[6]->value );
+		$this->assertSame( 'b', $result[7]->value );
+		$this->assertSame( 'c', $result[8]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// DATE
+		$this->assertQuery( 'CREATE TABLE t (value DATE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00.123456')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0000-00-00', $result[1]->value );
+		$this->assertSame( '0000-00-00', $result[2]->value );
+		$this->assertSame( '0000-00-00', $result[3]->value );
+		$this->assertSame( '2025-10-23', $result[4]->value );
+		$this->assertSame( '2025-10-23', $result[5]->value );
+		$this->assertSame( '2025-10-23', $result[6]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// TIME
+		$this->assertQuery( 'CREATE TABLE t (value TIME)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('18:30:00.123456')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '12:00:00', $result[1]->value ); // TODO: 00:00:00 in MySQL
+		$this->assertSame( '12:00:00', $result[2]->value ); // TODO: 00:00:01 in MySQL
+		$this->assertSame( '12:00:00', $result[3]->value ); // TODO: 00:00:00 in MySQL
+		$this->assertSame( '12:00:00', $result[4]->value ); // TODO: 00:01:23 in MySQL
+		$this->assertSame( '18:30:00', $result[5]->value );
+		$this->assertSame( '18:30:00', $result[6]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// DATETIME
+		$this->assertQuery( 'CREATE TABLE t (value DATETIME)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00.123456')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0000-00-00 00:00:00', $result[1]->value );
+		$this->assertSame( '0000-00-00 00:00:00', $result[2]->value );
+		$this->assertSame( '0000-00-00 00:00:00', $result[3]->value );
+		$this->assertSame( '2025-10-23 00:00:00', $result[4]->value );
+		$this->assertSame( '2025-10-23 18:30:00', $result[5]->value );
+		$this->assertSame( '2025-10-23 18:30:00', $result[6]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// TIMESTAMP
+		$this->assertQuery( 'CREATE TABLE t (value TIMESTAMP)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (0)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00.123456')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0000-00-00 00:00:00', $result[1]->value );
+		$this->assertSame( '0000-00-00 00:00:00', $result[2]->value );
+		$this->assertSame( '0000-00-00 00:00:00', $result[3]->value );
+		$this->assertSame( '2025-10-23 00:00:00', $result[4]->value );
+		$this->assertSame( '2025-10-23 18:30:00', $result[5]->value );
+		$this->assertSame( '2025-10-23 18:30:00', $result[6]->value );
+		$this->assertQuery( 'DROP TABLE t' );
 	}
 }
