@@ -10239,6 +10239,34 @@ END;
 		$this->assertSame( '2025-10-23 18:30:00', $result[2]->value );
 		$this->assertSame( '2025-10-23 18:30:00', $result[3]->value );
 		$this->assertQuery( 'DROP TABLE t' );
+
+		// YEAR
+		$this->assertQuery( 'CREATE TABLE t (value YEAR)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00.123456')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (50)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (70)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (99)' );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0000', $result[1]->value );
+		$this->assertSame( '2001', $result[2]->value );
+		$this->assertSame( '2025', $result[3]->value );
+		$this->assertSame( '2025', $result[4]->value );
+		$this->assertSame( '2025', $result[5]->value );
+		$this->assertSame( '2025', $result[6]->value );
+		$this->assertSame( '2001', $result[7]->value );
+		$this->assertSame( '2050', $result[8]->value );
+		$this->assertSame( '1970', $result[9]->value );
+		$this->assertSame( '1999', $result[10]->value );
+		$this->assertQuery( 'DROP TABLE t' );
 	}
 
 	public function testCastValuesOnInsertInNonStrictMode(): void {
@@ -10424,6 +10452,34 @@ END;
 		$this->assertSame( '2025-10-23 00:00:00', $result[4]->value );
 		$this->assertSame( '2025-10-23 18:30:00', $result[5]->value );
 		$this->assertSame( '2025-10-23 18:30:00', $result[6]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+
+		// YEAR
+		$this->assertQuery( 'CREATE TABLE t (value YEAR)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (FALSE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (TRUE)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('2025-10-23 18:30:00.123456')" );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (50)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (70)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (99)' );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( null, $result[0]->value );
+		$this->assertSame( '0000', $result[1]->value );
+		$this->assertSame( '2001', $result[2]->value );
+		$this->assertSame( '2025', $result[3]->value );
+		$this->assertSame( '2025', $result[4]->value );
+		$this->assertSame( '2025', $result[5]->value );
+		$this->assertSame( '2025', $result[6]->value );
+		$this->assertSame( '2001', $result[7]->value );
+		$this->assertSame( '2050', $result[8]->value );
+		$this->assertSame( '1970', $result[9]->value );
+		$this->assertSame( '1999', $result[10]->value );
 		$this->assertQuery( 'DROP TABLE t' );
 	}
 }
