@@ -5003,7 +5003,30 @@ class WP_SQLite_Driver {
 				} elseif ( 'datetime' === $mysql_data_type || 'timestamp' === $mysql_data_type ) {
 					$function_call = sprintf( 'DATETIME(%s)', $translated_value );
 				} elseif ( 'year' === $mysql_data_type ) {
-					$function_call = sprintf( "STRFTIME('%%Y', %s)", $translated_value );
+					/*
+					 * The YEAR type in MySQL only uses 1 byte and therefore
+					 * covers only 256 values from 1901 to 2155 included.
+					 * Additionally:
+					 *   - Numbers from 0 to 69 correspond to years 2000 to 2069.
+					 *   - Numbers from 70 to 99 correspond to years 1970 to 1999.
+					 */
+					return sprintf(
+						"(
+							SELECT CASE
+								WHEN value IS NULL THEN NULL
+								WHEN value = 0 THEN '0000'
+								WHEN value BETWEEN 1901 AND 2155 THEN value
+								WHEN value BETWEEN 1 AND 69 THEN 2000 + value
+								WHEN value BETWEEN 70 AND 99 THEN 1900 + value
+								ELSE %s
+							END
+							FROM (SELECT CAST(%s AS INTEGER) AS value)
+						)",
+						$is_strict_mode
+							? sprintf( "THROW('Out of range value: ''' || %s || '''')", $translated_value )
+							: "'0000'",
+						$translated_value
+					);
 				}
 
 				// In strict mode, invalid date/time values are rejected.

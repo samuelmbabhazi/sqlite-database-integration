@@ -44,6 +44,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @var array
 	 */
 	private $functions = array(
+		'throw'                        => 'throw',
 		'month'                        => 'month',
 		'monthnum'                     => 'month',
 		'year'                         => 'year',
@@ -87,6 +88,18 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
 	);
+
+	/**
+	 * A helper function to throw an error from SQLite expressions.
+	 *
+	 * @param string $message The error message.
+	 *
+	 * @throws Exception The error message.
+	 * @return void
+	 */
+	public function throw( $message ): void {
+		throw new Exception( $message );
+	}
 
 	/**
 	 * Method to return the unix timestamp.
