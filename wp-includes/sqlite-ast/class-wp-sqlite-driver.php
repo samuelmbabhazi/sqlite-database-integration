@@ -4417,6 +4417,17 @@ class WP_SQLite_Driver {
 			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
+		// Check if the table exists.
+		if ( 0 === count( $columns ) ) {
+			throw $this->new_driver_exception(
+				sprintf(
+					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exists",
+					$table_name
+				),
+				'42S02'
+			);
+		}
+
 		// Get a list of columns that are targeted by the INSERT or REPLACE query.
 		// This is either an explicit column list, or all columns of the table.
 		$insert_list = array();
@@ -4440,6 +4451,18 @@ class WP_SQLite_Driver {
 			foreach ( array_column( $columns, 'COLUMN_NAME' ) as $column_name ) {
 				$insert_list[] = strtolower( $column_name );
 			}
+		}
+
+		// Check if all listed columns exist.
+		$unkwnown_columns = array_diff( $insert_list, array_column( $columns, 'COLUMN_NAME' ) );
+		if ( count( $unkwnown_columns ) > 0 ) {
+			throw $this->new_driver_exception(
+				sprintf(
+					"SQLSTATE[42S22]: Column not found: 1054 Unknown column '%s' in 'field list'",
+					$unkwnown_columns[0]
+				),
+				'42S22'
+			);
 		}
 
 		// Prepare a helper map of columns that are included in the INSERT list.
@@ -4617,7 +4640,19 @@ class WP_SQLite_Driver {
 			',
 			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
-		$column_map    = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
+
+		// Check if the table exists.
+		if ( 0 === count( $columns ) ) {
+			throw $this->new_driver_exception(
+				sprintf(
+					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exists",
+					$table_name
+				),
+				'42S02'
+			);
+		}
+
+		$column_map = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
 
 		// Translate the UPDATE list, emulating IMPLICIT DEFAULTs for NULL values.
 		$fragment = '';
@@ -4628,7 +4663,17 @@ class WP_SQLite_Driver {
 
 			// Get column info.
 			$column_name = $this->unquote_sqlite_identifier( $this->translate( end( $column_ref_parts ) ) );
-			$column_info = $column_map[ strtolower( $column_name ) ];
+			$column_info = $column_map[ strtolower( $column_name ) ] ?? null;
+			if ( ! $column_info ) {
+				throw $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42S22]: Column not found: 1054 Unknown column '%s' in 'field list'",
+						$column_name
+					),
+					'42S22'
+				);
+			}
+
 			$data_type   = $column_info['DATA_TYPE'];
 			$is_nullable = 'YES' === $column_info['IS_NULLABLE'];
 			$default     = $column_info['COLUMN_DEFAULT'];
