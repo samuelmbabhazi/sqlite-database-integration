@@ -11075,7 +11075,7 @@ END;
 		// Missing table.
 		$this->assertQueryError(
 			'INSERT INTO missing_table VALUES (1)',
-			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exists"
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exist"
 		);
 
 		// Missing column.
@@ -11092,7 +11092,7 @@ END;
 		// Missing table.
 		$this->assertQueryError(
 			'INSERT INTO missing_table VALUES (1)',
-			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exists"
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exist"
 		);
 
 		// Missing column.
@@ -11108,7 +11108,7 @@ END;
 		// Missing table.
 		$this->assertQueryError(
 			'UPDATE missing_table SET value = 1',
-			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exists"
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exist"
 		);
 
 		// Missing column.
@@ -11125,7 +11125,7 @@ END;
 		// Missing table.
 		$this->assertQueryError(
 			'UPDATE missing_table SET value = 1',
-			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exists"
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exist"
 		);
 
 		// Missing column.

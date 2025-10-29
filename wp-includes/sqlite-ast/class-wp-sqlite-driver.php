@@ -4421,7 +4421,7 @@ class WP_SQLite_Driver {
 		if ( 0 === count( $columns ) ) {
 			throw $this->new_driver_exception(
 				sprintf(
-					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exists",
+					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exist",
 					$table_name
 				),
 				'42S02'
@@ -4454,12 +4454,12 @@ class WP_SQLite_Driver {
 		}
 
 		// Check if all listed columns exist.
-		$unkwnown_columns = array_diff( $insert_list, array_column( $columns, 'COLUMN_NAME' ) );
-		if ( count( $unkwnown_columns ) > 0 ) {
+		$unknown_columns = array_diff( $insert_list, array_column( $columns, 'COLUMN_NAME' ) );
+		if ( count( $unknown_columns ) > 0 ) {
 			throw $this->new_driver_exception(
 				sprintf(
 					"SQLSTATE[42S22]: Column not found: 1054 Unknown column '%s' in 'field list'",
-					$unkwnown_columns[0]
+					$unknown_columns[0]
 				),
 				'42S22'
 			);
@@ -4662,7 +4662,7 @@ class WP_SQLite_Driver {
 		if ( 0 === count( $columns ) ) {
 			throw $this->new_driver_exception(
 				sprintf(
-					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exists",
+					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exist",
 					$table_name
 				),
 				'42S02'
@@ -5121,7 +5121,7 @@ class WP_SQLite_Driver {
 				 *      Numeric types accept string notation in SQLite as well.
 				 *   2. In non-strict mode, cast all values.
 				 *
-				 * TODO: While close to MySQL behavior, this does't exactly match
+				 * TODO: While close to MySQL behavior, this doesn't exactly match
 				 *       all special cases. We may improve this further to accept
 				 *       BLOBs for numeric types, and other special behaviors.
 				 */
