@@ -11068,4 +11068,70 @@ END;
 
 		$this->assertQuery( 'DROP TABLE t' );
 	}
+
+	public function testInsertErrors(): void {
+		$this->assertQuery( 'CREATE TABLE t (value INT)' );
+
+		// Missing table.
+		$this->assertQueryError(
+			'INSERT INTO missing_table VALUES (1)',
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exists"
+		);
+
+		// Missing column.
+		$this->assertQueryError(
+			'INSERT INTO t (missing_column) VALUES (1)',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+	}
+
+	public function testInsertErrorsInNonStrictMode(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( 'CREATE TABLE t (value INT)' );
+
+		// Missing table.
+		$this->assertQueryError(
+			'INSERT INTO missing_table VALUES (1)',
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exists"
+		);
+
+		// Missing column.
+		$this->assertQueryError(
+			'INSERT INTO t (missing_column) VALUES (1)',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+	}
+
+	public function testUpdateErrors(): void {
+		$this->assertQuery( 'CREATE TABLE t (value INT)' );
+
+		// Missing table.
+		$this->assertQueryError(
+			'UPDATE missing_table SET value = 1',
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exists"
+		);
+
+		// Missing column.
+		$this->assertQueryError(
+			'UPDATE t SET missing_column = 1',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+	}
+
+	public function testUpdateErrorsInNonStrictMode(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( 'CREATE TABLE t (value INT)' );
+
+		// Missing table.
+		$this->assertQueryError(
+			'UPDATE missing_table SET value = 1',
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exists"
+		);
+
+		// Missing column.
+		$this->assertQueryError(
+			'UPDATE t SET missing_column = 1',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+	}
 }
