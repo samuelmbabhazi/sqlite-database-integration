@@ -218,6 +218,10 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	}
 
 	public function testUpdate(): void {
+		$this->driver->query( 'CREATE TABLE t (c INT, c1 INT, c2 INT)' );
+		$this->driver->query( 'CREATE TABLE t1 (id INT, c1 INT, c2 INT)' );
+		$this->driver->query( 'CREATE TABLE t2 (id INT, c1 INT, c2 INT)' );
+
 		$this->assertQuery(
 			'UPDATE `t` SET `c` = 1',
 			'UPDATE t SET c = 1'
