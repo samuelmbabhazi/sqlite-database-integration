@@ -4512,6 +4512,23 @@ class WP_SQLite_Driver {
 			$stmt->execute();
 
 			for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
+				/*
+				 * Workaround for PHP PDO SQLite bug (#79664) in PHP < 7.3.
+				 * See also: https://github.com/php/php-src/pull/5654
+				 */
+				if ( PHP_VERSION_ID < 70300 ) {
+					try {
+						$column_meta = $stmt->getColumnMeta( $i );
+					} catch ( Throwable $e ) {
+						$column_meta = false;
+					}
+					if ( false === $column_meta ) {
+						// Due to a PDO bug in PHP < 7.3, we get no column metadata
+						// when no rows are returned. In that case, no data will be
+						// inserted, so we can bail out using a simple translation.
+						return $this->translate( $node );
+					}
+				}
 				$select_list[] = $stmt->getColumnMeta( $i )['name'];
 			}
 		} else {

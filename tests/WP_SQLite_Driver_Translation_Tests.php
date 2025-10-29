@@ -97,6 +97,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (c INT, c1 INT, c2 INT)' );
 		$this->driver->query( 'CREATE TABLE t1 (c1 INT, c2 INT)' );
 		$this->driver->query( 'CREATE TABLE t2 (c1 INT, c2 INT)' );
+		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
 
 		$this->assertQuery(
 			'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
@@ -130,6 +131,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testInsertWithTypeCasting(): void {
 		$this->driver->query( 'CREATE TABLE t1 (c1 TEXT, c2 TEXT)' );
 		$this->driver->query( 'CREATE TABLE t2 (c1 TEXT, c2 TEXT)' );
+		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
 
 		$this->assertQuery(
 			'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 )) WHERE true',
@@ -159,6 +161,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (c INT, c1 INT, c2 INT)' );
 		$this->driver->query( 'CREATE TABLE t1 (c1 INT, c2 INT)' );
 		$this->driver->query( 'CREATE TABLE t2 (c1 INT, c2 INT)' );
+		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
 
 		$this->assertQuery(
 			'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
@@ -192,6 +195,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testReplaceWithTypeCasting(): void {
 		$this->driver->query( 'CREATE TABLE t1 (c1 TEXT, c2 TEXT)' );
 		$this->driver->query( 'CREATE TABLE t2 (c1 TEXT, c2 TEXT)' );
+		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
 
 		$this->assertQuery(
 			'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 )) WHERE true',
