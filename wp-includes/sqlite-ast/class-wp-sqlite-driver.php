@@ -4570,7 +4570,7 @@ class WP_SQLite_Driver {
 				// When a column value is included, we need to apply type casting.
 				$position   = array_search( $column['COLUMN_NAME'], $insert_list, true );
 				$identifier = $this->quote_sqlite_identifier( $select_list[ $position ] );
-				$fragment  .= $this->cast_value_for_insert_or_update( $column['DATA_TYPE'], $identifier );
+				$fragment  .= $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier );
 			}
 		}
 
@@ -4704,7 +4704,7 @@ class WP_SQLite_Driver {
 			}
 
 			// Apply type casting.
-			$value = $this->cast_value_for_insert_or_update( $data_type, $value );
+			$value = $this->cast_value_for_saving( $data_type, $value );
 
 			// In MySQL non-STRICT mode, when a column is declared as NOT NULL,
 			// updating to a NULL value saves an IMPLICIT DEFAULT value instead.
@@ -5009,13 +5009,14 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Emulate MySQL type casting for INSERT or UPDATE values.
+	 * Emulate MySQL type casting for values to be saved to the database
+	 * using INSERT, REPLACE, or UPDATE statements.
 	 *
 	 * @param  string $mysql_data_type  The MySQL data type.
 	 * @param  string $translated_value The original translated value.
 	 * @return string                   The translated value.
 	 */
-	private function cast_value_for_insert_or_update(
+	private function cast_value_for_saving(
 		string $mysql_data_type,
 		string $translated_value
 	): string {
