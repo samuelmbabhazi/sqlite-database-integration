@@ -4383,6 +4383,9 @@ class WP_SQLite_Driver {
 	 *                             NULL is rejected on INSERT, but saves IMPLICIT DEFAULT on UPDATE.
 	 *                             DEFAULT saves DEFAULT.
 	 *
+	 * For more information about STRICT mode in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sql-mode-strict
+	 *
 	 * For more information about IMPLICIT DEFAULT values in MySQL, see:
 	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 *
@@ -4630,6 +4633,12 @@ class WP_SQLite_Driver {
 	 *
 	 * The strict SQL modes can be set per session, and can be changed at runtime.
 	 * In SQLite, we can emulate this using the knowledge of the table structure.
+	 *
+	 * For more information about STRICT mode in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sql-mode-strict
+	 *
+	 * For more information about IMPLICIT DEFAULT values in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 *
 	 * @param  string         $table_name The name of the target table.
 	 * @param  WP_Parser_Node $node       The "updateList" AST node.
