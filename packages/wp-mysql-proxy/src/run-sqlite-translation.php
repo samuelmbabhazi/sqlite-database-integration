@@ -1,18 +1,15 @@
-<?php
-/**
- * A MySQL<->SQLite proxy that parses MySQL queries and transforms them into SQLite operations.
- *
- * Most queries works, and the upcoming translation driver should bring the parity much
- * closer to 100%: https://github.com/WordPress/sqlite-database-integration/pull/157
- */
+<?php declare( strict_types = 1 );
+
+use WP_MySQL_Proxy\MySQL_Proxy;
+use WP_MySQL_Proxy\Adapter\SQLite_Adapter;
 
 require_once __DIR__ . '/mysql-server.php';
 require_once __DIR__ . '/handler-sqlite-translation.php';
 
 define( 'WP_SQLITE_AST_DRIVER', true );
 
-$server = new MySQLSocketServer(
-	new SQLiteTranslationHandler( __DIR__ . '/../database/test.db' ),
+$proxy = new MySQL_Proxy(
+	new SQLite_Adapter( __DIR__ . '/../database/test.db' ),
 	array( 'port' => 3306 )
 );
-$server->start();
+$proxy->start();
