@@ -1500,12 +1500,6 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
-		// Check if strict mode is disabled.
-		$is_non_strict_mode = (
-			! $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
-			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
-		);
-
 		$parts = array();
 		foreach ( $node->get_children() as $child ) {
 			$is_token = $child instanceof WP_MySQL_Token;
@@ -1527,8 +1521,7 @@ class WP_SQLite_Driver {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
 			} elseif (
-				$is_non_strict_mode
-				&& $is_node
+				$is_node
 				&& (
 					'insertFromConstructor' === $child->rule_name
 					|| 'insertQueryExpression' === $child->rule_name
@@ -1537,17 +1530,7 @@ class WP_SQLite_Driver {
 			) {
 				$table_ref  = $node->get_first_child_node( 'tableRef' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
-				$parts[]    = $this->translate_insert_or_replace_body_in_non_strict_mode( $table_name, $child );
-			} elseif ( $is_node && 'updateList' === $child->rule_name ) {
-				// Convert "SET c1 = v1, c2 = v2, ... to "(c1, c2, ...) VALUES (v1, v2, ...)".
-				$columns = array();
-				$values  = array();
-				foreach ( $child->get_child_nodes( 'updateElement' ) as $update_element ) {
-					$column_ref = $update_element->get_first_child_node( 'columnRef' );
-					$columns[]  = $this->translate( $column_ref );
-					$values[]   = $this->translate( $update_element->get_first_child_node( 'expr' ) );
-				}
-				$parts[] = '(' . implode( ', ', $columns ) . ') VALUES (' . implode( ', ', $values ) . ')';
+				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
 			} else {
 				$parts[] = $this->translate( $child );
 			}
@@ -1590,12 +1573,6 @@ class WP_SQLite_Driver {
 				)
 			);
 		}
-
-		// Check if strict mode is disabled.
-		$is_non_strict_mode = (
-			! $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
-			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
-		);
 
 		/*
 		 * Translate the UPDATE statement parts.
@@ -1759,22 +1736,8 @@ class WP_SQLite_Driver {
 			$from = 'FROM ' . implode( ', ', $from_items );
 		}
 
-		// Translate UPDATE list.
-		if ( $is_non_strict_mode ) {
-			$update_list = $this->translate_update_list_in_non_strict_mode( $update_target, $update_list_node );
-		} else {
-			$update_parts = array();
-			foreach ( $update_list_node->get_child_nodes() as $update_element ) {
-				$column_ref       = $update_element->get_first_child_node( 'columnRef' );
-				$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
-
-				$update_part    = $this->translate( end( $column_ref_parts ) );
-				$update_part   .= ' = ';
-				$update_part   .= $this->translate( $update_element->get_first_child_node( 'expr' ) );
-				$update_parts[] = $update_part;
-			}
-			$update_list = implode( ', ', $update_parts );
-		}
+		// Translate UPDATE list, applying relevant type casting and IMPLICIT DEFAULT values.
+		$update_list = $this->translate_update_list( $update_target_table, $update_list_node );
 
 		// Translate WHERE, ORDER BY, and LIMIT clauses.
 		if ( $where_subquery ) {
@@ -4377,28 +4340,32 @@ class WP_SQLite_Driver {
 
 	/**
 	 * Translate INSERT or REPLACE statement body to SQLite, while emulating
-	 * the behavior of MySQL implicit default values in non-strict mode.
+	 * MySQL column type casting and implicit default values when saving data.
 	 *
-	 * Rewrites a statement body in the following form:
+	 * This method rewrites an INSERT or REPLACE statement body from:
 	 *   INSERT INTO table (optionally some columns) <select-or-values>
 	 * To a statement body with the following structure:
-	 *   INSERT INTO table (all table columns)
-	 *   SELECT <non-strict-mode-adjusted-values> FROM (<select-or-values>) WHERE true
+	 *   INSERT INTO table (table columns)
+	 *   SELECT <adjusted-values> FROM (<select-or-values>) WHERE true
 	 *
 	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
 	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
 	 *
-	 * By default, STRICT_TRANS_TABLES is enabled, which makes the InnoDB table
-	 * behavior correspond to the natural behavior of SQLite tables. However,
-	 * some applications, including WordPress, disable strict mode altogether.
+	 * This method applies relevant type casting and emulates IMPLICIT DEFAULT
+	 * value behavior as follows:
+	 *   1. In STRICT mode:
+	 *      - Apply relevant type casting based on the column data type.
+	 *   2. In non-STRICT mode:
+	 *      - Apply relevant type casting based on the column data type.
+	 *      - Replace invalid values with IMPLICIT DEFAULTs.
+	 *      - Replace missing values without defaults with IMPLICIT DEFAULTs.
 	 *
 	 * The strict SQL modes can be set per session, and can be changed at runtime.
-	 * In SQLite, we can emulate this using the knowledge of the table structure:
-	 *   1. Explicitly passed INSERT statement values are used without change.
-	 *   2. Values omitted from the INSERT statement are replaced with the column
-	 *      DEFAULT or an IMPLICIT DEFAULT value based on their data type.
+	 * In SQLite, we can emulate this using the knowledge of the table structure.
 	 *
-	 * Here's a summary of the strict vs. non-strict behaviors in MySQL:
+	 * -----
+	 *
+	 * Here's a summary of the strict vs. non-strict IMPLICIT DEFAULT behavior:
 	 *
 	 * When STRICT_TRANS_TABLES or STRICT_ALL_TABLES is enabled:
 	 *   1. NULL + NO DEFAULT:     No value saves NULL, NULL saves NULL, DEFAULT saves NULL.
@@ -4416,6 +4383,9 @@ class WP_SQLite_Driver {
 	 *                             NULL is rejected on INSERT, but saves IMPLICIT DEFAULT on UPDATE.
 	 *                             DEFAULT saves DEFAULT.
 	 *
+	 * For more information about STRICT mode in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sql-mode-strict
+	 *
 	 * For more information about IMPLICIT DEFAULT values in MySQL, see:
 	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 *
@@ -4423,54 +4393,101 @@ class WP_SQLite_Driver {
 	 * @param  WP_Parser_Node $node       The "insertQueryExpression" or "insertValues" AST node.
 	 * @return string                     The translated INSERT query body.
 	 */
-	private function translate_insert_or_replace_body_in_non_strict_mode(
+	private function translate_insert_or_replace_body(
 		string $table_name,
 		WP_Parser_Node $node
 	): string {
-		// 1. Get column metadata from information schema.
+		// This method is always used with the main database.
+		$database = $this->get_saved_db_name( $this->main_db_name );
+
+		// Check if strict mode is enabled.
+		$is_strict_mode = (
+			$this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			|| $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
+
+		// Get column metadata for the target table from the information schema.
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
 			'
-				SELECT column_name, is_nullable, column_default, data_type, extra
+				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, extra
 				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
 				ORDER BY ordinal_position
 			',
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
-		// 2. Get the list of fields explicitly defined in the INSERT statement.
+		// Check if the table exists.
+		if ( 0 === count( $columns ) ) {
+			throw $this->new_driver_exception(
+				sprintf(
+					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exist",
+					$table_name
+				),
+				'42S02'
+			);
+		}
+
+		// Get a list of columns that are targeted by the INSERT or REPLACE query.
+		// This is either an explicit column list, or all columns of the table.
 		$insert_list = array();
 		$fields_node = $node->get_first_child_node( 'fields' );
 		if ( $fields_node ) {
-			// This is the optional "INSERT INTO ... (field1, field2, ...)" list.
+			// "INSERT INTO ... (column1, column2, ...)"
 			foreach ( $fields_node->get_child_nodes() as $field ) {
-				$insert_list[] = $this->unquote_sqlite_identifier( $this->translate( $field ) );
+				$column_name   = $this->unquote_sqlite_identifier( $this->translate( $field ) );
+				$insert_list[] = strtolower( $column_name );
 			}
 		} elseif ( 'updateList' === $node->rule_name ) {
-			// This is the "INSERT INTO ... SET c1 = v1, c2 = v2, ... " syntax.
+			// "INSERT INTO ... SET column1 = value1, column2 = value2, ..."
 			foreach ( $node->get_child_nodes( 'updateElement' ) as $update_element ) {
 				$column_ref    = $update_element->get_first_child_node( 'columnRef' );
-				$insert_list[] = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
+				$column_name   = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
+				$insert_list[] = strtolower( $column_name );
 			}
 		} else {
-			// When no explicit field list is provided, all columns are required.
+			// "INSERT INTO ... VALUES(...)" or "INSERT INTO ... SELECT ..."
+			// No explicit column list is provided; we need to list all columns.
 			foreach ( array_column( $columns, 'COLUMN_NAME' ) as $column_name ) {
-				$insert_list[] = $column_name;
+				$insert_list[] = strtolower( $column_name );
 			}
 		}
 
-		// 3. Filter out omitted columns that will get a value from the SQLite engine.
-		//    That is, nullable columns, columns with defaults, and generated columns.
+		// Check if all listed columns exist.
+		$unknown_columns = array_diff( $insert_list, array_column( $columns, 'COLUMN_NAME' ) );
+		if ( count( $unknown_columns ) > 0 ) {
+			throw $this->new_driver_exception(
+				sprintf(
+					"SQLSTATE[42S22]: Column not found: 1054 Unknown column '%s' in 'field list'",
+					$unknown_columns[0]
+				),
+				'42S22'
+			);
+		}
+
+		// Prepare a helper map of columns that are included in the INSERT list.
+		$insert_map = array_combine( $insert_list, $insert_list );
+
+		/*
+		 * Filter out columns that were omitted in the INSERT list:
+		 *  1. In strict mode, filter out all omitted columns.
+		 *  2. In non-strict mode, filter out omitted columns that will get a
+		 *     value from the SQLite engine. That is, nullable columns, columns
+		 *     with defaults, and generated columns.
+		 */
 		$columns = array_values(
 			array_filter(
 				$columns,
-				function ( $column ) use ( $insert_list ) {
-					$is_omitted = ! in_array( $column['COLUMN_NAME'], $insert_list, true );
+				function ( $column ) use ( $is_strict_mode, $insert_map ) {
+					$is_omitted = ! isset( $insert_map[ $column['COLUMN_NAME'] ] );
 					if ( ! $is_omitted ) {
 						return true;
+					}
+					if ( $is_strict_mode ) {
+						return false;
 					}
 					$is_nullable  = 'YES' === $column['IS_NULLABLE'];
 					$has_default  = $column['COLUMN_DEFAULT'];
@@ -4480,11 +4497,17 @@ class WP_SQLite_Driver {
 			)
 		);
 
-		// 4. Get the list of column names returned by VALUES or SELECT clause.
+		/*
+		 * Get a list of column names for the INSERT or REPLACE values clause.
+		 * These are the columns that will be used in a SELECT statement when
+		 * the values clause is wrapped in a subquery:
+		 *
+		 *   INSERT INTO ... SELECT <select-list> FROM (<values-from-original-query>)
+		 */
 		$select_list = array();
 		if ( 'insertQueryExpression' === $node->rule_name ) {
 			// When inserting from a SELECT query, we don't know the column names.
-			// Let's wrap the query with a SELECT (...) LIMIT 0 to get obtain them.
+			// Let's wrap the query with a "SELECT (...) LIMIT 0" to obtain them.
 			$expr = $node->get_first_child_node( 'queryExpressionOrParens' );
 			$stmt = $this->execute_sqlite_query(
 				'SELECT * FROM (' . $this->translate( $expr ) . ') LIMIT 1'
@@ -4492,16 +4515,34 @@ class WP_SQLite_Driver {
 			$stmt->execute();
 
 			for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
+				/*
+				 * Workaround for PHP PDO SQLite bug (#79664) in PHP < 7.3.
+				 * See also: https://github.com/php/php-src/pull/5654
+				 */
+				if ( PHP_VERSION_ID < 70300 ) {
+					try {
+						$column_meta = $stmt->getColumnMeta( $i );
+					} catch ( Throwable $e ) {
+						$column_meta = false;
+					}
+					if ( false === $column_meta ) {
+						// Due to a PDO bug in PHP < 7.3, we get no column metadata
+						// when no rows are returned. In that case, no data will be
+						// inserted, so we can bail out using a simple translation.
+						return $this->translate( $node );
+					}
+				}
 				$select_list[] = $stmt->getColumnMeta( $i )['name'];
 			}
 		} else {
-			// When inserting from a VALUES list, SQLite uses "columnN" naming.
+			// When inserting from a VALUES list, SQLite uses a "columnN" naming.
+			// This also applies to the SET syntax, which is converted to VALUES.
 			foreach ( array_keys( $insert_list ) as $position ) {
 				$select_list[] = 'column' . ( $position + 1 );
 			}
 		}
 
-		// 5. Compose a new INSERT field list with all columns from the table.
+		// Compose a new INSERT column list with all columns from the table.
 		$fragment = '(';
 		foreach ( $columns as $i => $column ) {
 			$fragment .= $i > 0 ? ', ' : '';
@@ -4509,13 +4550,18 @@ class WP_SQLite_Driver {
 		}
 		$fragment .= ')';
 
-		// 6. Compose a wrapper SELECT statement emulating IMPLICIT DEFAULT values.
+		// Compose a wrapper SELECT statement emulating MySQL-like type casting,
+		// and, in non-strict mode, IMPLICIT DEFAULT values for omitted columns.
 		$fragment .= ' SELECT ';
 		foreach ( $columns as $i => $column ) {
-			$is_omitted = ! in_array( $column['COLUMN_NAME'], $insert_list, true );
+			$is_omitted = ! isset( $insert_map[ $column['COLUMN_NAME'] ] );
 			$fragment  .= $i > 0 ? ', ' : '';
 			if ( $is_omitted ) {
 				/*
+				 * This path only applies to non-strict mode. In strict mode,
+				 * omitted columns get no IMPLICIT DEFAULT values, and they were
+				 * previously filtered out from the columns list.
+				 *
 				 * When a column is omitted from the INSERT list, we need to use
 				 * an IMPLICIT DEFAULT value. Note that at this point, all omitted
 				 * columns that will not get an implicit default are filtered out.
@@ -4527,15 +4573,11 @@ class WP_SQLite_Driver {
 				// When a column value is included, we need to apply type casting.
 				$position   = array_search( $column['COLUMN_NAME'], $insert_list, true );
 				$identifier = $this->quote_sqlite_identifier( $select_list[ $position ] );
-				$fragment  .= sprintf(
-					'%s AS %s',
-					$this->cast_value_in_non_strict_mode( $column['DATA_TYPE'], $identifier ),
-					$identifier
-				);
+				$fragment  .= $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier );
 			}
 		}
 
-		// 6. Wrap the original insert VALUES, SELECT, or SET list in a FROM clause.
+		// Wrap the original insert VALUES, SELECT, or SET list in a FROM clause.
 		if ( 'insertFromConstructor' === $node->rule_name ) {
 			// VALUES (...)
 			$from = $this->translate(
@@ -4568,25 +4610,51 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Translate UPDATE list, emulating MySQL implicit defaults in non-strict mode.
+	 * Translate UPDATE statement SET value list to SQLite, while emulating
+	 * MySQL column type casting and implicit default values when saving data.
 	 *
 	 * Rewrites an UPDATE statement list in the following form:
-	 *   UPDATE table SET <non-null-column> = <value>
+	 *   UPDATE table SET <column> = <value>
 	 * To a list with the following structure:
-	 *   UPDATE table SET <non-null-column> = COALESCE(<value>, <implicit-default>)
+	 *   UPDATE table SET <column> = <adjusted-value>
 	 *
 	 * In MySQL, the behavior of INSERT and UPDATE statements depends on whether
 	 * the STRICT_TRANS_TABLES (InnoDB) or STRICT_ALL_TABLES SQL mode is enabled.
 	 *
-	 * When the strict mode is not enabled, executing an UPDATE statement that
-	 * sets a NOT NULL column value to NULL saves an IMPLICIT DEFAULT instead.
+	 * This method applies relevant type casting and emulates IMPLICIT DEFAULT
+	 * value behavior as follows:
+	 *   1. In STRICT mode:
+	 *      - Apply relevant type casting based on the column data type.
+	 *   2. In NON-STRICT mode:
+	 *      - Apply relevant type casting based on the column data type.
+	 *      - Replace invalid values with IMPLICIT DEFAULTs.
+	 *      - Replace NULL values without defaults with IMPLICIT DEFAULTs.
+	 *        (Updating a NOT NULL column to NULL saves as an IMPLICIT DEFAULT.)
+	 *
+	 * The strict SQL modes can be set per session, and can be changed at runtime.
+	 * In SQLite, we can emulate this using the knowledge of the table structure.
+	 *
+	 * For more information about STRICT mode in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sql-mode-strict
+	 *
+	 * For more information about IMPLICIT DEFAULT values in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 *
 	 * @param  string         $table_name The name of the target table.
 	 * @param  WP_Parser_Node $node       The "updateList" AST node.
 	 * @return string                     The translated UPDATE list.
 	 */
-	private function translate_update_list_in_non_strict_mode( string $table_name, WP_Parser_Node $node ): string {
-		// 1. Get column metadata from information schema.
+	private function translate_update_list( string $table_name, WP_Parser_Node $node ): string {
+		// This method is always used with the main database.
+		$database = $this->get_saved_db_name( $this->main_db_name );
+
+		// Check if strict mode is enabled.
+		$is_strict_mode = (
+			$this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			|| $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
+
+		// Get column metadata from the information schema.
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
@@ -4596,11 +4664,23 @@ class WP_SQLite_Driver {
 				WHERE table_schema = ?
 				AND table_name = ?
 			',
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
-		$column_map    = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
 
-		// 2. Translate UPDATE list, emulating implicit defaults for NULLs values.
+		// Check if the table exists.
+		if ( 0 === count( $columns ) ) {
+			throw $this->new_driver_exception(
+				sprintf(
+					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exist",
+					$table_name
+				),
+				'42S02'
+			);
+		}
+
+		$column_map = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
+
+		// Translate the UPDATE list, emulating IMPLICIT DEFAULTs for NULL values.
 		$fragment = '';
 		foreach ( $node->get_child_nodes() as $i => $update_element ) {
 			$column_ref       = $update_element->get_first_child_node( 'columnRef' );
@@ -4609,7 +4689,17 @@ class WP_SQLite_Driver {
 
 			// Get column info.
 			$column_name = $this->unquote_sqlite_identifier( $this->translate( end( $column_ref_parts ) ) );
-			$column_info = $column_map[ strtolower( $column_name ) ];
+			$column_info = $column_map[ strtolower( $column_name ) ] ?? null;
+			if ( ! $column_info ) {
+				throw $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[42S22]: Column not found: 1054 Unknown column '%s' in 'field list'",
+						$column_name
+					),
+					'42S22'
+				);
+			}
+
 			$data_type   = $column_info['DATA_TYPE'];
 			$is_nullable = 'YES' === $column_info['IS_NULLABLE'];
 			$default     = $column_info['COLUMN_DEFAULT'];
@@ -4623,11 +4713,12 @@ class WP_SQLite_Driver {
 			}
 
 			// Apply type casting.
-			$value = $this->cast_value_in_non_strict_mode( $data_type, $value );
+			$value = $this->cast_value_for_saving( $data_type, $value );
 
-			// If the column is NOT NULL, a NULL value resolves to implicit default.
+			// In MySQL non-STRICT mode, when a column is declared as NOT NULL,
+			// updating to a NULL value saves an IMPLICIT DEFAULT value instead.
 			$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
-			if ( ! $is_nullable && null !== $implicit_default ) {
+			if ( ! $is_strict_mode && ! $is_nullable && null !== $implicit_default ) {
 				$value = sprintf( 'COALESCE(%s, %s)', $value, $this->connection->quote( $implicit_default ) );
 			}
 
@@ -4927,23 +5018,28 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Emulate MySQL type casting for INSERT or UPDATE value in non-strict mode.
+	 * Emulate MySQL type casting for values to be saved to the database
+	 * using INSERT, REPLACE, or UPDATE statements.
 	 *
 	 * @param  string $mysql_data_type  The MySQL data type.
 	 * @param  string $translated_value The original translated value.
 	 * @return string                   The translated value.
 	 */
-	private function cast_value_in_non_strict_mode(
+	private function cast_value_for_saving(
 		string $mysql_data_type,
 		string $translated_value
 	): string {
-		$sqlite_data_type = self::DATA_TYPE_STRING_MAP[ $mysql_data_type ];
+		// TODO: This is also a good place to implement checks for maximum column
+		//       lengths with truncating or bailing out depending on the SQL mode.
 
-		// Get and quote the IMPLICIT DEFAULT value.
-		$implicit_default        = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $mysql_data_type ] ?? null;
-		$quoted_implicit_default = null === $implicit_default
-			? 'NULL'
-			: $this->connection->quote( $implicit_default );
+		// Check if strict mode is enabled.
+		$is_strict_mode = (
+			$this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			|| $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
+		);
+
+		$mysql_data_type  = strtolower( $mysql_data_type );
+		$sqlite_data_type = self::DATA_TYPE_STRING_MAP[ $mysql_data_type ];
 
 		/*
 		 * In MySQL, when saving a value via INSERT or UPDATE in non-strict mode,
@@ -4977,21 +5073,72 @@ class WP_SQLite_Driver {
 				} elseif ( 'datetime' === $mysql_data_type || 'timestamp' === $mysql_data_type ) {
 					$function_call = sprintf( 'DATETIME(%s)', $translated_value );
 				} elseif ( 'year' === $mysql_data_type ) {
-					$function_call = sprintf( "STRFTIME('%%Y', %s)", $translated_value );
+					/*
+					 * The YEAR type in MySQL only uses 1 byte and therefore
+					 * covers only 256 values from 1901 to 2155 included.
+					 * Additionally:
+					 *   - Numbers from 0 to 69 correspond to years 2000 to 2069.
+					 *   - Numbers from 70 to 99 correspond to years 1970 to 1999.
+					 */
+					return sprintf(
+						"(
+							SELECT CASE
+								WHEN value IS NULL THEN NULL
+								WHEN value = 0 THEN '0000'
+								WHEN value BETWEEN 1901 AND 2155 THEN value
+								WHEN value BETWEEN 1 AND 69 THEN 2000 + value
+								WHEN value BETWEEN 70 AND 99 THEN 1900 + value
+								ELSE %s
+							END
+							FROM (SELECT CAST(%s AS INTEGER) AS value)
+						)",
+						$is_strict_mode
+							? sprintf( "THROW('Out of range value: ''' || %s || '''')", $translated_value )
+							: "'0000'",
+						$translated_value
+					);
 				}
 
-				// When the function call evaluates to NULL (invalid date/time),
-				// we need to fallback to the IMPLICIT DEFAULT value.
+				// In strict mode, invalid date/time values are rejected.
+				// In non-strict mode, they get an IMPLICIT DEFAULT value.
+				if ( $is_strict_mode ) {
+					$fallback = sprintf(
+						"THROW('Incorrect %s value: ''' || %s || '''')",
+						$mysql_data_type,
+						$translated_value
+					);
+				} else {
+					$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $mysql_data_type ] ?? null;
+					$fallback         = null === $implicit_default
+						? 'NULL'
+						: $this->connection->quote( $implicit_default );
+				}
 				return sprintf(
-					'IIF(%s IS NULL, NULL, COALESCE(%s, %s))',
+					"CASE
+						WHEN %s IS NULL THEN NULL
+						WHEN %s > '0' THEN %s
+						ELSE %s
+					END",
 					$translated_value,
 					$function_call,
-					$quoted_implicit_default
+					$function_call,
+					$fallback
 				);
 			default:
-				// For all other data types, use SQLite-native CAST expression.
-				$mysql_data_type = strtolower( $mysql_data_type );
-				return sprintf( 'CAST(%s AS %s)', $translated_value, $sqlite_data_type );
+				/*
+				 * For all other data types, cast to the SQLite types as follows:
+				 *   1. In strict mode, cast only values for TEXT and BLOB columns.
+				 *      Numeric types accept string notation in SQLite as well.
+				 *   2. In non-strict mode, cast all values.
+				 *
+				 * TODO: While close to MySQL behavior, this doesn't exactly match
+				 *       all special cases. We may improve this further to accept
+				 *       BLOBs for numeric types, and other special behaviors.
+				 */
+				if ( ! $is_strict_mode || 'TEXT' === $sqlite_data_type || 'BLOB' === $sqlite_data_type ) {
+					return sprintf( 'CAST(%s AS %s)', $translated_value, $sqlite_data_type );
+				}
+				return $translated_value;
 		}
 	}
 

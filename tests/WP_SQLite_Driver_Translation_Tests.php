@@ -94,60 +94,138 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	}
 
 	public function testInsert(): void {
+		$this->driver->query( 'CREATE TABLE t (c INT, c1 INT, c2 INT)' );
+		$this->driver->query( 'CREATE TABLE t1 (c1 INT, c2 INT)' );
+		$this->driver->query( 'CREATE TABLE t2 (c1 INT, c2 INT)' );
+		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
+
 		$this->assertQuery(
-			'INSERT INTO `t` ( `c` ) VALUES ( 1 )',
+			'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
 			'INSERT INTO t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t` ( `c` ) VALUES ( 1 )',
+			'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
 			'INSERT INTO wp.t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t` ( `c1` , `c2` ) VALUES ( 1 , 2 )',
+			'INSERT INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (VALUES ( 1 , 2 )) WHERE true',
 			'INSERT INTO t (c1, c2) VALUES (1, 2)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t` ( `c` ) VALUES ( 1 ) , ( 2 )',
+			'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 ) , ( 2 )) WHERE true',
 			'INSERT INTO t (c) VALUES (1), (2)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t1` SELECT * FROM `t2`',
+			array(
+				'SELECT * FROM (SELECT * FROM `t2`) LIMIT 1',
+				'INSERT INTO `t1` (`c1`, `c2`) SELECT `c1`, `c2` FROM (SELECT * FROM `t2`) WHERE true',
+			),
+			'INSERT INTO t1 SELECT * FROM t2'
+		);
+	}
+
+	public function testInsertWithTypeCasting(): void {
+		$this->driver->query( 'CREATE TABLE t1 (c1 TEXT, c2 TEXT)' );
+		$this->driver->query( 'CREATE TABLE t2 (c1 TEXT, c2 TEXT)' );
+		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
+
+		$this->assertQuery(
+			'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 )) WHERE true',
+			'INSERT INTO t1 (c1) VALUES (1)'
+		);
+
+		$this->assertQuery(
+			'INSERT INTO `t1` (`c1`, `c2`) SELECT CAST(`column1` AS TEXT), CAST(`column2` AS TEXT) FROM (VALUES ( 1 , 2 )) WHERE true',
+			'INSERT INTO t1 (c1, c2) VALUES (1, 2)'
+		);
+
+		$this->assertQuery(
+			'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 ) , ( 2 )) WHERE true',
+			'INSERT INTO t1 (c1) VALUES (1), (2)'
+		);
+
+		$this->assertQuery(
+			array(
+				'SELECT * FROM (SELECT * FROM `t2`) LIMIT 1',
+				'INSERT INTO `t1` (`c1`, `c2`) SELECT CAST(`c1` AS TEXT), CAST(`c2` AS TEXT) FROM (SELECT * FROM `t2`) WHERE true',
+			),
 			'INSERT INTO t1 SELECT * FROM t2'
 		);
 	}
 
 	public function testReplace(): void {
+		$this->driver->query( 'CREATE TABLE t (c INT, c1 INT, c2 INT)' );
+		$this->driver->query( 'CREATE TABLE t1 (c1 INT, c2 INT)' );
+		$this->driver->query( 'CREATE TABLE t2 (c1 INT, c2 INT)' );
+		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
+
 		$this->assertQuery(
-			'REPLACE INTO `t` ( `c` ) VALUES ( 1 )',
+			'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
 			'REPLACE INTO t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t` ( `c` ) VALUES ( 1 )',
+			'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
 			'REPLACE INTO wp.t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t` ( `c1` , `c2` ) VALUES ( 1 , 2 )',
+			'REPLACE INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (VALUES ( 1 , 2 )) WHERE true',
 			'REPLACE INTO t (c1, c2) VALUES (1, 2)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t` ( `c` ) VALUES ( 1 ) , ( 2 )',
+			'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 ) , ( 2 )) WHERE true',
 			'REPLACE INTO t (c) VALUES (1), (2)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t1` SELECT * FROM `t2`',
+			array(
+				'SELECT * FROM (SELECT * FROM `t2`) LIMIT 1',
+				'REPLACE INTO `t1` (`c1`, `c2`) SELECT `c1`, `c2` FROM (SELECT * FROM `t2`) WHERE true',
+			),
+			'REPLACE INTO t1 SELECT * FROM t2'
+		);
+	}
+
+	public function testReplaceWithTypeCasting(): void {
+		$this->driver->query( 'CREATE TABLE t1 (c1 TEXT, c2 TEXT)' );
+		$this->driver->query( 'CREATE TABLE t2 (c1 TEXT, c2 TEXT)' );
+		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
+
+		$this->assertQuery(
+			'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 )) WHERE true',
+			'REPLACE INTO t1 (c1) VALUES (1)'
+		);
+
+		$this->assertQuery(
+			'REPLACE INTO `t1` (`c1`, `c2`) SELECT CAST(`column1` AS TEXT), CAST(`column2` AS TEXT) FROM (VALUES ( 1 , 2 )) WHERE true',
+			'REPLACE INTO t1 (c1, c2) VALUES (1, 2)'
+		);
+
+		$this->assertQuery(
+			'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 ) , ( 2 )) WHERE true',
+			'REPLACE INTO t1 (c1) VALUES (1), (2)'
+		);
+
+		$this->assertQuery(
+			array(
+				'SELECT * FROM (SELECT * FROM `t2`) LIMIT 1',
+				'REPLACE INTO `t1` (`c1`, `c2`) SELECT CAST(`c1` AS TEXT), CAST(`c2` AS TEXT) FROM (SELECT * FROM `t2`) WHERE true',
+			),
 			'REPLACE INTO t1 SELECT * FROM t2'
 		);
 	}
 
 	public function testUpdate(): void {
+		$this->driver->query( 'CREATE TABLE t (c INT, c1 INT, c2 INT)' );
+		$this->driver->query( 'CREATE TABLE t1 (id INT, c1 INT, c2 INT)' );
+		$this->driver->query( 'CREATE TABLE t2 (id INT, c1 INT, c2 INT)' );
+
 		$this->assertQuery(
 			'UPDATE `t` SET `c` = 1',
 			'UPDATE t SET c = 1'
