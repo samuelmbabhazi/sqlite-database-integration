@@ -1598,7 +1598,7 @@ class WP_SQLite_Driver {
 		 *         UPDATE t, information_schema.columns c SET t.column = c.column ...
 		 */
 		foreach ( $table_alias_map as $alias => $data ) {
-			if ( 'information_schema' === strtolower( $data['database'] ) ) {
+			if ( 'information_schema' === strtolower( $data['database'] ?? '' ) ) {
 				throw $this->new_access_denied_to_information_schema_exception();
 			}
 		}
@@ -2281,7 +2281,7 @@ class WP_SQLite_Driver {
 							'flags'       => array( 'not_null' ),
 							'table'       => '',
 							'name'        => 'Create Table',
-							'len'         => strlen( $sql ),
+							'len'         => strlen( $sql ?? '' ),
 							'precision'   => 31,
 						),
 					);
@@ -2925,7 +2925,7 @@ class WP_SQLite_Driver {
 		 *          SET updatable_views_with_limit = OFF;   ERROR 1231 (42000)
 		 *          SET updatable_views_with_limit = false; SELECT @@updatable_views_with_limit; -> NO
 		 */
-		$lowercase_value = strtolower( $value );
+		$lowercase_value = null === $value ? null : strtolower( $value );
 		if ( 'on' === $lowercase_value || 'off' === $lowercase_value ) {
 			$value = 'on' === $lowercase_value ? 1 : 0;
 		}
