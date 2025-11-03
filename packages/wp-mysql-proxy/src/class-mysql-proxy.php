@@ -40,7 +40,7 @@ class MySQL_Proxy {
 				if ( $client ) {
 					echo "New client connected.\n";
 					$this->clients[]                    = $client;
-					$client_id                          = spl_object_id( $client );
+					$client_id                          = $this->get_client_id( $client );
 					$this->client_servers[ $client_id ] = new MySQL_Session( $this->query_handler );
 
 					// Send initial handshake
@@ -75,7 +75,7 @@ class MySQL_Proxy {
 				if ( false === $data || '' === $data ) {
 					// Client disconnected
 					echo "Client disconnected.\n";
-					$client_id = spl_object_id( $client );
+					$client_id = $this->get_client_id( $client );
 					$this->client_servers[ $client_id ]->reset();
 					unset( $this->client_servers[ $client_id ] );
 					socket_close( $client );
@@ -85,7 +85,7 @@ class MySQL_Proxy {
 
 				try {
 					// Process the data
-					$client_id = spl_object_id( $client );
+					$client_id = $this->get_client_id( $client );
 					echo "Receiving bytes\n";
 					$response = $this->client_servers[ $client_id ]->receive_bytes( $data );
 					if ( $response ) {
@@ -114,6 +114,20 @@ class MySQL_Proxy {
 				}
 			}
 			echo "restarting the while() loop!\n";
+		}
+	}
+
+	/**
+	 * Get a numeric ID for a client connected to the proxy.
+	 *
+	 * @param  resource|object $client The client Socket object or resource.
+	 * @return int                     The numeric ID of the client.
+	 */
+	private function get_client_id( $client ): int {
+		if ( is_resource( $client ) ) {
+			return get_resource_id( $client );
+		} else {
+			return spl_object_id( $client );
 		}
 	}
 }
