@@ -10522,6 +10522,25 @@ END;
 		$this->assertQuery( 'DROP TABLE t' );
 	}
 
+	public function testCastValuesOnDuplicateKeyUpdate(): void {
+		$this->assertQuery( 'CREATE TABLE t (value TEXT UNIQUE)' );
+		$this->assertQuery( "INSERT INTO t VALUES ('test')" );
+
+		// Ensure that type casting is applied to ON DUPLICATE KEY UPDATE clause.
+		$this->assertQuery( "INSERT INTO t VALUES ('test') ON DUPLICATE KEY UPDATE value = 0x61" );
+		$this->assertSame( 'a', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
+	}
+
+	public function testCastValuesOnDuplicateKeyUpdateInNonStrictMode(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( 'CREATE TABLE t (value INT UNIQUE)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (123)' );
+
+		// Ensure that type casting is applied to ON DUPLICATE KEY UPDATE clause.
+		$this->assertQuery( "INSERT INTO t VALUES (123) ON DUPLICATE KEY UPDATE value = 'test'" );
+		$this->assertSame( '0', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
+	}
+
 	public function testCastValuesOnUpdate(): void {
 		// INTEGER
 		$this->assertQuery( 'CREATE TABLE t (value INT)' );

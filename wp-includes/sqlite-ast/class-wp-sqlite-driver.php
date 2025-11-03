@@ -1531,6 +1531,10 @@ class WP_SQLite_Driver {
 				$table_ref  = $node->get_first_child_node( 'tableRef' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
+			} elseif ( $is_node && 'insertUpdateList' === $child->rule_name ) {
+				// Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
+				$parts[] = 'ON CONFLICT DO UPDATE SET ';
+				$parts[] = $this->translate_update_list( $table_name, $child );
 			} else {
 				$parts[] = $this->translate( $child );
 			}
@@ -1737,7 +1741,7 @@ class WP_SQLite_Driver {
 		}
 
 		// Translate UPDATE list, applying relevant type casting and IMPLICIT DEFAULT values.
-		$update_list = $this->translate_update_list( $update_target_table, $update_list_node );
+		$update_list = $this->translate_update_list( $update_target_table, $node );
 
 		// Translate WHERE, ORDER BY, and LIMIT clauses.
 		if ( $where_subquery ) {
@@ -3241,12 +3245,6 @@ class WP_SQLite_Driver {
 					return null;
 				}
 				return $this->translate_sequence( $node->get_children() );
-			case 'insertUpdateList':
-				// Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
-				return sprintf(
-					'ON CONFLICT DO UPDATE SET %s',
-					$this->translate( $node->get_first_child_node( 'updateList' ) )
-				);
 			case 'simpleExpr':
 				return $this->translate_simple_expr( $node );
 			case 'predicateOperations':
@@ -4649,11 +4647,13 @@ class WP_SQLite_Driver {
 	 * For more information about IMPLICIT DEFAULT values in MySQL, see:
 	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 *
-	 * @param  string         $table_name The name of the target table.
-	 * @param  WP_Parser_Node $node       The "updateList" AST node.
-	 * @return string                     The translated UPDATE list.
+	 * @param  string         $table_name  The name of the target table.
+	 * @param  WP_Parser_Node $parent_node The "updateList" AST node parent node.
+	 * @return string                      The translated UPDATE list.
 	 */
-	private function translate_update_list( string $table_name, WP_Parser_Node $node ): string {
+	private function translate_update_list( string $table_name, WP_Parser_Node $parent_node ): string {
+		$node = $parent_node->get_first_child_node( 'updateList' );
+
 		// This method is always used with the main database.
 		$database = $this->get_saved_db_name( $this->main_db_name );
 
@@ -4724,11 +4724,17 @@ class WP_SQLite_Driver {
 			// Apply type casting.
 			$value = $this->cast_value_for_saving( $data_type, $value );
 
-			// In MySQL non-STRICT mode, when a column is declared as NOT NULL,
-			// updating to a NULL value saves an IMPLICIT DEFAULT value instead.
-			$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
-			if ( ! $is_strict_mode && ! $is_nullable && null !== $implicit_default ) {
-				$value = sprintf( 'COALESCE(%s, %s)', $value, $this->connection->quote( $implicit_default ) );
+			/*
+			 * In MySQL non-STRICT mode, when a column is declared as NOT NULL,
+			 * updating to a NULL value saves an IMPLICIT DEFAULT value instead.
+			 * This behavior does not apply to ON DUPLICATE KEY UPDATE clauses.
+			 */
+			$is_on_duplicate_key_update = 'insertUpdateList' === $parent_node->rule_name;
+			if ( ! $is_strict_mode && ! $is_nullable && ! $is_on_duplicate_key_update ) {
+				$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
+				if ( null !== $implicit_default ) {
+					$value = sprintf( 'COALESCE(%s, %s)', $value, $this->connection->quote( $implicit_default ) );
+				}
 			}
 
 			// Compose the UPDATE list item.
