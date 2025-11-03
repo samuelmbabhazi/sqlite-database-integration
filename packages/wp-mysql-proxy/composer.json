@@ -1,6 +1,9 @@
 {
     "name": "wordpress/wp-mysql-proxy",
     "type": "library",
+	"bin": [
+		"bin/wp-mysql-proxy.php"
+	],
 	"scripts": {
 		"test": "phpunit"
 	},
