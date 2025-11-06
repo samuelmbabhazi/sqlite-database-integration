@@ -2082,11 +2082,13 @@ class WP_SQLite_Information_Schema_Builder {
 				$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
 				return $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
 			}
+
+			// @TODO: MySQL seems to normalize default values for numeric
+			//        columns, such as 1.0 to 1, 1e3 to 1000, etc.
+			return $this->get_value( $signed_literal );
 		}
 
-		// @TODO: MySQL seems to normalize default values for numeric
-		//        columns, such as 1.0 to 1, 1e3 to 1000, etc.
-		return $this->get_value( $default_attr->get_first_child_node() );
+		throw new Exception( 'DEFAULT values with expressions are not yet supported.' );
 	}
 
 	/**
