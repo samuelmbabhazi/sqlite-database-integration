@@ -4594,7 +4594,23 @@ class WP_SQLite_Driver {
 				// When a column value is included, we need to apply type casting.
 				$position   = array_search( $column['COLUMN_NAME'], $insert_list, true );
 				$identifier = $this->quote_sqlite_identifier( $select_list[ $position ] );
-				$fragment  .= $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier );
+				$value      = $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier );
+
+				/*
+				 * In MySQL non-STRICT mode, when inserting from a SELECT query:
+				 *
+				 * When a column is declared as NOT NULL, inserting a NULL value
+				 * saves an IMPLICIT DEFAULT value instead. This behavior only
+				 * applies to the INSERT ... SELECT syntax (not VALUES or SET).
+				 */
+				$is_insert_from_select = 'insertQueryExpression' === $node->rule_name;
+				if ( ! $is_strict_mode && $is_insert_from_select && 'NO' === $column['IS_NULLABLE'] ) {
+					$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
+					if ( null !== $implicit_default ) {
+						$value = sprintf( 'COALESCE(%s, %s)', $value, $this->connection->quote( $implicit_default ) );
+					}
+				}
+				$fragment .= $value;
 			}
 		}
 

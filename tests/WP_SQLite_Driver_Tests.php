@@ -10539,6 +10539,42 @@ END;
 		$this->assertQuery( 'DROP TABLE t' );
 	}
 
+	public function testCastNotNullValuesOnInsert(): void {
+		$this->assertQuery( 'CREATE TABLE t (value INT NOT NULL)' );
+
+		// Strict mode:
+		$this->assertQueryError( 'INSERT INTO t VALUES (NULL)', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+		$this->assertQueryError( 'INSERT INTO t SET value = NULL', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+		$this->assertQueryError( 'INSERT INTO t SELECT NULL', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+		$this->assertQueryError( 'INSERT INTO t VALUES ((SELECT NULL))', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+
+		// Non-strict mode:
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQueryError( 'INSERT INTO t VALUES (NULL)', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+		$this->assertQueryError( 'INSERT INTO t SET value = NULL', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+		$this->assertQuery( 'INSERT INTO t SELECT NULL' );
+		$this->assertSame( '0', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
+		$this->assertQueryError( 'INSERT INTO t VALUES ((SELECT NULL))', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+	}
+
+	public function testCastNotNullValuesOnUpdate(): void {
+		$this->assertQuery( 'CREATE TABLE t (value INT NOT NULL)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+
+		// Strict mode:
+		$this->assertQueryError( 'UPDATE t SET value = NULL', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+		$this->assertQueryError( 'UPDATE t SET value = (SELECT NULL)', 'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value' );
+
+		// Non-strict mode:
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( 'UPDATE t SET value = NULL' );
+		$this->assertSame( '0', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
+
+		$this->assertQuery( 'UPDATE t SET value = (SELECT NULL)' );
+		$this->assertSame( '0', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
+		$this->assertQuery( 'DROP TABLE t' );
+	}
+
 	public function testCastValuesOnDuplicateKeyUpdate(): void {
 		$this->assertQuery( 'CREATE TABLE t (value TEXT UNIQUE)' );
 		$this->assertQuery( "INSERT INTO t VALUES ('test')" );
