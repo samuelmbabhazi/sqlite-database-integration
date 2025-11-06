@@ -2073,12 +2073,12 @@ class WP_SQLite_Information_Schema_Builder {
 			$literal = $signed_literal->get_first_child_node( 'literal' );
 
 			// DEFAULT NULL
-			if ( $literal->has_child_node( 'nullLiteral' ) ) {
+			if ( $literal && $literal->has_child_node( 'nullLiteral' ) ) {
 				return null;
 			}
 
 			// DEFAULT TRUE or DEFAULT FALSE
-			if ( $literal->has_child_node( 'boolLiteral' ) ) {
+			if ( $literal && $literal->has_child_node( 'boolLiteral' ) ) {
 				$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
 				return $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
 			}
