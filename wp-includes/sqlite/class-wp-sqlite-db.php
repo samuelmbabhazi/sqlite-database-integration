@@ -6,6 +6,21 @@
  * @since 1.0.0
  */
 
+/*
+ * A compatibility hotfix for the Wordfence plugin.
+ *
+ * Wordfence directly uses the $wpdb->dbh property, considering it an instance
+ * of mysqli, without checking if it really is. As a hotfix, we will disable
+ * the Wordfence mysqli usage using the WORDFENCE_ALLOW_DIRECT_MYSQLI constant.
+ *
+ * TODO: Remove this once the issue is resolved in Wordfence.
+ *
+ * See: https://github.com/WordPress/sqlite-database-integration/issues/284
+ */
+if ( ! defined( 'WORDFENCE_ALLOW_DIRECT_MYSQLI' ) ) {
+	define( 'WORDFENCE_ALLOW_DIRECT_MYSQLI', false );
+}
+
 /**
  * This class extends wpdb and replaces it.
  *
