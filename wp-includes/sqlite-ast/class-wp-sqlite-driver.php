@@ -2230,7 +2230,7 @@ class WP_SQLite_Driver {
 
 		switch ( $keyword1->id ) {
 			case WP_MySQL_Lexer::COLLATION_SYMBOL:
-				$this->execute_show_collation_statement();
+				$this->execute_show_collation_statement( $node );
 				return;
 			case WP_MySQL_Lexer::DATABASES_SYMBOL:
 				$this->execute_show_databases_statement( $node );
@@ -2359,12 +2359,18 @@ class WP_SQLite_Driver {
 
 	/**
 	 * Translate and execute a MySQL SHOW COLLATION statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node The "showStatement" AST node.
 	 */
-	private function execute_show_collation_statement(): void {
+	private function execute_show_collation_statement( WP_Parser_Node $node ): void {
 		$definition = $this->information_schema_builder
 			->get_computed_information_schema_table_definition( 'collations' );
 
-		// TODO: LIKE and WHERE clauses.
+		// LIKE and WHERE clauses.
+		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		if ( $like_or_where ) {
+			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'collation_name' );
+		}
 
 		$stmt = $this->execute_sqlite_query(
 			sprintf(
@@ -2376,8 +2382,10 @@ class WP_SQLite_Driver {
 					IS_COMPILED AS `Compiled`,
 					SORTLEN AS `Sortlen`,
 					PAD_ATTRIBUTE AS `Pad_attribute`
-				FROM (%s)',
-				$definition
+				FROM (%s)
+				WHERE TRUE %s',
+				$definition,
+				$condition ?? ''
 			)
 		);
 		$this->store_last_column_meta_from_statement( $stmt );
@@ -2394,10 +2402,9 @@ class WP_SQLite_Driver {
 
 		// LIKE and WHERE clauses.
 		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
-		if ( null !== $like_or_where ) {
+		if ( $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'schema_name' );
 		}
-
 		$stmt = $this->execute_sqlite_query(
 			sprintf(
 				'SELECT SCHEMA_NAME AS Database
@@ -2424,10 +2431,9 @@ class WP_SQLite_Driver {
 	 * @param WP_Parser_Node $node The "showStatement" AST node.
 	 */
 	private function execute_show_index_statement( WP_Parser_Node $node ): void {
+		// Get database and table name.
 		$table_ref = $node->get_first_child_node( 'tableRef' );
 		$in_db     = $node->get_first_child_node( 'inDb' );
-
-		// Get database and table name.
 		if ( $in_db ) {
 			// FROM/IN database.
 			$database = $this->get_database_name( $in_db );
@@ -2436,7 +2442,14 @@ class WP_SQLite_Driver {
 		}
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 
-		// TODO: WHERE
+		// WHERE clause.
+		$where = $node->get_first_child_node( 'whereClause' );
+		if ( null !== $where ) {
+			$value     = $this->translate( $where->get_first_child_node( 'expr' ) );
+			$condition = sprintf( 'AND %s', $value );
+		} else {
+			$condition = '';
+		}
 
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
@@ -2480,6 +2493,7 @@ class WP_SQLite_Driver {
 				FROM ' . $this->quote_sqlite_identifier( $statistics_table ) . "
 				WHERE table_schema = ?
 				AND table_name = ?
+				$condition
 				ORDER BY
 					INDEX_NAME = 'PRIMARY' DESC,
 					NON_UNIQUE = '0' DESC,
@@ -2624,10 +2638,10 @@ class WP_SQLite_Driver {
 	 */
 	private function execute_show_columns_statement( WP_Parser_Node $node ): void {
 		// TODO: EXTENDED, FULL
-		$table_ref = $node->get_first_child_node( 'tableRef' );
-		$in_db     = $node->get_first_child_node( 'inDb' );
 
 		// Get database and table name.
+		$table_ref = $node->get_first_child_node( 'tableRef' );
+		$in_db     = $node->get_first_child_node( 'inDb' );
 		if ( $in_db ) {
 			// FROM/IN database.
 			$database = $this->get_database_name( $in_db );
