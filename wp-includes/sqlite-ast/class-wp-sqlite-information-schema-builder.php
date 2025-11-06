@@ -2053,15 +2053,35 @@ class WP_SQLite_Information_Schema_Builder {
 			return null;
 		}
 
+		/*
+		 * [GRAMMAR]
+		 * DEFAULT_SYMBOL (
+		 *    signedLiteral
+		 *    | NOW_SYMBOL timeFunctionParameters?
+		 *    | {serverVersion >= 80013}? exprWithParentheses
+		 * )
+		 */
+
+		// DEFAULT NOW()
 		if ( $default_attr->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL ) ) {
 			return 'CURRENT_TIMESTAMP';
 		}
 
-		if (
-			$default_attr->has_child_node( 'signedLiteral' )
-			&& null !== $default_attr->get_first_descendant_node( 'nullLiteral' )
-		) {
-			return null;
+		// DEFAULT signedLiteral
+		$signed_literal = $default_attr->get_first_child_node( 'signedLiteral' );
+		if ( $signed_literal ) {
+			$literal = $signed_literal->get_first_child_node( 'literal' );
+
+			// DEFAULT NULL
+			if ( $literal->has_child_node( 'nullLiteral' ) ) {
+				return null;
+			}
+
+			// DEFAULT TRUE or DEFAULT FALSE
+			if ( $literal->has_child_node( 'boolLiteral' ) ) {
+				$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
+				return $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
+			}
 		}
 
 		// @TODO: MySQL seems to normalize default values for numeric
