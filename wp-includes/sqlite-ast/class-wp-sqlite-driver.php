@@ -3250,8 +3250,6 @@ class WP_SQLite_Driver {
 				throw $this->new_not_supported_exception(
 					sprintf( 'data type: %s', $child->get_value() )
 				);
-			case 'selectItem':
-				return $this->translate_select_item( $node );
 			case 'fromClause':
 				// FROM DUAL is MySQL-specific syntax that means "FROM no tables"
 				// and it is equivalent to omitting the FROM clause entirely.
@@ -3678,8 +3676,51 @@ class WP_SQLite_Driver {
 	 * @return string|null
 	 */
 	private function translate_query_specification( WP_Parser_Node $node ): string {
+		$from     = $node->get_first_child_node( 'fromClause' );
 		$group_by = $node->get_first_child_node( 'groupByClause' );
 		$having   = $node->get_first_child_node( 'havingClause' );
+
+		$table_reference_list = $from ? $from->get_first_child_node( 'tableReferenceList' ) : null;
+		if ( $table_reference_list ) {
+			$table_reference_map = $this->create_table_reference_map( $table_reference_list );
+		}
+		var_dump($table_reference_map);
+
+		// Check if there is an information schema used in FROM or JOIN clauses.
+		$information_schema_table_columns_map = array();
+		foreach ( $table_reference_map ?? array() as $table_data ) {
+			if (
+				null === $table_data['database']
+				|| 'information_schema' !== strtolower( $table_data['database'] )
+			) {
+				continue;
+			}
+
+			$table_name = strtoupper( $table_data['table_name'] );
+			if ( 'character_sets' === $table_name ) {
+				$information_schema_table_columns_map['CHARACTER_SET_NAME'] = true;
+				$information_schema_table_columns_map['DEFAULT_COLLATE_NAME'] = true;
+				$information_schema_table_columns_map['DESCRIPTION'] = true;
+				$information_schema_table_columns_map['MAXLEN'] = true;
+			} elseif ( 'collations' === $table_name ) {
+				$information_schema_table_columns_map['COLLATION_NAME'] = true;
+				$information_schema_table_columns_map['CHARACTER_SET_NAME'] = true;
+				$information_schema_table_columns_map['ID'] = true;
+				$information_schema_table_columns_map['IS_DEFAULT'] = true;
+				$information_schema_table_columns_map['IS_COMPILED'] = true;
+				$information_schema_table_columns_map['SORTLEN'] = true;
+				$information_schema_table_columns_map['PAD_ATTRIBUTE'] = true;
+			} else {
+				$columns = $this->execute_sqlite_query(
+					'SELECT name FROM pragma_table_info(?)',
+					array( $this->information_schema_builder->get_table_name( false, $table_name ) )
+				)->fetchAll( PDO::FETCH_COLUMN );
+
+				foreach ( $columns as $column ) {
+					$information_schema_table_columns_map[ $column ] = $column;
+				}
+			}
+		}
 
 		/*
 		 * When the GROUP BY or HAVING clause is present, we need to disambiguate
@@ -3729,30 +3770,43 @@ class WP_SQLite_Driver {
 				}
 				$having_clause = 'HAVING ' . implode( ' ', $disambiguated_having_list );
 			}
+		}
 
-			// Translate the query specification, replacing the ORDER BY/HAVING
-			// items with the ones that were disambiguated using the SELECT list.
-			$parts = array();
-			foreach ( $node->get_children() as $child ) {
-				if ( $child instanceof WP_Parser_Node && 'groupByClause' === $child->rule_name ) {
-					$parts[] = $group_by_clause;
-				} elseif ( $child instanceof WP_Parser_Node && 'havingClause' === $child->rule_name ) {
-					// SQLite doesn't allow using the "HAVING" clause without "GROUP BY".
-					// In such cases, let's prefix the "HAVING" clause with "GROUP BY 1".
-					if ( ! $group_by ) {
-						$parts[] = 'GROUP BY 1';
-					}
-					$parts[] = $having_clause;
-				} else {
-					$part = $this->translate( $child );
-					if ( null !== $part ) {
-						$parts[] = $part;
+		// Translate the query specification, replacing the ORDER BY/HAVING
+		// items with the ones that were disambiguated using the SELECT list.
+		$parts = array();
+		foreach ( $node->get_children() as $child ) {
+			if ( $child instanceof WP_Parser_Node && 'selectItemList' === $child->rule_name ) {
+				$items = array();
+				foreach ( $child->get_children() as $select_item ) {
+					if ( $select_item instanceof WP_MySQL_Token ) {
+						if ( WP_MySQL_Lexer::COMMA_SYMBOL === $select_item->id ) {
+							continue;
+						} else {
+							$items[] = $this->translate( $select_item );
+						}
+					} else {
+						$items[] = $this->translate_select_item( $select_item, $information_schema_table_columns_map );
 					}
 				}
+				$parts[] = implode( ', ', $items );
+			} elseif ( $child instanceof WP_Parser_Node && 'groupByClause' === $child->rule_name ) {
+				$parts[] = $group_by_clause;
+			} elseif ( $child instanceof WP_Parser_Node && 'havingClause' === $child->rule_name ) {
+				// SQLite doesn't allow using the "HAVING" clause without "GROUP BY".
+				// In such cases, let's prefix the "HAVING" clause with "GROUP BY 1".
+				if ( ! $group_by ) {
+					$parts[] = 'GROUP BY 1';
+				}
+				$parts[] = $having_clause;
+			} else {
+				$part = $this->translate( $child );
+				if ( null !== $part ) {
+					$parts[] = $part;
+				}
 			}
-			return implode( ' ', $parts );
 		}
-		return $this->translate_sequence( $node->get_children() );
+		return implode( ' ', $parts );
 	}
 
 	/**
@@ -4063,7 +4117,7 @@ class WP_SQLite_Driver {
 	 * @param  WP_Parser_Node $node       The "selectItem" AST node.
 	 * @return string                     The translated expression.
 	 */
-	public function translate_select_item( WP_Parser_Node $node ): string {
+	public function translate_select_item( WP_Parser_Node $node, array $information_schema_table_columns_map = array() ): string {
 		/*
 		 * First, let's translate the select item subtree.
 		 *
@@ -4097,7 +4151,13 @@ class WP_SQLite_Driver {
 		$column_ref    = $node->get_first_descendant_node( 'columnRef' );
 		$is_column_ref = $column_ref && $item === $this->translate( $column_ref );
 		if ( $is_column_ref ) {
-			return $item;
+			$identifiers = $column_ref->get_descendant_nodes( 'identifier' );
+			$column_name = $this->unquote_sqlite_identifier( $this->translate( end( $identifiers ) ) );
+			if ( isset( $information_schema_table_columns_map[ strtoupper( $column_name ) ] ) ) {
+				return $item;
+			}
+
+			$node = end( $identifiers );
 		}
 
 		/*
@@ -4115,8 +4175,9 @@ class WP_SQLite_Driver {
 		if ( $alias === $item || $raw_alias === $item ) {
 			// For the simple case of selecting only columns ("SELECT id FROM t"),
 			// let's avoid unnecessary aliases ("SELECT `id` AS `id` FROM t").
-			return $item;
+			//return $item;
 		}
+		var_dump(sprintf( '%s AS %s', $item, $alias ));
 		return sprintf( '%s AS %s', $item, $alias );
 	}
 
@@ -5035,9 +5096,12 @@ class WP_SQLite_Driver {
 				$alias_node = $child->get_first_child_node( 'tableAlias' );
 				$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
 
+				$identifiers = $table_ref->get_descendant_nodes( 'identifier' );
+				$name =$this->unquote_sqlite_identifier( $this->translate( end( $identifiers ) ) );
+
 				$table_map[ $this->unquote_sqlite_identifier( $alias ?? $name ) ] = array(
 					'database'   => $this->get_database_name( $table_ref ),
-					'table_name' => $this->unquote_sqlite_identifier( $name ),
+					'table_name' => $name,
 					'table_expr' => null,
 					'join_expr'  => $this->translate( $join_expr ),
 				);

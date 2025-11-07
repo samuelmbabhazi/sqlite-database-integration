@@ -11238,4 +11238,15 @@ END;
 		$result = $this->engine->query( 'SELECT VERSION()' );
 		$this->assertSame( '8.0.38', $result[0]->{'VERSION()'} );
 	}
+
+	public function testResultColumnNameCase(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		$result = $this->assertQuery( 'SELECT ID FROM t' );
+		$this->assertEquals( (object) array( 'ID' => 1 ), $result[0] );
+
+		$result = $this->assertQuery( 'SELECT id FROM (SELECT * FROM t) x JOIN information_schema.tables it ON TRUE LIMIT 1' );
+		$this->assertEquals( (object) array( 'id' => 1 ), $result[0] );
+	}
 }
