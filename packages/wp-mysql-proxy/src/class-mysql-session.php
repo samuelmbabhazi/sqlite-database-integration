@@ -83,6 +83,8 @@ class MySQL_Session {
 			return $this->process_query( 'USE ' . substr( $payload, 1 ) );
 		} elseif ( MySQL_Protocol::COM_QUIT === $command ) {
 			return '';
+		} elseif ( MySQL_Protocol::COM_PING === $command ) {
+			return MySQL_Protocol::wrap_packet( MySQL_Protocol::build_ok_packet(), $received_sequence_id + 1 );
 		} else {
 			// Unsupported command
 			$err_packet = MySQL_Protocol::build_err_packet( 0x04D2, 'HY000', 'Unsupported command' );
