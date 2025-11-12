@@ -6,10 +6,10 @@ namespace WP_MySQL_Proxy;
 
 use Exception;
 
-class MySQLServerException extends Exception {
+class MySQL_Proxy_Exception extends Exception {
 }
 
-class IncompleteInputException extends MySQLServerException {
+class Incomplete_Input_Exception extends MySQL_Proxy_Exception {
 	public function __construct( string $message = 'Incomplete input data, more bytes needed' ) {
 		parent::__construct( $message );
 	}

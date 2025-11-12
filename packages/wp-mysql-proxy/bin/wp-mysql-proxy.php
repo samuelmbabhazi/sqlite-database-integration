@@ -2,23 +2,25 @@
 
 use WP_MySQL_Proxy\MySQL_Proxy;
 use WP_MySQL_Proxy\Adapter\SQLite_Adapter;
+use WP_MySQL_Proxy\Logger;
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
 define( 'WP_SQLITE_AST_DRIVER', true );
 
 // Process CLI arguments:
-$shortopts = 'h:d:p';
-$longopts  = array( 'help', 'database:', 'port:' );
+$shortopts = 'h:d:p:l:';
+$longopts  = array( 'help', 'database:', 'port:', 'log-level:' );
 $opts      = getopt( $shortopts, $longopts );
 
 $help = <<<USAGE
 Usage: php mysql-proxy.php [--database <path/to/db.sqlite>] [--port <port>]
 
 Options:
-  -h, --help            Show this help message and exit.
-  -d, --database=<path> The path to the SQLite database file. Default: :memory:
-  -p, --port=<port>     The port to listen on. Default: 3306
+  -h, --help              Show this help message and exit.
+  -d, --database=<path>   The path to the SQLite database file. Default: :memory:
+  -p, --port=<port>       The port to listen on. Default: 3306
+  -l, --log-level=<level> The log level to use. One of "error", "warning", "info", "debug". Default: info
 
 USAGE;
 
@@ -38,9 +40,19 @@ if ( $port < 1 || $port > 65535 ) {
 	exit( 1 );
 }
 
+// Log level.
+$log_level = $opts['l'] ?? $opts['log-level'] ?? 'info';
+if ( ! in_array( $log_level, Logger::LEVELS, true ) ) {
+	fwrite( STDERR, 'Error: --log-level must be one of: ' . implode( ', ', Logger::LEVELS ) . ". Use --help for more information.\n" );
+	exit( 1 );
+}
+
 // Start the MySQL proxy.
 $proxy = new MySQL_Proxy(
 	new SQLite_Adapter( $db_path ),
-	array( 'port' => $port )
+	array(
+		'port'      => $port,
+		'log_level' => $log_level,
+	)
 );
 $proxy->start();

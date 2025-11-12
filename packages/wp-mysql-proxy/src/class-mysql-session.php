@@ -6,15 +6,15 @@ use WP_MySQL_Proxy\Adapter\Adapter;
 
 class MySQL_Session {
 	private $adapter;
-	private $connection_id;
+	private $client_id;
 	private $auth_plugin_data;
 	private $sequence_id;
 	private $authenticated = false;
 	private $buffer        = '';
 
-	public function __construct( Adapter $adapter ) {
+	public function __construct( Adapter $adapter, int $client_id ) {
 		$this->adapter          = $adapter;
-		$this->connection_id    = random_int( 1, 1000 );
+		$this->client_id        = $client_id;
 		$this->auth_plugin_data = '';
 		$this->sequence_id      = 0;
 	}
@@ -25,7 +25,7 @@ class MySQL_Session {
 	 * @return string Binary packet data to send to client
 	 */
 	public function get_initial_handshake(): string {
-		$handshake_payload = MySQL_Protocol::build_handshake_packet( $this->connection_id, $this->auth_plugin_data );
+		$handshake_payload = MySQL_Protocol::build_handshake_packet( $this->client_id, $this->auth_plugin_data );
 		return MySQL_Protocol::encode_int_24( strlen( $handshake_payload ) ) .
 				MySQL_Protocol::encode_int_8( $this->sequence_id++ ) .
 				$handshake_payload;
@@ -36,7 +36,7 @@ class MySQL_Session {
 	 *
 	 * @param string $data Binary data received from client
 	 * @return string|null Response to send back to client, or null if no response needed
-	 * @throws IncompleteInputException When more data is needed to complete a packet
+	 * @throws Incomplete_Input_Exception When more data is needed to complete a packet
 	 */
 	public function receive_bytes( string $data ): ?string {
 		// Append new data to existing buffer
@@ -44,7 +44,7 @@ class MySQL_Session {
 
 		// Check if we have enough data for a header
 		if ( strlen( $this->buffer ) < 4 ) {
-			throw new IncompleteInputException( 'Incomplete packet header, need more bytes' );
+			throw new Incomplete_Input_Exception( 'Incomplete packet header, need more bytes' );
 		}
 
 		// Parse packet header
@@ -54,7 +54,7 @@ class MySQL_Session {
 		// Check if we have the complete packet
 		$total_packet_length = 4 + $packet_length;
 		if ( strlen( $this->buffer ) < $total_packet_length ) {
-			throw new IncompleteInputException(
+			throw new Incomplete_Input_Exception(
 				'Incomplete packet payload, have ' . strlen( $this->buffer ) .
 				' bytes, need ' . $total_packet_length . ' bytes'
 			);
@@ -257,23 +257,12 @@ class MySQL_Session {
 		try {
 			$result = $this->adapter->handle_query( $query );
 			return $result->to_packets();
-		} catch ( MySQLServerException $e ) {
+		} catch ( MySQL_Proxy_Exception $e ) {
 			$err_packet = MySQL_Protocol::build_err_packet( 0x04A7, '42000', 'Syntax error or unsupported query: ' . $e->getMessage() );
 			return MySQL_Protocol::encode_int_24( strlen( $err_packet ) ) .
 					MySQL_Protocol::encode_int_8( 1 ) .
 					$err_packet;
 		}
-	}
-
-	/**
-	 * Reset the server state for a new connection
-	 */
-	public function reset(): void {
-		$this->connection_id    = random_int( 1, 1000 );
-		$this->auth_plugin_data = '';
-		$this->sequence_id      = 0;
-		$this->authenticated    = false;
-		$this->buffer           = '';
 	}
 
 	/**
