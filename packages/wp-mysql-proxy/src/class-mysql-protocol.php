@@ -2,123 +2,199 @@
 
 namespace WP_MySQL_Proxy;
 
+/**
+ * MySQL wire protocol constants and helper functions.
+ */
 class MySQL_Protocol {
-	// MySQL client/server capability flags (partial list)
-	const CLIENT_LONG_FLAG                      = 0x00000004;  // Supports longer flags
-	const CLIENT_CONNECT_WITH_DB                = 0x00000008;
-	const CLIENT_PROTOCOL_41                    = 0x00000200;
-	const CLIENT_SECURE_CONNECTION              = 0x00008000;
-	const CLIENT_MULTI_STATEMENTS               = 0x00010000;
-	const CLIENT_MULTI_RESULTS                  = 0x00020000;
-	const CLIENT_PS_MULTI_RESULTS               = 0x00040000;
-	const CLIENT_PLUGIN_AUTH                    = 0x00080000;
-	const CLIENT_CONNECT_ATTRS                  = 0x00100000;
-	const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 0x00200000;
-	const CLIENT_DEPRECATE_EOF                  = 0x01000000;
-
-	// MySQL status flags
-	const SERVER_STATUS_AUTOCOMMIT = 0x0002;
+	/**
+	 * MySQL client capability flags.
+	 *
+	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/mysql_com.h#L260
+	 */
+	const CLIENT_LONG_PASSWORD                  = 1 << 0;  // [NOT USED] Use improved version of old authentication.
+	const CLIENT_FOUND_ROWS                     = 1 << 1;  // Send found rows instead of affected rows in EOF packet.
+	const CLIENT_LONG_FLAG                      = 1 << 2;  // Get all column flags.
+	const CLIENT_CONNECT_WITH_DB                = 1 << 3;  // Database can be specified in handshake reponse packet.
+	const CLIENT_NO_SCHEMA                      = 1 << 4;  // [DEPRECATED] Don't allow "database.table.column".
+	const CLIENT_COMPRESS                       = 1 << 5;  // Compression protocol supported.
+	const CLIENT_ODBC                           = 1 << 6;  // Special handling of ODBC behavior. None since 3.22.
+	const CLIENT_LOCAL_FILES                    = 1 << 7;  // Can use LOAD DATA LOCAL.
+	const CLIENT_IGNORE_SPACE                   = 1 << 8;  // Ignore spaces before "(" (function names).
+	const CLIENT_PROTOCOL_41                    = 1 << 9;  // New 4.1 protocol.
+	const CLIENT_INTERACTIVE                    = 1 << 10; // This is an interactive client.
+	const CLIENT_SSL                            = 1 << 11; // Use SSL encryption for the session.
+	const CLIENT_IGNORE_SIGPIPE                 = 1 << 12; // Do not issue SIGPIPE if network failures occur.
+	const CLIENT_TRANSACTIONS                   = 1 << 13; // Client knows about transactions.
+	const CLIENT_RESERVED                       = 1 << 14; // [DEPRECATED] Old flag for the 4.1 protocol.
+	const CLIENT_SECURE_CONNECTION              = 1 << 15; // [DEPRECATED] Old flag for 4.1 authentication.
+	const CLIENT_MULTI_STATEMENTS               = 1 << 16; // Multi-statement support.
+	const CLIENT_MULTI_RESULTS                  = 1 << 17; // Multi-result support.
+	const CLIENT_PS_MULTI_RESULTS               = 1 << 18; // Multi-results and OUT parameters in PS-protocol.
+	const CLIENT_PLUGIN_AUTH                    = 1 << 19; // Plugin authentication.
+	const CLIENT_CONNECT_ATTRS                  = 1 << 20; // Permits connection attributes in 4.1 protocol.
+	const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 1 << 21; // Enable auth response packet to be larger than 255 bytes.
+	const CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS   = 1 << 22; // Support for expired password extension.
+	const CLIENT_SESSION_TRACK                  = 1 << 23; // Capable of handling server state change information.
+	const CLIENT_DEPRECATE_EOF                  = 1 << 24; // Client no longer needs EOF packet.
+	const CLIENT_OPTIONAL_RESULTSET_METADATA    = 1 << 25; // The client can handle optional metadata information in the resultset.
+	const CLIENT_ZSTD_COMPRESSION_ALGORITHM     = 1 << 26; // Compression protocol extended to support zstd.
+	const CLIENT_QUERY_ATTRIBUTES               = 1 << 27; // Support optional extension for query parameters in query and execute commands.
+	const CLIENT_MULTI_FACTOR_AUTHENTICATION    = 1 << 28; // Support multi-factor authentication.
+	const CLIENT_CAPABILITY_EXTENSIONS          = 1 << 29; // Reserved to extend the 32bit capabilities structure to 64bits.
+	const CLIENT_SSL_VERIFY_SERVER_CERT         = 1 << 30; // Verify server certificate.
+	const CLIENT_REMEMBER_OPTIONS               = 1 << 31; // Remember options between reconnects.
 
 	/**
-	 * MySQL command types
+	 * MySQL server status flags.
 	 *
-	 * @see https://dev.mysql.com/doc/dev/mysql-server/8.4.3/page_protocol_command_phase.html
+	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/mysql_com.h#L810
 	 */
-	const COM_SLEEP               = 0x00; /** Tells the server to sleep for the given number of seconds. */
-	const COM_QUIT                = 0x01; /** Tells the server that the client wants it to close the connection. */
-	const COM_INIT_DB             = 0x02; /** Change the default schema of the connection. */
-	const COM_QUERY               = 0x03; /** Tells the server to execute a query. */
-	const COM_FIELD_LIST          = 0x04; /** Deprecated. Returns the list of fields for the given table. */
-	const COM_CREATE_DB           = 0x05; /** Currently refused by the server. */
-	const COM_DROP_DB             = 0x06; /** Currently refused by the server. */
-	const COM_UNUSED_2            = 0x07; /** Unused. Used to be COM_REFRESH. */
-	const COM_UNUSED_1            = 0x08; /** Unused. Used to be COM_SHUTDOWN. */
-	const COM_STATISTICS          = 0x09; /** Get a human readable string of some internal status vars. */
-	const COM_UNUSED_4            = 0x0A; /** Unused. Used to be COM_PROCESS_INFO. */
-	const COM_CONNECT             = 0x0B; /** Currently refused by the server. */
-	const COM_UNUSED_5            = 0x0C; /** Unused. Used to be COM_PROCESS_KILL. */
-	const COM_DEBUG               = 0x0D; /** Dump debug info to server's stdout. */
-	const COM_PING                = 0x0E; /** Check if the server is alive. */
-	const COM_TIME                = 0x0F; /** Currently refused by the server. */
-	const COM_DELAYED_INSERT      = 0x10; /** Functionality removed. */
-	const COM_CHANGE_USER         = 0x11; /** Change the user of the connection. */
-	const COM_BINLOG_DUMP         = 0x12; /** Tells the server to send the binlog dump. */
-	const COM_TABLE_DUMP          = 0x13; /** Tells the server to send the table dump. */
-	const COM_CONNECT_OUT         = 0x14; /** Currently refused by the server. */
-	const COM_REGISTER_SLAVE      = 0x15; /** Tells the server to register a slave. */
-	const COM_STMT_PREPARE        = 0x16; /** Tells the server to prepare a statement. */
-	const COM_STMT_EXECUTE        = 0x17; /** Tells the server to execute a prepared statement. */
-	const COM_STMT_SEND_LONG_DATA = 0x18; /** Tells the server to send long data for a prepared statement. */
-	const COM_STMT_CLOSE          = 0x19; /** Tells the server to close a prepared statement. */
-	const COM_STMT_RESET          = 0x1A; /** Tells the server to reset a prepared statement. */
-	const COM_SET_OPTION          = 0x1B; /** Tells the server to set an option. */
-	const COM_STMT_FETCH          = 0x1C; /** Tells the server to fetch a result from a prepared statement. */
-	const COM_DAEMON              = 0x1D; /** Currently refused by the server. */
-	const COM_BINLOG_DUMP_GTID    = 0x1E; /** Tells the server to send the binlog dump in GTID mode. */
-	const COM_RESET_CONNECTION    = 0x1F; /** Tells the server to reset the connection. */
-	const COM_CLONE               = 0x20; /** Tells the server to clone a server. */
+	const SERVER_STATUS_IN_TRANS          = 1 << 0;  // A multi-statement transaction has been started.
+	const SERVER_STATUS_AUTOCOMMIT        = 1 << 1;  // Server in autocommit mode.
+	const SERVER_STATUS_UNUSED_2          = 1 << 2;  // [UNUSED]
+	const SERVER_MORE_RESULTS_EXISTS      = 1 << 3;  // Multi query - next query exists.
+	const SERVER_QUERY_NO_GOOD_INDEX_USED = 1 << 4;  // No good index was used for the query.
+	const SERVER_QUERY_NO_INDEX_USED      = 1 << 5;  // No index was used for the query.
+	const SERVER_STATUS_CURSOR_EXISTS     = 1 << 6;  // A cursor exists for a query. FETCH must be used to get data.
+	const SERVER_STATUS_LAST_ROW_SENT     = 1 << 7;  // A cursor has been exhausted. Sent in reply to FETCH command.
+	const SERVER_STATUS_DB_DROPPED        = 1 << 8;  // A database was dropped.
+	const SERVER_STATUS_METADATA_CHANGED  = 1 << 9;  // A set of columns changed after a prepared statement was reprepared.
+	const SERVER_QUERY_WAS_SLOW           = 1 << 10; // A query was slow.
+	const SERVER_PS_OUT_PARAMS            = 1 << 11; // Mark ResultSet containing output parameter values.
+	const SERVER_STATUS_IN_TRANS_READONLY = 1 << 12; // Set together with SERVER_STATUS_IN_TRANS for read-only transactions.
+	const SERVER_SESSION_STATE_CHANGED    = 1 << 13; // One of the server state information has changed during last statement.
 
-	// Special packet markers
-	const OK_PACKET      = 0x00;
-	const EOF_PACKET     = 0xfe;
-	const ERR_PACKET     = 0xff;
-	const AUTH_MORE_DATA = 0x01;  // followed by 1 byte (caching_sha2_password specific)
+	/**
+	 * MySQL command types.
+	 *
+	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/my_command.h#L48
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_command_phase.html
+	 */
+	const COM_SLEEP               = 0;  // Tells the server to sleep for the given number of seconds.
+	const COM_QUIT                = 1;  // Tells the server that the client wants it to close the connection.
+	const COM_INIT_DB             = 2;  // Change the default schema of the connection.
+	const COM_QUERY               = 3;  // Tells the server to execute a query.
+	const COM_FIELD_LIST          = 4;  // [DEPRECATED] Returns the list of fields for the given table.
+	const COM_CREATE_DB           = 5;  // Currently refused by the server.
+	const COM_DROP_DB             = 6;  // Currently refused by the server.
+	const COM_UNUSED_2            = 7;  // [UNUSED] Used to be COM_REFRESH.
+	const COM_UNUSED_1            = 8;  // [UNUSED] Used to be COM_SHUTDOWN.
+	const COM_STATISTICS          = 9;  // Get a human readable string of some internal status vars.
+	const COM_UNUSED_4            = 10; // [UNUSED] Used to be COM_PROCESS_INFO.
+	const COM_CONNECT             = 11; // Currently refused by the server.
+	const COM_UNUSED_5            = 12; // [UNUSED] Used to be COM_PROCESS_KILL.
+	const COM_DEBUG               = 13; // Dump debug info to server's stdout.
+	const COM_PING                = 14; // Check if the server is alive.
+	const COM_TIME                = 15; // Currently refused by the server.
+	const COM_DELAYED_INSERT      = 16; // Functionality removed.
+	const COM_CHANGE_USER         = 17; // Change the user of the connection.
+	const COM_BINLOG_DUMP         = 18; // Tells the server to send the binlog dump.
+	const COM_TABLE_DUMP          = 19; // Tells the server to send the table dump.
+	const COM_CONNECT_OUT         = 20; // Currently refused by the server.
+	const COM_REGISTER_SLAVE      = 21; // Tells the server to register a slave.
+	const COM_STMT_PREPARE        = 22; // Tells the server to prepare a statement.
+	const COM_STMT_EXECUTE        = 23; // Tells the server to execute a prepared statement.
+	const COM_STMT_SEND_LONG_DATA = 24; // Tells the server to send long data for a prepared statement.
+	const COM_STMT_CLOSE          = 25; // Tells the server to close a prepared statement.
+	const COM_STMT_RESET          = 26; // Tells the server to reset a prepared statement.
+	const COM_SET_OPTION          = 27; // Tells the server to set an option.
+	const COM_STMT_FETCH          = 28; // Tells the server to fetch a result from a prepared statement.
+	const COM_DAEMON              = 29; // Currently refused by the server.
+	const COM_BINLOG_DUMP_GTID    = 30; // Tells the server to send the binlog dump in GTID mode.
+	const COM_RESET_CONNECTION    = 31; // Tells the server to reset the connection.
+	const COM_CLONE               = 32; // Tells the server to clone a server.
+
+	/**
+	 * MySQL field types.
+	 *
+	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/field_types.h#L55
+	 *
+	 */
+	const FIELD_TYPE_DECIMAL     = 0;
+	const FIELD_TYPE_TINY        = 1;
+	const FIELD_TYPE_SHORT       = 2;
+	const FIELD_TYPE_LONG        = 3;
+	const FIELD_TYPE_FLOAT       = 4;
+	const FIELD_TYPE_DOUBLE      = 5;
+	const FIELD_TYPE_NULL        = 6;
+	const FIELD_TYPE_TIMESTAMP   = 7;
+	const FIELD_TYPE_LONGLONG    = 8;
+	const FIELD_TYPE_INT24       = 9;
+	const FIELD_TYPE_DATE        = 10;
+	const FIELD_TYPE_TIME        = 11;
+	const FIELD_TYPE_DATETIME    = 12;
+	const FIELD_TYPE_YEAR        = 13;
+	const FIELD_TYPE_NEWDATE     = 14;
+	const FIELD_TYPE_VARCHAR     = 15;
+	const FIELD_TYPE_BIT         = 16;
+	const FIELD_TYPE_NEWDECIMAL  = 246;
+	const FIELD_TYPE_ENUM        = 247;
+	const FIELD_TYPE_SET         = 248;
+	const FIELD_TYPE_TINY_BLOB   = 249;
+	const FIELD_TYPE_MEDIUM_BLOB = 250;
+	const FIELD_TYPE_LONG_BLOB   = 251;
+	const FIELD_TYPE_BLOB        = 252;
+	const FIELD_TYPE_VAR_STRING  = 253;
+	const FIELD_TYPE_STRING      = 254;
+	const FIELD_TYPE_GEOMETRY    = 255;
+
+	/**
+	 * MySQL field flags.
+	 *
+	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/mysql_com.h#L154
+	 */
+	const FIELD_NOT_NULL_FLAG            = 1 << 0;  // Field can't be NULL.
+	const FIELD_PRI_KEY_FLAG             = 1 << 1;  // Field is part of a primary key.
+	const FIELD_UNIQUE_KEY_FLAG          = 1 << 2;  // Field is part of a unique key.
+	const FIELD_MULTIPLE_KEY_FLAG        = 1 << 3;  // Field is part of a key.
+	const FIELD_BLOB_FLAG                = 1 << 4;  // Field is a blob.
+	const FIELD_UNSIGNED_FLAG            = 1 << 5;  // Field is an unsigned integer.
+	const FIELD_ZEROFILL_FLAG            = 1 << 6;  // Field is a zero-filled integer.
+	const FIELD_BINARY_FLAG              = 1 << 7;  // Field is binary.
+	const FIELD_ENUM_FLAG                = 1 << 8;  // Field is an enum.
+	const FIELD_AUTO_INCREMENT_FLAG      = 1 << 9;  // Field is an auto-increment field.
+	const FIELD_TIMESTAMP_FLAG           = 1 << 10; // Field is a timestamp.
+	const FIELD_SET_FLAG                 = 1 << 11; // Field is a set.
+	const FIELD_NO_DEFAULT_VALUE_FLAG    = 1 << 12; // Field doesn't have default value.
+	const FIELD_ON_UPDATE_NOW_FLAG       = 1 << 13; // Field is set to NOW on UPDATE.
+	const FIELD_PART_KEY_FLAG            = 1 << 14; // [INTERNAL] Field is part of a key.
+	const FIELD_NUM_FLAG                 = 1 << 15; // Field is a number.
+	const FIELD_UNIQUE_FLAG              = 1 << 16; // [INTERNAL]
+	const FIELD_BINCMP_FLAG              = 1 << 17; // [INTERNAL]
+	const FIELD_GET_FIXED_FIELDS_FLAG    = 1 << 18; // Used to get fields in item tree.
+	const FIELD_IN_PART_FUNC_FLAG        = 1 << 19; // Field part of partition function.
+	const FIELD_IN_ADD_INDEX_FLAG        = 1 << 20; // [INTERNAL]
+	const FIELD_IS_RENAMED_FLAG          = 1 << 21; // [INTERNAL]
+	const FIELD_FLAGS_STORAGE_MEDIA_FLAG = 1 << 22; // Field storage media, bit 22-23.
+	const FIELD_FLAGS_STORAGE_MEDIA_MASK = 3 << self::FIELD_FLAGS_STORAGE_MEDIA_FLAG;
+	const FIELD_FLAGS_COLUMN_FORMAT_FLAG = 1 << 24; // Field column format, bit 24-25.
+	const FIELD_FLAGS_COLUMN_FORMAT_MASK = 3 << self::FIELD_FLAGS_COLUMN_FORMAT_FLAG;
+	const FIELD_IS_DROPPED_FLAG          = 1 << 26; // [INTERNAL]
+	const FIELD_EXPLICIT_NULL_FLAG       = 1 << 27; // Field is explicitly specified as NULL by user.
+	const FIELD_GROUP_FLAG               = 1 << 28; // [INTERNAL]
+	const FIELD_NOT_SECONDARY_FLAG       = 1 << 29; // Field will not be loaded in secondary engine.
+	const FIELD_IS_INVISIBLE_FLAG        = 1 << 30; // Field is explicitly marked as invisible by user.
+
+	/**
+	 * Special packet headers.
+	 *
+	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/extra/boost/boost_1_87_0/boost/mysql/impl/internal/protocol/deserialization.hpp#L257
+	 */
+	const OK_PACKET_HEADER  = 0x00;
+	const EOF_PACKET_HEADER = 0xfe;
+	const ERR_PACKET_HEADER = 0xff;
 
 	// Auth specific markers for caching_sha2_password
+	const AUTH_MORE_DATA_HEADER  = 0x01;  // followed by 1 byte (caching_sha2_password specific)
 	const CACHING_SHA2_FAST_AUTH = 3;
 	const CACHING_SHA2_FULL_AUTH = 4;
 	const AUTH_PLUGIN_NAME       = 'caching_sha2_password';
-
-	// Field types
-	const FIELD_TYPE_DECIMAL     = 0x00;
-	const FIELD_TYPE_TINY        = 0x01;
-	const FIELD_TYPE_SHORT       = 0x02;
-	const FIELD_TYPE_LONG        = 0x03;
-	const FIELD_TYPE_FLOAT       = 0x04;
-	const FIELD_TYPE_DOUBLE      = 0x05;
-	const FIELD_TYPE_NULL        = 0x06;
-	const FIELD_TYPE_TIMESTAMP   = 0x07;
-	const FIELD_TYPE_LONGLONG    = 0x08;
-	const FIELD_TYPE_INT24       = 0x09;
-	const FIELD_TYPE_DATE        = 0x0a;
-	const FIELD_TYPE_TIME        = 0x0b;
-	const FIELD_TYPE_DATETIME    = 0x0c;
-	const FIELD_TYPE_YEAR        = 0x0d;
-	const FIELD_TYPE_NEWDATE     = 0x0e;
-	const FIELD_TYPE_VARCHAR     = 0x0f;
-	const FIELD_TYPE_BIT         = 0x10;
-	const FIELD_TYPE_NEWDECIMAL  = 0xf6;
-	const FIELD_TYPE_ENUM        = 0xf7;
-	const FIELD_TYPE_SET         = 0xf8;
-	const FIELD_TYPE_TINY_BLOB   = 0xf9;
-	const FIELD_TYPE_MEDIUM_BLOB = 0xfa;
-	const FIELD_TYPE_LONG_BLOB   = 0xfb;
-	const FIELD_TYPE_BLOB        = 0xfc;
-	const FIELD_TYPE_VAR_STRING  = 0xfd;
-	const FIELD_TYPE_STRING      = 0xfe;
-	const FIELD_TYPE_GEOMETRY    = 0xff;
-
-	// Field flags
-	const NOT_NULL_FLAG       = 0x1;
-	const PRI_KEY_FLAG        = 0x2;
-	const UNIQUE_KEY_FLAG     = 0x4;
-	const MULTIPLE_KEY_FLAG   = 0x8;
-	const BLOB_FLAG           = 0x10;
-	const UNSIGNED_FLAG       = 0x20;
-	const ZEROFILL_FLAG       = 0x40;
-	const BINARY_FLAG         = 0x80;
-	const ENUM_FLAG           = 0x100;
-	const AUTO_INCREMENT_FLAG = 0x200;
-	const TIMESTAMP_FLAG      = 0x400;
-	const SET_FLAG            = 0x800;
 
 	// Character set and collation constants (using utf8mb4 general collation)
 	const CHARSET_UTF8MB4 = 0xff;  // Collation ID 255 (utf8mb4_0900_ai_ci)
 
 	// Max packet length constant
 	const MAX_PACKET_LENGTH = 0x00ffffff;
-
-	private $current_db = '';
 
 	// Helper: Packets assembly and parsing
 	public static function encode_int_8( int $val ): string {
@@ -167,7 +243,7 @@ class MySQL_Protocol {
 	// Build initial handshake packet (server greeting)
 	public static function build_handshake_packet( int $conn_id, string &$auth_plugin_data ): string {
 		$protocol_version = 0x0a;                     // Handshake protocol version (10)
-		$server_version   = '5.7.30-php-mysql-server'; // Fake server version
+		$server_version   = '8.9.38-php-mysql-server'; // Fake server version
 		// Generate random auth plugin data (20-byte salt)
 		$salt1            = random_bytes( 8 );
 		$salt2            = random_bytes( 12 ); // total salt length = 8+12 = 20 bytes (with filler)
@@ -209,7 +285,7 @@ class MySQL_Protocol {
 
 	// Build OK packet (after successful authentication or query execution)
 	public static function build_ok_packet( int $affected_rows = 0, int $last_insert_id = 0 ): string {
-		$payload  = chr( self::OK_PACKET );
+		$payload  = chr( self::OK_PACKET_HEADER );
 		$payload .= self::encode_length_encoded_int( $affected_rows );
 		$payload .= self::encode_length_encoded_int( $last_insert_id );
 		$payload .= self::encode_int_16( self::SERVER_STATUS_AUTOCOMMIT ); // server status
@@ -220,7 +296,7 @@ class MySQL_Protocol {
 
 	// Build ERR packet (for errors)
 	public static function build_err_packet( int $error_code, string $sql_state, string $message ): string {
-		$payload  = chr( self::ERR_PACKET );
+		$payload  = chr( self::ERR_PACKET_HEADER );
 		$payload .= self::encode_int_16( $error_code );
 		$payload .= '#' . strtoupper( $sql_state );
 		$payload .= $message;
@@ -267,7 +343,7 @@ class MySQL_Protocol {
 			$packet_stream .= self::wrap_packet( $col_payload, $sequence_id++ );
 		}
 		// 3. EOF packet to mark end of column definitions (if not using CLIENT_DEPRECATE_EOF)
-		$eof_payload    = chr( self::EOF_PACKET ) . self::encode_int_16( 0 ) . self::encode_int_16( 0 );
+		$eof_payload    = chr( self::EOF_PACKET_HEADER ) . self::encode_int_16( 0 ) . self::encode_int_16( 0 );
 		$packet_stream .= self::wrap_packet( $eof_payload, $sequence_id++ );
 
 		// 4. Row data packets (each row is a series of length-encoded values)
@@ -290,7 +366,7 @@ class MySQL_Protocol {
 		}
 
 		// 5. EOF packet to mark end of data rows (if not using CLIENT_DEPRECATE_EOF)
-		$eof_payload_2  = chr( self::EOF_PACKET ) . self::encode_int_16( 0 ) . self::encode_int_16( 0 );
+		$eof_payload_2  = chr( self::EOF_PACKET_HEADER ) . self::encode_int_16( 0 ) . self::encode_int_16( 0 );
 		$packet_stream .= self::wrap_packet( $eof_payload_2, $sequence_id++ );
 
 		return $packet_stream;

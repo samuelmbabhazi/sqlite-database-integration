@@ -157,7 +157,7 @@ class MySQL_Session {
 		$response_packets = '';
 
 		if ( MySQL_Protocol::AUTH_PLUGIN_NAME === $auth_plugin_name ) {
-			$fast_auth_payload = chr( MySQL_Protocol::AUTH_MORE_DATA ) . chr( MySQL_Protocol::CACHING_SHA2_FAST_AUTH );
+			$fast_auth_payload = chr( MySQL_Protocol::AUTH_MORE_DATA_HEADER ) . chr( MySQL_Protocol::CACHING_SHA2_FAST_AUTH );
 			$response_packets .= MySQL_Protocol::encode_int_24( strlen( $fast_auth_payload ) );
 			$response_packets .= MySQL_Protocol::encode_int_8( $this->sequence_id++ );
 			$response_packets .= $fast_auth_payload;
