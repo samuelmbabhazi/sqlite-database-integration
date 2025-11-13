@@ -14,12 +14,13 @@ on SQLite.
 ### CLI:
 
 ```bash
-$ php mysql-proxy.php [--database <path/to/db.sqlite>] [--port <port>]
+$ php bin/wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
 
 Options:
-  -h, --help            Show this help message and exit.
-  -d, --database=<path> The path to the SQLite database file. Default: :memory:
-  -p, --port=<port>     The port to listen on. Default: 3306
+  -h, --help              Show this help message and exit.
+  -p, --port=<port>       The port to listen on. Default: 3306
+  -d, --database=<path>   The path to the SQLite database file. Default: :memory:
+  -l, --log-level=<level> The log level to use. One of 'error', 'warning', 'info', 'debug'. Default: info
 ```
 
 ### PHP:
@@ -31,7 +32,7 @@ require_once __DIR__ . '/vendor/autoload.php';
 
 $proxy = new MySQL_Proxy(
 	new SQLite_Adapter( $db_path ),
-	array( 'port' => $port )
+	array( 'port' => $port, 'log_level' => $log_level )
 );
 $proxy->start();
 ```

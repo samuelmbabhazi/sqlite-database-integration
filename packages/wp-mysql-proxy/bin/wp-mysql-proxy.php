@@ -14,13 +14,13 @@ $longopts  = array( 'help', 'database:', 'port:', 'log-level:' );
 $opts      = getopt( $shortopts, $longopts );
 
 $help = <<<USAGE
-Usage: php mysql-proxy.php [--database <path/to/db.sqlite>] [--port <port>]
+Usage: php bin/wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
 
 Options:
   -h, --help              Show this help message and exit.
-  -d, --database=<path>   The path to the SQLite database file. Default: :memory:
   -p, --port=<port>       The port to listen on. Default: 3306
-  -l, --log-level=<level> The log level to use. One of "error", "warning", "info", "debug". Default: info
+  -d, --database=<path>   The path to the SQLite database file. Default: :memory:
+  -l, --log-level=<level> The log level to use. One of 'error', 'warning', 'info', 'debug'. Default: info
 
 USAGE;
 
