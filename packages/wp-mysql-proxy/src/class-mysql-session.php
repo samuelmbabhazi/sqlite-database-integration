@@ -5,6 +5,37 @@ namespace WP_MySQL_Proxy;
 use WP_MySQL_Proxy\Adapter\Adapter;
 
 class MySQL_Session {
+	/**
+	 * Client capabilites that are supported by the server.
+	 */
+	const CAPABILITIES = (
+		MySQL_Protocol::CLIENT_PROTOCOL_41
+		| MySQL_Protocol::CLIENT_SECURE_CONNECTION
+		| MySQL_Protocol::CLIENT_PLUGIN_AUTH
+		| MySQL_Protocol::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+	);
+
+	/**
+	 * The version of the MySQL server.
+	 *
+	 * @var string
+	 */
+	private $server_version = '8.0.38-php-mysql-server';
+
+	/**
+	 * The character set that is used by the server.
+	 *
+	 * @var int
+	 */
+	private $character_set = MySQL_Protocol::CHARSET_UTF8MB4;
+
+	/**
+	 * The status flags representing the server state.
+	 *
+	 * @var int
+	 */
+	private $status_flags = MySQL_Protocol::SERVER_STATUS_AUTOCOMMIT;
+
 	private $adapter;
 	private $client_id;
 	private $auth_plugin_data;
@@ -17,18 +48,28 @@ class MySQL_Session {
 		$this->client_id        = $client_id;
 		$this->auth_plugin_data = '';
 		$this->sequence_id      = 0;
+
+		// Generate random auth plugin data (20-byte salt)
+		$this->auth_plugin_data = random_bytes( 20 );
 	}
 
 	/**
 	 * Get the initial handshake packet to send to the client
 	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase.html#sect_protocol_connection_phase_initial_handshake
+	 *
 	 * @return string Binary packet data to send to client
 	 */
 	public function get_initial_handshake(): string {
-		$handshake_payload = MySQL_Protocol::build_handshake_packet( $this->client_id, $this->auth_plugin_data );
-		return MySQL_Protocol::encode_int_24( strlen( $handshake_payload ) ) .
-				MySQL_Protocol::encode_int_8( $this->sequence_id++ ) .
-				$handshake_payload;
+		return MySQL_Protocol::build_handshake_packet(
+			0,
+			$this->server_version,
+			$this->character_set,
+			$this->client_id,
+			$this->auth_plugin_data,
+			self::CAPABILITIES,
+			$this->status_flags
+		);
 	}
 
 	/**
@@ -50,6 +91,7 @@ class MySQL_Session {
 		// Parse packet header
 		$packet_length        = unpack( 'V', substr( $this->buffer, 0, 3 ) . "\x00" )[1];
 		$received_sequence_id = ord( $this->buffer[3] );
+		$sequence_id          = $received_sequence_id + 1;
 
 		// Check if we have the complete packet
 		$total_packet_length = 4 + $packet_length;
@@ -84,13 +126,14 @@ class MySQL_Session {
 		} elseif ( MySQL_Protocol::COM_QUIT === $command ) {
 			return '';
 		} elseif ( MySQL_Protocol::COM_PING === $command ) {
-			return MySQL_Protocol::wrap_packet( MySQL_Protocol::build_ok_packet(), $received_sequence_id + 1 );
+			return $this->build_ok_packet( $received_sequence_id + 1 );
 		} else {
-			// Unsupported command
-			$err_packet = MySQL_Protocol::build_err_packet( 0x04D2, 'HY000', 'Unsupported command' );
-			return MySQL_Protocol::encode_int_24( strlen( $err_packet ) ) .
-					MySQL_Protocol::encode_int_8( 1 ) .
-					$err_packet;
+			return MySQL_Protocol::build_err_packet(
+				$received_sequence_id + 1,
+				0x04D2,
+				'HY000',
+				sprintf( 'Unsupported command: %d', $command )
+			);
 		}
 	}
 
@@ -136,6 +179,7 @@ class MySQL_Session {
 			$offset        = min( $payload_length, $offset + $auth_response_length );
 		} else {
 			$auth_response = $this->read_null_terminated_string( $payload, $offset );
+			$offset        = min( $payload_length, $offset + strlen( $auth_response ) );
 		}
 
 		$database = '';
@@ -158,19 +202,53 @@ class MySQL_Session {
 
 		$response_packets = '';
 
-		if ( MySQL_Protocol::AUTH_PLUGIN_NAME === $auth_plugin_name ) {
+		if ( MySQL_Protocol::AUTH_PLUGIN_CACHING_SHA2_PASSWORD === $auth_plugin_name ) {
 			$fast_auth_payload = chr( MySQL_Protocol::AUTH_MORE_DATA_HEADER ) . chr( MySQL_Protocol::CACHING_SHA2_FAST_AUTH );
-			$response_packets .= MySQL_Protocol::encode_int_24( strlen( $fast_auth_payload ) );
-			$response_packets .= MySQL_Protocol::encode_int_8( $this->sequence_id++ );
-			$response_packets .= $fast_auth_payload;
+			$response_packets .= MySQL_Protocol::build_packet( $this->sequence_id++, $fast_auth_payload );
 		}
 
-		$ok_packet         = MySQL_Protocol::build_ok_packet();
-		$response_packets .= MySQL_Protocol::encode_int_24( strlen( $ok_packet ) );
-		$response_packets .= MySQL_Protocol::encode_int_8( $this->sequence_id++ );
-		$response_packets .= $ok_packet;
-
+		$response_packets .= $this->build_ok_packet( $this->sequence_id++ );
 		return $response_packets;
+	}
+
+	// Build Result Set packets from a SelectQueryResult (column count, column definitions, rows, EOF)
+	public function build_result_set_packets( array $columns, array $rows ): string {
+		$sequence_id   = 1;  // Sequence starts at 1 for resultset (after COM_QUERY)
+		$packet_stream = '';
+
+		// 1. Column count packet
+		$packet_stream .= MySQL_Protocol::build_column_count_packet( $sequence_id++, count( $columns ) );
+
+		// 2. Column definition packets for each column
+		foreach ( $columns as $column ) {
+			$packet_stream .= MySQL_Protocol::build_column_definition_packet( $sequence_id++, $column );
+		}
+
+		// 3. EOF packet to mark end of column definitions (if not using CLIENT_DEPRECATE_EOF)
+		$packet_stream .= MySQL_Protocol::build_eof_packet( $sequence_id++, $this->status_flags, 0 );
+
+		// 4. Row data packets (each row is a series of length-encoded values)
+		foreach ( $rows as $row ) {
+			$packet_stream .= MySQL_Protocol::build_row_packet( $sequence_id++, $columns, $row );
+		}
+
+		// 5. EOF packet to mark end of data rows (if not using CLIENT_DEPRECATE_EOF)
+		$packet_stream .= MySQL_Protocol::build_eof_packet( $sequence_id++, $this->status_flags, 0 );
+		return $packet_stream;
+	}
+
+	private function build_ok_packet(
+		int $sequence_id,
+		int $affected_rows = 0,
+		int $last_insert_id = 0
+	): string {
+		return MySQL_Protocol::build_ok_packet(
+			$sequence_id,
+			$affected_rows,
+			$last_insert_id,
+			$this->status_flags,
+			0
+		);
 	}
 
 	private function read_unsigned_int_little_endian( string $payload, int $offset, int $length ): int {
@@ -258,12 +336,31 @@ class MySQL_Session {
 
 		try {
 			$result = $this->adapter->handle_query( $query );
-			return $result->to_packets();
+			if ( $result->error_info ) {
+				return MySQL_Protocol::build_err_packet(
+					1,
+					$result->error_info[1],
+					$result->error_info[0],
+					$result->error_info[2]
+				);
+			}
+
+			if ( count( $result->columns ) > 0 ) {
+				return $this->build_result_set_packets( $result->columns, $result->rows );
+			}
+
+			return $this->build_ok_packet(
+				1,
+				$result->affected_rows,
+				$result->last_insert_id
+			);
 		} catch ( MySQL_Proxy_Exception $e ) {
-			$err_packet = MySQL_Protocol::build_err_packet( 0x04A7, '42000', 'Syntax error or unsupported query: ' . $e->getMessage() );
-			return MySQL_Protocol::encode_int_24( strlen( $err_packet ) ) .
-					MySQL_Protocol::encode_int_8( 1 ) .
-					$err_packet;
+			return MySQL_Protocol::build_err_packet(
+				1,
+				0x04A7,
+				'42000',
+				'Syntax error or unsupported query: ' . $e->getMessage()
+			);
 		}
 	}
 
@@ -273,7 +370,7 @@ class MySQL_Session {
 	 * @return bool True if there's data in the buffer
 	 */
 	public function has_buffered_data(): bool {
-		return ! empty( $this->buffer );
+		return strlen( $this->buffer ) > 0;
 	}
 
 	/**

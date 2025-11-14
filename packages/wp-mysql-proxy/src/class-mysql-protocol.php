@@ -7,8 +7,16 @@ namespace WP_MySQL_Proxy;
  */
 class MySQL_Protocol {
 	/**
+	 * MySQL protocol version.
+	 *
+	 * The current version 10 is used since MySQL 3.21.0.
+	 */
+	const PROTOCOL_VERSION = 10;
+
+	/**
 	 * MySQL client capability flags.
 	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/group__group__cs__capabilities__flags.html
 	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/mysql_com.h#L260
 	 */
 	const CLIENT_LONG_PASSWORD                  = 1 << 0;  // [NOT USED] Use improved version of old authentication.
@@ -47,6 +55,7 @@ class MySQL_Protocol {
 	/**
 	 * MySQL server status flags.
 	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__com_8h.html#a1d854e841086925be1883e4d7b4e8cad
 	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/mysql_com.h#L810
 	 */
 	const SERVER_STATUS_IN_TRANS          = 1 << 0;  // A multi-statement transaction has been started.
@@ -67,8 +76,9 @@ class MySQL_Protocol {
 	/**
 	 * MySQL command types.
 	 *
-	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/my_command.h#L48
 	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_command_phase.html
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/my__command_8h.html#ae2ff1badf13d2b8099af8b47831281e1
+	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/my_command.h#L48
 	 */
 	const COM_SLEEP               = 0;  // Tells the server to sleep for the given number of seconds.
 	const COM_QUIT                = 1;  // Tells the server that the client wants it to close the connection.
@@ -107,6 +117,7 @@ class MySQL_Protocol {
 	/**
 	 * MySQL field types.
 	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/field__types_8h.html#a69e798807026a0f7e12b1d6c72374854
 	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/field_types.h#L55
 	 *
 	 */
@@ -141,6 +152,7 @@ class MySQL_Protocol {
 	/**
 	 * MySQL field flags.
 	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/group__group__cs__column__definition__flags.html
 	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/mysql_com.h#L154
 	 */
 	const FIELD_NOT_NULL_FLAG            = 1 << 0;  // Field can't be NULL.
@@ -184,198 +196,342 @@ class MySQL_Protocol {
 	const EOF_PACKET_HEADER = 0xfe;
 	const ERR_PACKET_HEADER = 0xff;
 
+	/**
+	 * MySQL server-side authentication plugins.
+	 *
+	 * This list includes only server-side plugins for MySQL Standard Edition.
+	 * MySQL Enterprise Edition has additional plugins that are not listed here.
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.4/en/authentication-plugins.html
+	 * @see https://dev.mysql.com/doc/refman/8.4/en/pluggable-authentication.html
+	 */
+	const DEFAULT_AUTH_PLUGIN               = self::AUTH_PLUGIN_CACHING_SHA2_PASSWORD;
+	const AUTH_PLUGIN_MYSQL_NATIVE_PASSWORD = 'mysql_native_password'; // [DEPRECATED] Old built-in authentication. Default in MySQL < 8.0.
+	const AUTH_PLUGIN_CACHING_SHA2_PASSWORD = 'caching_sha2_password'; // Pluggable SHA-2 authentication. Default in MySQL >= 8.0.
+	const AUTH_PLUGIN_SHA256_PASSWORD       = 'sha256_password';       // [DEPRECATED] Basic SHA-256 authentication.
+	const AUTH_PLUGIN_NO_LOGIN              = 'no_login_plugin';       // Disable client connection for specific accounts.
+	const AUTH_PLUGIN_SOCKET                = 'auth_socket';           // Authenticate local Unix socket connections.
+
 	// Auth specific markers for caching_sha2_password
 	const AUTH_MORE_DATA_HEADER  = 0x01;  // followed by 1 byte (caching_sha2_password specific)
 	const CACHING_SHA2_FAST_AUTH = 3;
 	const CACHING_SHA2_FULL_AUTH = 4;
-	const AUTH_PLUGIN_NAME       = 'caching_sha2_password';
 
-	// Character set and collation constants (using utf8mb4 general collation)
-	const CHARSET_UTF8MB4 = 0xff;  // Collation ID 255 (utf8mb4_0900_ai_ci)
+	// Character set and collation constants
+	const CHARSET_UTF8MB4 = 0xff;
 
 	// Max packet length constant
 	const MAX_PACKET_LENGTH = 0x00ffffff;
 
-	// Helper: Packets assembly and parsing
-	public static function encode_int_8( int $val ): string {
-		return chr( $val & 0xff );
+	/**
+	 * Build the OK packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html
+	 *
+	 * @param  int $sequence_id    The sequence ID of the packet.
+	 * @param  int $affected_rows  Number of rows affected by the query.
+	 * @param  int $last_insert_id The last insert ID.
+	 * @param  int $server_status  The status flags representing the server state.
+	 * @param  int $warning_count  The warning count.
+	 * @return string              The OK packet.
+	 */
+	public static function build_ok_packet(
+		int $sequence_id,
+		int $affected_rows,
+		int $last_insert_id,
+		int $server_status,
+		int $warning_count
+	): string {
+		/**
+		 * Assemble the OK packet payload.
+		 *
+		 * Use a single pack() function call for maximum efficiency.
+		 *
+		 * C  = 8-bit unsigned integer
+		 * v  = 16-bit unsigned integer (little-endian byte order)
+		 * a* = string
+		 *
+		 * @see https://www.php.net/manual/en/function.pack.php
+		 */
+		$payload = pack(
+			'Ca*a*vv',
+			self::OK_PACKET_HEADER,                             // (C)  OK packet header.
+			self::encode_length_encoded_int( $affected_rows ),  // (a*) Affected rows.
+			self::encode_length_encoded_int( $last_insert_id ), // (a*) Last insert ID.
+			$server_status,                                     // (v)  Server status flags.
+			$warning_count,                                     // (v)  Server status flags.
+			// No human-readable message for simplicity
+		);
+		return self::build_packet( $sequence_id, $payload );
 	}
 
-	public static function encode_int_16( int $val ): string {
-		return pack( 'v', $val & 0xffff );
+	/**
+	 * Build the ERR packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_err_packet.html
+	 *
+	 * @param  int    $sequence_id The sequence ID of the packet.
+	 * @param  int    $error_code  The error code.
+	 * @param  string $sql_state   The SQLSTATE value.
+	 * @param  string $message     The error message.
+	 * @return string              The ERR packet.
+	 */
+	public static function build_err_packet(
+		int $sequence_id,
+		int $error_code,
+		string $sql_state,
+		string $message
+	): string {
+		/**
+		 * Assemble the ERR packet payload.
+		 *
+		 * Use a single pack() function call for maximum efficiency.
+		 *
+		 * C  = 8-bit unsigned integer
+		 * v  = 16-bit unsigned integer (little-endian byte order)
+		 * a* = string
+		 *
+		 * @see https://www.php.net/manual/en/function.pack.php
+		 */
+		$payload = pack(
+			'Cva*a*',
+			self::ERR_PACKET_HEADER,        // (C)  ERR packet header.
+			$error_code,                    // (v)  Error code.
+			'#' . strtoupper( $sql_state ), // (a*) SQL state.
+			$message,                       // (a*) Message.
+		);
+		return self::build_packet( $sequence_id, $payload );
 	}
 
-	public static function encode_int_24( int $val ): string {
-		// 3-byte little-endian integer
-		return substr( pack( 'V', $val & 0xffffff ), 0, 3 );
+	/**
+	 * Build the EOF packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_eof_packet.html
+	 *
+	 * @param  int $sequence_id   The sequence ID of the packet.
+	 * @param  int $server_status The status flags representing the server state.
+	 * @param  int $warning_count The warning count.
+	 * @return string             The EOF packet.
+	 */
+	public static function build_eof_packet(
+		int $sequence_id,
+		int $server_status,
+		int $warning_count
+	): string {
+		/**
+		 * Assemble the EOF packet payload.
+		 *
+		 * Use a single pack() function call for maximum efficiency.
+		 *
+		 * C  = 8-bit unsigned integer
+		 * v  = 16-bit unsigned integer (little-endian byte order)
+		 * a* = string
+		 *
+		 * @see https://www.php.net/manual/en/function.pack.php
+		 */
+		$payload = pack(
+			'Cvv',
+			self::EOF_PACKET_HEADER, // (C)  EOF packet header.
+			$warning_count,          // (v)  Warning count.
+			$server_status,          // (v)  Status flags.
+		);
+		return self::build_packet( $sequence_id, $payload );
 	}
 
-	public static function encode_int_32( int $val ): string {
-		return pack( 'V', $val );
-	}
+	/**
+	 * Build a handshake packet for the initial handshake.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_handshake_v10.html
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase.html#sect_protocol_connection_phase_initial_handshake
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_caching_sha2_authentication_exchanges.html
+	 *
+	 * @param  int    $sequence_id      The sequence ID of the packet.
+	 * @param  string $server_version   The version of the MySQL server.
+	 * @param  int    $charset          The character set that is used by the server.
+	 * @param  int    $connection_id    The connection ID.
+	 * @param  string $auth_plugin_data The authentication plugin data (scramble).
+	 * @param  int    $capabilities     The capabilities that are supported by the server.
+	 * @param  int    $status_flags     The status flags representing the server state.
+	 * @return string                   The handshake packet.
+	 */
+	public static function build_handshake_packet(
+		int $sequence_id,
+		string $server_version,
+		int $charset,
+		int $connection_id,
+		string $auth_plugin_data,
+		int $capabilities,
+		int $status_flags
+	): string {
+		$cap_flags_lower = $capabilities & 0xffff;
+		$cap_flags_upper = $capabilities >> 16;
+		$scramble1       = substr( $auth_plugin_data, 0, 8 );
+		$scramble2       = substr( $auth_plugin_data, 8 );
 
-	public static function encode_length_encoded_int( int $val ): string {
-		// Encodes an integer in MySQL's length-encoded format
-		if ( $val < 0xfb ) {
-			return chr( $val );
-		} elseif ( $val <= 0xffff ) {
-			return "\xfc" . self::encode_int_16( $val );
-		} elseif ( $val <= 0xffffff ) {
-			return "\xfd" . self::encode_int_24( $val );
+		if ( $capabilities & MySQL_Protocol::CLIENT_PLUGIN_AUTH ) {
+			$auth_plugin_data_length = strlen( $auth_plugin_data ) + 1;
+			$auth_plugin_name        = self::DEFAULT_AUTH_PLUGIN . "\0";
 		} else {
-			return "\xfe" . pack( 'P', $val ); // 8-byte little-endian for 64-bit
+			$auth_plugin_data_length = 0;
+			$auth_plugin_name        = '';
 		}
+
+		/**
+		 * Assemble the handshake packet payload.
+		 *
+		 * Use a single pack() function call for maximum efficiency.
+		 *
+		 * C  = 8-bit unsigned integer
+		 * v  = 16-bit unsigned integer (little-endian byte order)
+		 * V  = 32-bit unsigned integer (little-endian byte order)
+		 * a* = string
+		 * Z* = NULL-terminated string
+		 *
+		 * @see https://www.php.net/manual/en/function.pack.php
+		 */
+		$payload = pack(
+			'CZ*Va*CvCvvCa*a*Ca*',
+			self::PROTOCOL_VERSION,   // (C)  Protocol version.
+			$server_version,          // (Z*) MySQL server version.
+			$connection_id,           // (V)  Connection ID.
+			$scramble1,               // (a*) First 8 bytes of auth plugin data (scramble).
+			0,                        // (C)  Filler. Always 0x00.
+			$cap_flags_lower,         // (v)  Lower 2 bytes of capability flags.
+			$charset,                 // (C)  Default server character set.
+			$status_flags,            // (v)  Server status flags.
+			$cap_flags_upper,         // (v)  Upper 2 bytes of capability flags.
+			$auth_plugin_data_length, // (C)  Auth plugin data length.
+			str_repeat( "\0", 10 ),   // (a*) Filler. 10 bytes of 0x00.
+			$scramble2,               // (a*) Remainder of auth plugin data (scramble).
+			0,                        // (C)  Filler. Always 0x00.
+			$auth_plugin_name,        // (a*) Auth plugin name.
+		);
+		return self::build_packet( $sequence_id, $payload );
 	}
 
-	public static function encode_length_encoded_string( string $str ): string {
-		return self::encode_length_encoded_int( strlen( $str ) ) . $str;
+	/**
+	 * Build the column count packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_text_resultset.html
+	 *
+	 * @param  int $sequence_id  The sequence ID of the packet.
+	 * @param  int $column_count The number of columns.
+	 * @return string            The column count packet.
+	 */
+	public static function build_column_count_packet( int $sequence_id, int $column_count ): string {
+		$payload = self::encode_length_encoded_int( $column_count );
+		return self::build_packet( $sequence_id, $payload );
 	}
 
-	// Hashing for caching_sha2_password (fast auth algorithm)
-	public static function sha_256_hash( string $password, string $salt ): string {
-		$stage1   = hash( 'sha256', $password, true );
-		$stage2   = hash( 'sha256', $stage1, true );
-		$scramble = hash( 'sha256', $stage2 . substr( $salt, 0, 20 ), true );
-		// XOR stage1 and scramble to get token
-		return $stage1 ^ $scramble;
+	/**
+	 * Build the column definition packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_text_resultset_column_definition.html
+	 *
+	 * @param  int    $sequence_id The sequence ID of the packet.
+	 * @param  array  $column      The column definition.
+	 * @return string              The column definition packet.
+	 */
+	public static function build_column_definition_packet( int $sequence_id, array $column ): string {
+		$payload = pack(
+			'a*a*a*a*a*a*a*vVCvCC',
+			self::encode_length_encoded_string( $column['catalog'] ?? 'def' ),
+			self::encode_length_encoded_string( $column['schema'] ?? '' ),
+			self::encode_length_encoded_string( $column['table'] ?? '' ),
+			self::encode_length_encoded_string( $column['orgTable'] ?? '' ),
+			self::encode_length_encoded_string( $column['name'] ?? '' ),
+			self::encode_length_encoded_string( $column['orgName'] ?? '' ),
+			self::encode_length_encoded_int( $column['fixedLen'] ?? 0x0c ),
+			$column['charset'] ?? MySQL_Protocol::CHARSET_UTF8MB4, // (v) Character set.
+			$column['length'],                                     // (V)  Length.
+			$column['type'],                                       // (C)  Type.
+			$column['flags'],                                      // (v)  Flags.
+			$column['decimals'],                                   // (C)  Decimals.
+			0,                                                     // (C)  Filler. Always 0x00.
+		);
+		return self::build_packet( $sequence_id, $payload );
 	}
 
-	// Build initial handshake packet (server greeting)
-	public static function build_handshake_packet( int $conn_id, string &$auth_plugin_data ): string {
-		$protocol_version = 0x0a;                     // Handshake protocol version (10)
-		$server_version   = '8.9.38-php-mysql-server'; // Fake server version
-		// Generate random auth plugin data (20-byte salt)
-		$salt1            = random_bytes( 8 );
-		$salt2            = random_bytes( 12 ); // total salt length = 8+12 = 20 bytes (with filler)
-		$auth_plugin_data = $salt1 . $salt2;
-		// Lower 2 bytes of capability flags
-		$cap_flags_lower = (
-			self::CLIENT_PROTOCOL_41 |
-			self::CLIENT_SECURE_CONNECTION |
-			self::CLIENT_PLUGIN_AUTH |
-			self::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
-		) & 0xffff;
-		// Upper 2 bytes of capability flags
-		$cap_flags_upper = (
-			self::CLIENT_PROTOCOL_41 |
-			self::CLIENT_SECURE_CONNECTION |
-			self::CLIENT_PLUGIN_AUTH |
-			self::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
-		) >> 16;
-		$charset         = self::CHARSET_UTF8MB4;
-		$status_flags    = self::SERVER_STATUS_AUTOCOMMIT;
-
-		// Assemble handshake packet payload
-		$payload  = chr( $protocol_version );
-		$payload .= $server_version . "\0";
-		$payload .= self::encode_int_32( $conn_id );
-		$payload .= $salt1;
-		$payload .= "\0";  // filler byte
-		$payload .= self::encode_int_16( $cap_flags_lower );
-		$payload .= chr( $charset );
-		$payload .= self::encode_int_16( $status_flags );
-		$payload .= self::encode_int_16( $cap_flags_upper );
-		$payload .= chr( strlen( $auth_plugin_data ) + 1 );  // auth plugin data length (salt + \0)
-		$payload .= str_repeat( "\0", 10 );              // 10-byte reserved filler
-		$payload .= $salt2;
-		$payload .= "\0";  // terminating NUL for auth-plugin-data-part-2
-		$payload .= self::AUTH_PLUGIN_NAME . "\0";
-		return $payload;
-	}
-
-	// Build OK packet (after successful authentication or query execution)
-	public static function build_ok_packet( int $affected_rows = 0, int $last_insert_id = 0 ): string {
-		$payload  = chr( self::OK_PACKET_HEADER );
-		$payload .= self::encode_length_encoded_int( $affected_rows );
-		$payload .= self::encode_length_encoded_int( $last_insert_id );
-		$payload .= self::encode_int_16( self::SERVER_STATUS_AUTOCOMMIT ); // server status
-		$payload .= self::encode_int_16( 0 );  // no warning count
-		// No human-readable message for simplicity
-		return $payload;
-	}
-
-	// Build ERR packet (for errors)
-	public static function build_err_packet( int $error_code, string $sql_state, string $message ): string {
-		$payload  = chr( self::ERR_PACKET_HEADER );
-		$payload .= self::encode_int_16( $error_code );
-		$payload .= '#' . strtoupper( $sql_state );
-		$payload .= $message;
-		return $payload;
-	}
-
-	// Build Result Set packets from a SelectQueryResult (column count, column definitions, rows, EOF)
-	public static function build_result_set_packets( array $columns, array $rows ): string {
-		$sequence_id   = 1;  // Sequence starts at 1 for resultset (after COM_QUERY)
-		$packet_stream = '';
-
-		// 1. Column count packet (length-encoded integer for number of columns)
-		$col_count         = count( $columns );
-		$col_count_payload = self::encode_length_encoded_int( $col_count );
-		$packet_stream    .= self::wrap_packet( $col_count_payload, $sequence_id++ );
-
-		// 2. Column definition packets for each column
-		foreach ( $columns as $col ) {
-			// Protocol::ColumnDefinition41 format:]
-			$col_payload  = self::encode_length_encoded_string( $col['catalog'] ?? 'sqlite' );
-			$col_payload .= self::encode_length_encoded_string( $col['schema'] ?? '' );
-
-			// Table alias
-			$col_payload .= self::encode_length_encoded_string( $col['table'] ?? '' );
-
-			// Original table name
-			$col_payload .= self::encode_length_encoded_string( $col['orgTable'] ?? '' );
-
-			// Column alias
-			$col_payload .= self::encode_length_encoded_string( $col['name'] );
-
-			// Original column name
-			$col_payload .= self::encode_length_encoded_string( $col['orgName'] ?? $col['name'] );
-
-			// Length of the remaining fixed fields. @TODO: What does that mean?
-			$col_payload .= self::encode_length_encoded_int( $col['fixedLen'] ?? 0x0c );
-			$col_payload .= self::encode_int_16( $col['charset'] ?? MySQL_Protocol::CHARSET_UTF8MB4 );
-			$col_payload .= self::encode_int_32( $col['length'] );
-			$col_payload .= self::encode_int_8( $col['type'] );
-			$col_payload .= self::encode_int_16( $col['flags'] );
-			$col_payload .= self::encode_int_8( $col['decimals'] );
-			$col_payload .= "\x00";  // filler (1 byte, reserved)
-
-			$packet_stream .= self::wrap_packet( $col_payload, $sequence_id++ );
-		}
-		// 3. EOF packet to mark end of column definitions (if not using CLIENT_DEPRECATE_EOF)
-		$eof_payload    = chr( self::EOF_PACKET_HEADER ) . self::encode_int_16( 0 ) . self::encode_int_16( 0 );
-		$packet_stream .= self::wrap_packet( $eof_payload, $sequence_id++ );
-
-		// 4. Row data packets (each row is a series of length-encoded values)
-		foreach ( $rows as $row ) {
-			$row_payload = '';
-			// Iterate through columns in the defined order to match column definitions
-			foreach ( $columns as $col ) {
-				$column_name = $col['name'];
-				$val         = $row->{$column_name} ?? null;
-
-				if ( null === $val ) {
-					// NULL is represented by 0xfb (NULL_VALUE)
-					$row_payload .= "\xfb";
-				} else {
-					$val_str      = (string) $val;
-					$row_payload .= self::encode_length_encoded_string( $val_str );
-				}
+	/**
+	 * Build the row packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_text_resultset_row.html
+	 *
+	 * @param  int    $sequence_id The sequence ID of the packet.
+	 * @param  array  $columns     The columns.
+	 * @param  object $row         The row.
+	 * @return string              The row packet.
+	 */
+	public static function build_row_packet( int $sequence_id, array $columns, object $row ): string {
+		$payload = '';
+		foreach ( $columns as $column ) {
+			$value = $row->{$column['name']} ?? null;
+			if ( null === $value ) {
+				$payload .= "\xfb"; // NULL value
+			} else {
+				$payload .= self::encode_length_encoded_string( (string) $value );
 			}
-			$packet_stream .= self::wrap_packet( $row_payload, $sequence_id++ );
 		}
-
-		// 5. EOF packet to mark end of data rows (if not using CLIENT_DEPRECATE_EOF)
-		$eof_payload_2  = chr( self::EOF_PACKET_HEADER ) . self::encode_int_16( 0 ) . self::encode_int_16( 0 );
-		$packet_stream .= self::wrap_packet( $eof_payload_2, $sequence_id++ );
-
-		return $packet_stream;
+		return self::build_packet( $sequence_id, $payload );
 	}
 
-	// Helper to wrap a payload into a packet with length and sequence id
-	public static function wrap_packet( string $payload, int $sequence_id ): string {
-		$length = strlen( $payload );
-		$header = self::encode_int_24( $length ) . self::encode_int_8( $sequence_id );
-		return $header . $payload;
+	/**
+	 * Build a MySQL packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
+	 *
+	 * @param  int    $sequence_id The sequence ID of the packet.
+	 * @param  string $payload     The payload of the packet.
+	 * @return string              The packet data.
+	 */
+	public static function build_packet( int $sequence_id, string $payload ): string {
+		/**
+		 * Assemble the packet.
+		 *
+		 * Use a single pack() function call for maximum efficiency.
+		 *
+		 * C  = 8-bit unsigned integer
+		 * VX = 24-bit unsigned integer (little-endian byte order)
+		 *      (V = 32-bit little-endian, X drops the last byte, making it 24-bit)
+		 * a* = string
+		 */
+		return pack(
+			'VXCa*',
+			strlen( $payload ), // (VX) Payload length.
+			$sequence_id,       // (C)  Sequence ID.
+			$payload,           // (a*) Payload.
+		);
+	}
+
+	/**
+	 * Encode an integer in MySQL's length-encoded format.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_dt_integers.html
+	 *
+	 * @param  int $value The value to encode.
+	 * @return string     The encoded value.
+	 */
+	public static function encode_length_encoded_int( int $value ): string {
+		if ( $value < 0xfb ) {
+			return chr( $value );
+		} elseif ( $value <= 0xffff ) {
+			return "\xfc" . pack( 'v', $value );
+		} elseif ( $value <= 0xffffff ) {
+			return "\xfd" . pack( 'VX', $value );
+		} else {
+			return "\xfe" . pack( 'P', $value );
+		}
+	}
+
+	/**
+	 * Encode a string in MySQL's length-encoded format.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_dt_strings.html
+	 *
+	 * @param  string $value The value to encode.
+	 * @return string        The encoded value.
+	 */
+	public static function encode_length_encoded_string( string $value ): string {
+		return self::encode_length_encoded_int( strlen( $value ) ) . $value;
 	}
 }
