@@ -229,18 +229,20 @@ class MySQL_Protocol {
 	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html
 	 *
 	 * @param  int $sequence_id    The sequence ID of the packet.
+	 * @param  int $server_status  The status flags representing the server state.
 	 * @param  int $affected_rows  Number of rows affected by the query.
 	 * @param  int $last_insert_id The last insert ID.
-	 * @param  int $server_status  The status flags representing the server state.
 	 * @param  int $warning_count  The warning count.
+	 * @param  int $packet_header  The packet header, indicating an OK or EOF semantic.
 	 * @return string              The OK packet.
 	 */
 	public static function build_ok_packet(
 		int $sequence_id,
-		int $affected_rows,
-		int $last_insert_id,
 		int $server_status,
-		int $warning_count
+		int $affected_rows = 0,
+		int $last_insert_id = 0,
+		int $warning_count = 0,
+		int $packet_header = self::OK_PACKET_HEADER
 	): string {
 		/**
 		 * Assemble the OK packet payload.
@@ -255,14 +257,45 @@ class MySQL_Protocol {
 		 */
 		$payload = pack(
 			'Ca*a*vv',
-			self::OK_PACKET_HEADER,                             // (C)  OK packet header.
+			$packet_header,                                     // (C)  OK packet header.
 			self::encode_length_encoded_int( $affected_rows ),  // (a*) Affected rows.
 			self::encode_length_encoded_int( $last_insert_id ), // (a*) Last insert ID.
 			$server_status,                                     // (v)  Server status flags.
 			$warning_count,                                     // (v)  Server status flags.
-			// No human-readable message for simplicity
 		);
 		return self::build_packet( $sequence_id, $payload );
+	}
+
+	/**
+	 * Build the OK packet with an EOF header.
+	 *
+	 * When the CLIENT_DEPRECATE_EOF capability is supported, an OK packet with
+	 * an EOF header is used to mark EOF, instead of the deprecated EOF packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html
+	 *
+	 * @param  int $sequence_id    The sequence ID of the packet.
+	 * @param  int $server_status  The status flags representing the server state.
+	 * @param  int $affected_rows  Number of rows affected by the query.
+	 * @param  int $last_insert_id The last insert ID.
+	 * @param  int $warning_count  The warning count.
+	 * @return string              The OK packet.
+	 */
+	public static function build_ok_packet_as_eof(
+		int $sequence_id,
+		int $server_status,
+		int $affected_rows = 0,
+		int $last_insert_id = 0,
+		int $warning_count = 0
+	): string {
+		return self::build_ok_packet(
+			$sequence_id,
+			$server_status,
+			$affected_rows,
+			$last_insert_id,
+			$warning_count,
+			self::EOF_PACKET_HEADER
+		);
 	}
 
 	/**
@@ -316,7 +349,7 @@ class MySQL_Protocol {
 	public static function build_eof_packet(
 		int $sequence_id,
 		int $server_status,
-		int $warning_count
+		int $warning_count = 0
 	): string {
 		/**
 		 * Assemble the EOF packet payload.
@@ -533,5 +566,69 @@ class MySQL_Protocol {
 	 */
 	public static function encode_length_encoded_string( string $value ): string {
 		return self::encode_length_encoded_int( strlen( $value ) ) . $value;
+	}
+
+	/**
+	 * Read MySQL length-encoded integer from a payload and advance the offset.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_dt_integers.html
+	 *
+	 * @param  string $payload A payload of bytes to read from.
+	 * @param  int    $offset  And offset to start reading from within the payload.
+	 *                         The value will be advanced by the number of bytes read.
+	 * @return int             The decoded integer value.
+	 */
+	public static function read_length_encoded_int( string $payload, int &$offset ): int {
+		$first_byte = ord( $payload[ $offset ] ?? "\0" );
+		$offset    += 1;
+
+		if ( $first_byte < 0xfb ) {
+			$value = $first_byte;
+		} elseif ( 0xfb === $first_byte ) {
+			$value = 0;
+		} elseif ( 0xfc === $first_byte ) {
+			$value   = unpack( 'v', $payload, $offset )[1];
+			$offset += 2;
+		} elseif ( 0xfd === $first_byte ) {
+			$value   = unpack( 'VX', $payload, $offset )[1];
+			$offset += 3;
+		} else {
+			$value   = unpack( 'P', $payload, $offset )[1];
+			$offset += 8;
+		}
+		return $value;
+	}
+
+	/**
+	 * Read MySQL length-encoded string from a payload and advance the offset.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_dt_strings.html
+	 *
+	 * @param  string $payload A payload of bytes to read from.
+	 * @param  int    $offset  And offset to start reading from within the payload.
+	 *                         The value will be advanced by the number of bytes read.
+	 * @return string          The decoded string value.
+	 */
+	public static function read_length_encoded_string( string $payload, int &$offset ): string {
+		$length  = self::read_length_encoded_int( $payload, $offset );
+		$value   = substr( $payload, $offset, $length );
+		$offset += $length;
+		return $value;
+	}
+
+	/**
+	 * Read MySQL null-terminated string from a payload and advance the offset.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_dt_strings.html
+	 *
+	 * @param  string $payload A payload of bytes to read from.
+	 * @param  int    $offset  And offset to start reading from within the payload.
+	 *                         The value will be advanced by the number of bytes read.
+	 * @return string          The decoded string value.
+	 */
+	public static function read_null_terminated_string( string $payload, int &$offset ): string {
+		$value   = unpack( 'Z*', $payload, $offset )[1];
+		$offset += strlen( $value ) + 1;
+		return $value;
 	}
 }
