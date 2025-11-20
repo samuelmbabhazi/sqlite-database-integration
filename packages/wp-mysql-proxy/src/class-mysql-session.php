@@ -251,6 +251,17 @@ class MySQL_Session {
 		// Get the database name.
 		if ( $client_flags & MySQL_Protocol::CLIENT_CONNECT_WITH_DB ) {
 			$database = MySQL_Protocol::read_null_terminated_string( $payload, $offset );
+			if ( '' !== $database ) {
+				$result = $this->adapter->handle_query( 'USE ' . $database );
+				if ( $result->error_info ) {
+					return MySQL_Protocol::build_err_packet(
+						$this->packet_id++,
+						1049,
+						'42000',
+						sprintf( "Unknown database: '%s'", $database )
+					);
+				}
+			}
 		}
 
 		// Get the authentication plugin name.
