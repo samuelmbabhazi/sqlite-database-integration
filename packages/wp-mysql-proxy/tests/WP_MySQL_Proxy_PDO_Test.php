@@ -9,8 +9,8 @@ class WP_MySQL_Proxy_PDO_Test extends WP_MySQL_Proxy_Test {
 
 		$this->pdo = new PDO(
 			sprintf( 'mysql:host=127.0.0.1;port=%d', $this->port ),
-			'WordPress',
-			'WordPress'
+			'user',
+			'password'
 		);
 	}
 

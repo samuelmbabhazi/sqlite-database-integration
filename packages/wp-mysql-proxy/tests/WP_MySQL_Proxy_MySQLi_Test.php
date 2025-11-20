@@ -6,7 +6,7 @@ class WP_MySQL_Proxy_MySQLi_Test extends WP_MySQL_Proxy_Test {
 
 	public function setUp(): void {
 		parent::setUp();
-		$this->mysqli = new mysqli( '127.0.0.1', 'WordPress', 'WordPress', 'WordPress', $this->port );
+		$this->mysqli = new mysqli( '127.0.0.1', 'user', 'password', 'sqlite_database', $this->port );
 	}
 
 	public function test_query(): void {
