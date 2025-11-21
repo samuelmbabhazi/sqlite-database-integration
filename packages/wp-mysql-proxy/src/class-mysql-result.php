@@ -24,18 +24,4 @@ class MySQL_Result {
 		$result->error_info = array( $sql_state, $code, $message );
 		return $result;
 	}
-
-	public function to_packets(): string {
-		if ( $this->error_info ) {
-			$err_packet = MySQL_Protocol::build_err_packet( $this->error_info[1], $this->error_info[0], $this->error_info[2] );
-			return MySQL_Protocol::encode_int_24( strlen( $err_packet ) ) . MySQL_Protocol::encode_int_8( 1 ) . $err_packet;
-		}
-
-		if ( count( $this->columns ) > 0 ) {
-			return MySQL_Protocol::build_result_set_packets( $this->columns, $this->rows );
-		}
-
-		$ok_packet = MySQL_Protocol::build_ok_packet( $this->affected_rows, $this->last_insert_id );
-		return MySQL_Protocol::encode_int_24( strlen( $ok_packet ) ) . MySQL_Protocol::encode_int_8( 1 ) . $ok_packet;
-	}
 }
