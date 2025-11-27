@@ -23,7 +23,8 @@ class WP_SQLite_Query_Tests extends TestCase {
 		global $blog_tables;
 		$queries = explode( ';', $blog_tables );
 
-		$this->sqlite = new PDO( 'sqlite::memory:' );
+		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
 		$this->engine = new WP_SQLite_Translator( $this->sqlite );
 
 		$translator = $this->engine;

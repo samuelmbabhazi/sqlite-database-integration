@@ -11,7 +11,8 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 
 	// Before each test, we create a new database
 	public function setUp(): void {
-		$this->sqlite = new PDO( 'sqlite::memory:' );
+		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
 		$this->engine = new WP_SQLite_Driver(
 			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
 			'wp'
