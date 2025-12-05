@@ -49,7 +49,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 
 		$builder = new WP_SQLite_Information_Schema_Builder(
-			WP_SQLite_Driver::RESERVED_PREFIX,
+			WP_PDO_MySQL_On_SQLite::RESERVED_PREFIX,
 			$this->engine->get_connection()
 		);
 
