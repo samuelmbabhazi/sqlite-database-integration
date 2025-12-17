@@ -505,6 +505,19 @@ class WP_SQLite_Driver {
 	private $wrapper_transaction_type = null;
 
 	/**
+	 * Whether an SQLite transaction is active in the current session.
+	 *
+	 * This is a polyfill of the "PDO::inTransaction()" method for PHP < 8.4,
+	 * where the "PDO::inTransaction()" method is not reliable with SQLite.
+	 *
+	 * @see https://bugs.php.net/bug.php?id=81227
+	 * @see https://github.com/php/php-src/pull/14268
+	 *
+	 * @var bool
+	 */
+	private $in_transaction = false;
+
+	/**
 	 * Whether a MySQL table lock is active.
 	 *
 	 * Set to "true" when a lock is acquired using the MySQL LOCK statement.
@@ -728,6 +741,15 @@ class WP_SQLite_Driver {
 	 */
 	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 	public function inTransaction(): bool {
+		if ( PHP_VERSION_ID < 80400 ) {
+			/*
+			 * On PHP < 8.4, the "PDO::inTransaction()" method is not reliable.
+			 *
+			 * @see https://bugs.php.net/bug.php?id=81227
+			 * @see https://github.com/php/php-src/pull/14268
+			 */
+			return $this->in_transaction;
+		}
 		return $this->connection->get_pdo()->inTransaction();
 	}
 
@@ -1335,6 +1357,7 @@ class WP_SQLite_Driver {
 			$wrapper_transaction_type = 'savepoint';
 		} else {
 			// For write transactions, we must use "BEGIN IMMEDIATE".
+			// @see self::begin_user_transaction() method comments.
 			$stmt                     = $this->connection->prepare( $this->is_readonly ? 'BEGIN' : 'BEGIN IMMEDIATE' );
 			$wrapper_transaction_type = 'transaction';
 		}
@@ -1343,6 +1366,7 @@ class WP_SQLite_Driver {
 			throw $this->new_driver_exception( 'Failed to begin wrapper transaction.' );
 		}
 		$this->wrapper_transaction_type = $wrapper_transaction_type;
+		$this->in_transaction           = true;
 	}
 
 	/**
@@ -1353,17 +1377,20 @@ class WP_SQLite_Driver {
 			return;
 		}
 
+		$in_transaction = $this->in_transaction;
 		if ( 'savepoint' === $this->wrapper_transaction_type ) {
 			$savepoint_name = $this->get_internal_savepoint_name( 'wrapper' );
 			$stmt           = $this->connection->prepare( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
 		} else {
-			$stmt = $this->connection->prepare( 'COMMIT' );
+			$stmt           = $this->connection->prepare( 'COMMIT' );
+			$in_transaction = false;
 		}
 
 		if ( ! $stmt->execute() ) {
 			throw $this->new_driver_exception( 'Failed to commit wrapper transaction.' );
 		}
 		$this->wrapper_transaction_type = null;
+		$this->in_transaction           = $in_transaction;
 	}
 
 	/**
@@ -1386,6 +1413,7 @@ class WP_SQLite_Driver {
 		 * @see self::begin_wrapper_transaction()
 		 */
 		$this->connection->query( 'BEGIN IMMEDIATE' );
+		$this->in_transaction = true;
 	}
 
 	/**
@@ -1397,6 +1425,7 @@ class WP_SQLite_Driver {
 			return;
 		}
 		$this->connection->query( 'COMMIT' );
+		$this->in_transaction = false;
 	}
 
 	/**
@@ -1408,6 +1437,7 @@ class WP_SQLite_Driver {
 			return;
 		}
 		$this->connection->query( 'ROLLBACK' );
+		$this->in_transaction = false;
 	}
 
 	/**
