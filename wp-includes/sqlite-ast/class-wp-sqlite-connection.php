@@ -119,6 +119,20 @@ class WP_SQLite_Connection {
 	}
 
 	/**
+	 * Prepare a SQLite query for execution.
+	 *
+	 * @param  string $sql  The query to prepare.
+	 * @return PDOStatement The prepared statement.
+	 * @throws PDOException When the query preparation fails.
+	 */
+	public function prepare( string $sql ): PDOStatement {
+		if ( $this->query_logger ) {
+			( $this->query_logger )( $sql, array() );
+		}
+		return $this->pdo->prepare( $sql );
+	}
+
+	/**
 	 * Returns the ID of the last inserted row.
 	 *
 	 * @return string The ID of the last inserted row.

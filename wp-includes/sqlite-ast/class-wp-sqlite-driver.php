@@ -493,11 +493,16 @@ class WP_SQLite_Driver {
 	private $is_readonly;
 
 	/**
-	 * Transaction nesting level of the executed SQLite queries.
+	 * Type of wrapper transaction that is active for the MySQL query emulation.
 	 *
-	 * @var int
+	 * Possible values:
+	 *   - null:          No wrapper transaction is active.
+	 *   - 'transaction': A top-level transaction is active.
+	 *   - 'savepoint':   A nested savepoint is active.
+	 *
+	 * @var null|'transaction'|'savepoint'
 	 */
-	private $transaction_level = 0;
+	private $wrapper_transaction_type = null;
 
 	/**
 	 * Whether a MySQL table lock is active.
@@ -667,6 +672,66 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * PDO API: Begin a new transaction or nested transaction.
+	 *
+	 * @return bool True on success, false on failure.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+	public function beginTransaction(): bool {
+		if ( $this->inTransaction() ) {
+			throw $this->new_driver_exception( 'There is already an active transaction' );
+		}
+		$this->begin_user_transaction();
+		return true;
+	}
+
+	/**
+	 * A temporary alias for back compatibility.
+	 *
+	 * @see self::beginTransaction()
+	 */
+	public function begin_transaction(): void {
+		$this->beginTransaction();
+	}
+
+	/**
+	 * PDO API: Commit the current transaction or nested transaction.
+	 *
+	 * @return bool True on success, false on failure.
+	 */
+	public function commit(): bool {
+		if ( ! $this->inTransaction() ) {
+			throw $this->new_driver_exception( 'There is no active transaction' );
+		}
+		$this->commit_user_transaction();
+		return true;
+	}
+
+	/**
+	 * PDO API: Rollback the current transaction or nested transaction.
+	 *
+	 * @return bool True on success, false on failure.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+	public function rollBack(): bool {
+		if ( ! $this->inTransaction() ) {
+			throw $this->new_driver_exception( 'There is no active transaction' );
+		}
+		$this->rollback_user_transaction();
+		return true;
+	}
+
+	/**
+	 * PDO API: Check if a transaction is active.
+	 *
+	 * @return bool True if a transaction is active, false otherwise.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+	public function inTransaction(): bool {
+		return $this->connection->get_pdo()->inTransaction();
+	}
+
+	/**
 	 * Get the SQLite connection instance.
 	 *
 	 * @return WP_SQLite_Connection
@@ -809,18 +874,19 @@ class WP_SQLite_Driver {
 			}
 
 			if ( $wrap_in_transaction ) {
-				$this->begin_transaction();
+				$this->begin_wrapper_transaction();
 			}
 
 			$this->execute_mysql_query( $ast );
 
 			if ( $wrap_in_transaction ) {
-				$this->commit();
+				$this->commit_wrapper_transaction();
 			}
 			return $this->last_return_value;
 		} catch ( Throwable $e ) {
 			try {
-				$this->rollback();
+				$this->rollback_user_transaction();
+				$this->table_lock_active = false;
 			} catch ( Throwable $rollback_exception ) {
 				// Ignore rollback errors.
 			}
@@ -1050,92 +1116,6 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Begin a new transaction or nested transaction.
-	 */
-	public function begin_transaction(): void {
-		if ( 0 === $this->transaction_level ) {
-			/*
-			 * When we're executing a statement that will write to the database,
-			 * we need to use "BEGIN IMMEDIATE" to open a write transaction.
-			 *
-			 * This is needed to avoid the "database is locked" error (SQLITE_BUSY)
-			 * when SQLite can't upgrade a read transaction to a write transaction,
-			 * because another connection is modifying the database.
-			 *
-			 * From the SQLite documentation:
-			 *
-			 *   ## Read transactions versus write transactions
-			 *
-			 *   If a write statement occurs while a read transaction is active,
-			 *   then the read transaction is upgraded to a write transaction if
-			 *   possible. If some other database connection has already modified
-			 *   the database or is already in the process of modifying the database,
-			 *   then upgrading to a write transaction is not possible and the write
-			 *   statement will fail with SQLITE_BUSY.
-			 *
-			 *   ## DEFERRED, IMMEDIATE, and EXCLUSIVE transactions
-			 *
-			 *   Transactions can be DEFERRED, IMMEDIATE, or EXCLUSIVE. The default
-			 *   transaction behavior is DEFERRED.
-			 *
-			 *   DEFERRED means that the transaction does not actually start until
-			 *   the database is first accessed.
-			 *
-			 *   IMMEDIATE causes the database connection to start a new write
-			 *   immediately, without waiting for a write statement. The BEGIN
-			 *   IMMEDIATE might fail with SQLITE_BUSY if another write transaction
-			 *   is already active on another database connection.
-			 *
-			 * See:
-			 *   - https://www.sqlite.org/lang_transaction.html
-			 *   - https://www.sqlite.org/rescode.html#busy
-			 *
-			 * For better performance, we could also consider opening the write
-			 * transaction later in the session - just before the first write.
-			 */
-			$this->execute_sqlite_query( $this->is_readonly ? 'BEGIN' : 'BEGIN IMMEDIATE' );
-		} else {
-			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
-			$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
-		}
-		++$this->transaction_level;
-	}
-
-	/**
-	 * Commit the current transaction or nested transaction.
-	 */
-	public function commit(): void {
-		if ( 0 === $this->transaction_level ) {
-			return;
-		}
-
-		--$this->transaction_level;
-		if ( 0 === $this->transaction_level ) {
-			$this->execute_sqlite_query( 'COMMIT' );
-		} else {
-			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
-			$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
-		}
-	}
-
-	/**
-	 * Rollback the current transaction or nested transaction.
-	 */
-	public function rollback(): void {
-		if ( 0 === $this->transaction_level ) {
-			return;
-		}
-
-		--$this->transaction_level;
-		if ( 0 === $this->transaction_level ) {
-			$this->execute_sqlite_query( 'ROLLBACK' );
-		} else {
-			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
-			$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
-		}
-	}
-
-	/**
 	 * Translate and execute a MySQL query in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "query" AST node with "simpleStatement" child.
@@ -1162,7 +1142,7 @@ class WP_SQLite_Driver {
 		}
 
 		if ( 'beginWork' === $children[0]->rule_name ) {
-			$this->begin_transaction();
+			$this->begin_user_transaction();
 			return;
 		}
 
@@ -1292,6 +1272,145 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * Begin a wrapper transaction.
+	 *
+	 * A wrapper transaction is used to ensure consistency by encapsulating SQLite
+	 * statements that are executed during a single MySQL query emulation process.
+	 *
+	 * TOP-LEVEL TRANSACTION vs. SAVEPOINT:
+	 *
+	 * When no transaction is active, we can use a top-level TRANSACTION to wrap
+	 * the emulated MySQL statement. However, if a transaction is already active,
+	 * we must use a SAVEPOINT, as SQLite doesn't support transaction nesting.
+	 *
+	 * BEGIN vs. BEGIN IMMEDIATE:
+	 *
+	 * When we're executing a statement that will need to write to the database,
+	 * we must use "BEGIN IMMEDIATE" to immediately open a write transaction.
+	 *
+	 * This is needed to avoid the "database is locked" error (SQLITE_BUSY) when
+	 * SQLite can't upgrade a read transaction to a write transaction, because
+	 * another connection is already modifying the database.
+	 *
+	 * From the SQLite documentation:
+	 *
+	 *   ## Read transactions versus write transactions
+	 *
+	 *   If a write statement occurs while a read transaction is active,
+	 *   then the read transaction is upgraded to a write transaction if
+	 *   possible. If some other database connection has already modified
+	 *   the database or is already in the process of modifying the database,
+	 *   then upgrading to a write transaction is not possible and the write
+	 *   statement will fail with SQLITE_BUSY.
+	 *
+	 *   ## DEFERRED, IMMEDIATE, and EXCLUSIVE transactions
+	 *
+	 *   Transactions can be DEFERRED, IMMEDIATE, or EXCLUSIVE. The default
+	 *   transaction behavior is DEFERRED.
+	 *
+	 *   DEFERRED means that the transaction does not actually start until
+	 *   the database is first accessed.
+	 *
+	 *   IMMEDIATE causes the database connection to start a new write
+	 *   immediately, without waiting for a write statement. The BEGIN
+	 *   IMMEDIATE might fail with SQLITE_BUSY if another write transaction
+	 *   is already active on another database connection.
+	 *
+	 * See:
+	 *   - https://www.sqlite.org/lang_transaction.html
+	 *   - https://www.sqlite.org/rescode.html#busy
+	 *
+	 * For better performance, we could also consider opening the write
+	 * transaction later in the session - just before the first write.
+	 */
+	private function begin_wrapper_transaction(): void {
+		if ( null !== $this->wrapper_transaction_type ) {
+			return;
+		}
+
+		$wrapper_transaction_type = $this->wrapper_transaction_type;
+		if ( $this->inTransaction() ) {
+			$savepoint_name           = $this->get_internal_savepoint_name( 'wrapper' );
+			$stmt                     = $this->connection->prepare( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
+			$wrapper_transaction_type = 'savepoint';
+		} else {
+			// For write transactions, we must use "BEGIN IMMEDIATE".
+			$stmt                     = $this->connection->prepare( $this->is_readonly ? 'BEGIN' : 'BEGIN IMMEDIATE' );
+			$wrapper_transaction_type = 'transaction';
+		}
+
+		if ( ! $stmt->execute() ) {
+			throw $this->new_driver_exception( 'Failed to begin wrapper transaction.' );
+		}
+		$this->wrapper_transaction_type = $wrapper_transaction_type;
+	}
+
+	/**
+	 * Commit a wrapper transaction.
+	 */
+	private function commit_wrapper_transaction(): void {
+		if ( null === $this->wrapper_transaction_type ) {
+			return;
+		}
+
+		if ( 'savepoint' === $this->wrapper_transaction_type ) {
+			$savepoint_name = $this->get_internal_savepoint_name( 'wrapper' );
+			$stmt           = $this->connection->prepare( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
+		} else {
+			$stmt = $this->connection->prepare( 'COMMIT' );
+		}
+
+		if ( ! $stmt->execute() ) {
+			throw $this->new_driver_exception( 'Failed to commit wrapper transaction.' );
+		}
+		$this->wrapper_transaction_type = null;
+	}
+
+	/**
+	 * Execute the "BEGIN" or "START TRANSACTION" MySQL statement in SQLite.
+	 */
+	private function begin_user_transaction(): void {
+		// MySQL implicitly commits previous transaction when starting a new one.
+		if ( $this->inTransaction() ) {
+			$this->commit_user_transaction();
+		}
+
+		/*
+		 * Since we don't know whether the user will write to the database, we
+		 * must use "BEGIN IMMEDIATE" to immediately open a write transaction.
+		 *
+		 * This is needed to avoid the "database is locked" error (SQLITE_BUSY)
+		 * when SQLite can't upgrade a read transaction to a write transaction,
+		 * because another connection is already modifying the database.
+		 *
+		 * @see self::begin_wrapper_transaction()
+		 */
+		$this->connection->query( 'BEGIN IMMEDIATE' );
+	}
+
+	/**
+	 * Execute the "COMMIT" MySQL statement in SQLite.
+	 */
+	private function commit_user_transaction(): void {
+		// MySQL doesn't throw an error if there is no active transaction.
+		if ( ! $this->inTransaction() ) {
+			return;
+		}
+		$this->connection->query( 'COMMIT' );
+	}
+
+	/**
+	 * Execute the "ROLLBACK" MySQL statement in SQLite.
+	 */
+	private function rollback_user_transaction(): void {
+		// MySQL doesn't throw an error if there is no active transaction.
+		if ( ! $this->inTransaction() ) {
+			return;
+		}
+		$this->connection->query( 'ROLLBACK' );
+	}
+
+	/**
 	 * Execute a MySQL transaction or locking statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "transactionOrLockingStatement" AST node.
@@ -1305,13 +1424,13 @@ class WP_SQLite_Driver {
 			case 'transactionStatement':
 				// START TRANSACTION.
 				if ( WP_MySQL_Lexer::START_SYMBOL === $token->id ) {
-					$this->begin_transaction();
+					$this->begin_user_transaction();
 					return;
 				}
 
 				// COMMIT.
 				if ( WP_MySQL_Lexer::COMMIT_SYMBOL === $token->id ) {
-					$this->commit();
+					$this->commit_user_transaction();
 					return;
 				}
 
@@ -1322,7 +1441,7 @@ class WP_SQLite_Driver {
 				// ROLLBACK/ROLLBACK TO SAVEPOINT <identifier>.
 				if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token->id ) {
 					if ( null === $savepoint_name ) {
-						$this->rollback();
+						$this->rollback_user_transaction();
 					} else {
 						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
 					}
@@ -1375,11 +1494,8 @@ class WP_SQLite_Driver {
 						}
 					}
 
-					// Start a transaction when no top-level transaction is active.
-					if ( 0 === $this->transaction_level ) {
-						$this->begin_transaction();
-						$this->table_lock_active = true;
-					}
+					$this->begin_user_transaction();
+					$this->table_lock_active = true;
 					return;
 				}
 
@@ -1392,8 +1508,8 @@ class WP_SQLite_Driver {
 					)
 				) {
 					// Commit the transaction when created by the LOCK statement.
-					if ( 1 === $this->transaction_level && $this->table_lock_active ) {
-						$this->commit();
+					if ( $this->table_lock_active && $this->inTransaction() ) {
+						$this->commit_user_transaction();
 						$this->table_lock_active = false;
 					}
 					return;
@@ -5867,11 +5983,11 @@ class WP_SQLite_Driver {
 	 * Internal savepoints are used to emulate MySQL transactions that are run
 	 * inside a wrapping SQLite transaction, as transactions can't be nested.
 	 *
-	 * @param  int $level The transaction nesting level.
-	 * @return string     The internal savepoint name.
+	 * @param  string $name The name of the savepoint.
+	 * @return string       The internal savepoint name.
 	 */
-	private function get_internal_savepoint_name( int $level ): string {
-		return sprintf( '%ssavepoint_%d', self::RESERVED_PREFIX, $level );
+	private function get_internal_savepoint_name( string $name ): string {
+		return sprintf( '%ssavepoint_%s', self::RESERVED_PREFIX, $name );
 	}
 
 	/**
@@ -5994,12 +6110,13 @@ class WP_SQLite_Driver {
 	 * Clear the state of the driver.
 	 */
 	private function flush(): void {
-		$this->last_mysql_query    = '';
-		$this->last_sqlite_queries = array();
-		$this->last_result         = null;
-		$this->last_return_value   = null;
-		$this->last_column_meta    = array();
-		$this->is_readonly         = false;
+		$this->last_mysql_query         = '';
+		$this->last_sqlite_queries      = array();
+		$this->last_result              = null;
+		$this->last_return_value        = null;
+		$this->last_column_meta         = array();
+		$this->is_readonly              = false;
+		$this->wrapper_transaction_type = null;
 	}
 
 	/**
