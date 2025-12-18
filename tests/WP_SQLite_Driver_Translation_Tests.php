@@ -1680,7 +1680,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		// Test a complex query with CTEs.
 		$this->assertQuery(
 			'WITH'
-				. " `cte1` ( `name` ) AS ( SELECT 'a' UNION ALL SELECT 'b' ) ,"
+				. " `cte1` ( `name` ) AS ( SELECT 'a' AS `a` UNION ALL SELECT 'b' AS `b` ) ,"
 				. ' `cte2` ( `name` ) AS ( SELECT `t2`.`name` FROM `t2` JOIN `t1` ON `t1`.`id` = `t2`.`id` ORDER BY `t2`.`name` )'
 				. ' SELECT `t1`.`name` , ( SELECT `name` FROM `cte1` WHERE `id` = 1 ) AS `cte1_name` , ( SELECT `name` FROM `cte2` WHERE `id` = 2 ) AS `cte2_name`'
 				. ' FROM `t1`'
