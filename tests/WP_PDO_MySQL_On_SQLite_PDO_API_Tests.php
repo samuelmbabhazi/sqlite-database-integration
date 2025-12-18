@@ -2,13 +2,13 @@
 
 use PHPUnit\Framework\TestCase;
 
-class WP_SQLite_Driver_PDO_API_Tests extends TestCase {
-	/** @var WP_SQLite_Driver */
+class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
+	/** @var WP_PDO_MySQL_On_SQLite */
 	private $driver;
 
 	public function setUp(): void {
 		$connection   = new WP_SQLite_Connection( array( 'path' => ':memory:' ) );
-		$this->driver = new WP_SQLite_Driver( $connection, 'wp' );
+		$this->driver = new WP_PDO_MySQL_On_SQLite( $connection, 'wp' );
 	}
 
 	public function test_begin_transaction(): void {

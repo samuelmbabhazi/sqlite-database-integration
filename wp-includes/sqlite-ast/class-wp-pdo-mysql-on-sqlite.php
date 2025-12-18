@@ -14,7 +14,7 @@
  *
  * The driver requires PDO with the SQLite driver, and the PCRE engine.
  */
-class WP_SQLite_Driver {
+class WP_PDO_MySQL_On_SQLite {
 	/**
 	 * The path to the MySQL SQL grammar file.
 	 */
