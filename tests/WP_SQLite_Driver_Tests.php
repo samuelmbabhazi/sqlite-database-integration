@@ -9603,6 +9603,7 @@ END;
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't',
 					'Create Table' => implode(
 						"\n",
 						array(

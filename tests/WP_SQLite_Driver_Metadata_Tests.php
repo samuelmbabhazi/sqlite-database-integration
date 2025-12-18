@@ -1319,6 +1319,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't2',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1451,6 +1452,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't2',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1558,6 +1560,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't2',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1681,6 +1684,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't2',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1725,6 +1729,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't2',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1764,6 +1769,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't2',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1799,6 +1805,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't2',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1830,6 +1837,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't2',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1852,6 +1860,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1882,6 +1891,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't',
 					'Create Table' => implode(
 						"\n",
 						array(
@@ -1913,6 +1923,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals(
 			array(
 				(object) array(
+					'Table'        => 't',
 					'Create Table' => implode(
 						"\n",
 						array(

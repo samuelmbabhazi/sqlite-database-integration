@@ -2409,6 +2409,7 @@ class WP_SQLite_Driver {
 						$this->set_results_from_fetched_data(
 							array(
 								(object) array(
+									'Table'        => $table_name,
 									'Create Table' => $sql,
 								),
 							)
