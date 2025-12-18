@@ -4247,6 +4247,22 @@ class WP_SQLite_Driver {
 		}
 
 		/*
+		 * When the select item is a text string literal, we need to use an alias
+		 * to ensure that the column name is the same as it would be in MySQL.
+		 * In MySQL, the column name is the original text string literal value
+		 * without quotes and escaping, but in SQLite, it is the quoted value.
+		 *
+		 * For example, for "SELECT 'abc'", the resulting column name is "abc"
+		 * in MySQL, but would be "'abc'" in SQLite if an alias was not used.
+		 */
+		$text_string_literal    = $node->get_first_descendant_node( 'textStringLiteral' );
+		$is_text_string_literal = $text_string_literal && $item === $this->translate( $text_string_literal );
+		if ( $is_text_string_literal ) {
+			$alias = $text_string_literal->get_first_child_token()->get_value();
+			return sprintf( '%s AS %s', $item, $this->quote_sqlite_identifier( $alias ) );
+		}
+
+		/*
 		 * When the select item has no explicit alias, we need to ensure that the
 		 * returned column name is equivalent to what MySQL infers from the input.
 		 *
