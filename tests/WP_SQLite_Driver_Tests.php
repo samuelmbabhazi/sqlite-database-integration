@@ -2490,6 +2490,28 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertCount( 0, $this->engine->get_query_results() );
 	}
 
+	public function testRepeatedTransactionCommands(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		// 1st BEGIN starts a transaction.
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1);' );
+
+		// 2nd BEGIN commits the previous transaction and starts a new one.
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2);' );
+
+		// ROLLBACK rolls back the 2nd transaction.
+		$this->assertQuery( 'ROLLBACK' );
+		$results = $this->assertQuery( 'SELECT * FROM t;' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $results );
+
+		// Repeated ROLLBACK should do nothing.
+		$this->assertQuery( 'ROLLBACK' );
+		$results = $this->assertQuery( 'SELECT * FROM t;' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $results );
+	}
+
 	public function testCount() {
 		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
 		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('second');" );
