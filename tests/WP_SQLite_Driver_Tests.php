@@ -2490,87 +2490,26 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertCount( 0, $this->engine->get_query_results() );
 	}
 
-	public function testNestedTransactionWork() {
+	public function testRepeatedTransactionCommands(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		// 1st BEGIN starts a transaction.
 		$this->assertQuery( 'BEGIN' );
-		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
-		$this->assertQuery( 'START TRANSACTION' );
-		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('second');" );
-		$this->assertQuery( 'START TRANSACTION' );
-		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('third');" );
-		$this->assertQuery( 'SELECT * FROM _options;' );
-		$this->assertCount( 3, $this->engine->get_query_results() );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1);' );
 
-		$this->assertQuery( 'ROLLBACK' );
-		$this->assertQuery( 'SELECT * FROM _options;' );
-		$this->assertCount( 2, $this->engine->get_query_results() );
-
-		$this->assertQuery( 'ROLLBACK' );
-		$this->assertQuery( 'SELECT * FROM _options;' );
-		$this->assertCount( 1, $this->engine->get_query_results() );
-
-		$this->assertQuery( 'COMMIT' );
-		$this->assertQuery( 'SELECT * FROM _options;' );
-		$this->assertCount( 1, $this->engine->get_query_results() );
-	}
-
-	public function testNestedTransactionWorkComplexModify() {
+		// 2nd BEGIN commits the previous transaction and starts a new one.
 		$this->assertQuery( 'BEGIN' );
-		// Create a complex ALTER Table query where the first
-		// column is added successfully, but the second fails.
-		// Behind the scenes, this single MySQL query is split
-		// into multiple SQLite queries – some of them will
-		// succeed, some will fail.
-		$error = '';
-		try {
-			$this->engine->query(
-				'
-				ALTER TABLE _options
-				ADD COLUMN test varchar(20),
-				ADD COLUMN test varchar(20)
-			'
-			);
-		} catch ( Throwable $e ) {
-			$error = $e->getMessage();
-		}
-		$this->assertStringContainsString( "Duplicate column name 'test'", $error );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2);' );
 
-		// Commit the transaction.
-		$this->assertQuery( 'COMMIT' );
+		// ROLLBACK rolls back the 2nd transaction.
+		$this->assertQuery( 'ROLLBACK' );
+		$results = $this->assertQuery( 'SELECT * FROM t;' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $results );
 
-		// Confirm the entire query failed atomically and no column was
-		// added to the table.
-		$this->assertQuery( 'DESCRIBE _options;' );
-		$fields = $this->engine->get_query_results();
-
-		$this->assertEquals(
-			array(
-				(object) array(
-					'Field'   => 'ID',
-					'Type'    => 'int',
-					'Null'    => 'NO',
-					'Key'     => 'PRI',
-					'Default' => null,
-					'Extra'   => 'auto_increment',
-				),
-				(object) array(
-					'Field'   => 'option_name',
-					'Type'    => 'text',
-					'Null'    => 'NO',
-					'Key'     => '',
-					'Default' => '',
-					'Extra'   => '',
-				),
-				(object) array(
-					'Field'   => 'option_value',
-					'Type'    => 'text',
-					'Null'    => 'NO',
-					'Key'     => '',
-					'Default' => '',
-					'Extra'   => '',
-				),
-			),
-			$fields
-		);
+		// Repeated ROLLBACK should do nothing.
+		$this->assertQuery( 'ROLLBACK' );
+		$results = $this->assertQuery( 'SELECT * FROM t;' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $results );
 	}
 
 	public function testCount() {
