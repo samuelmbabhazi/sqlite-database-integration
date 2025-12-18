@@ -685,7 +685,7 @@ class WP_PDO_MySQL_On_SQLite {
 	}
 
 	/**
-	 * PDO API: Begin a new transaction or nested transaction.
+	 * PDO API: Begin a transaction.
 	 *
 	 * @return bool True on success, false on failure.
 	 */
@@ -708,7 +708,7 @@ class WP_PDO_MySQL_On_SQLite {
 	}
 
 	/**
-	 * PDO API: Commit the current transaction or nested transaction.
+	 * PDO API: Commit a transaction.
 	 *
 	 * @return bool True on success, false on failure.
 	 */
@@ -721,7 +721,7 @@ class WP_PDO_MySQL_On_SQLite {
 	}
 
 	/**
-	 * PDO API: Rollback the current transaction or nested transaction.
+	 * PDO API: Rollback a transaction.
 	 *
 	 * @return bool True on success, false on failure.
 	 */
