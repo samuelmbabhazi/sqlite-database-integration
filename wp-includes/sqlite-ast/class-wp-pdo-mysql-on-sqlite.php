@@ -685,6 +685,87 @@ class WP_PDO_MySQL_On_SQLite {
 	}
 
 	/**
+	 * Translate and execute a MySQL query in SQLite.
+	 *
+	 * A single MySQL query can be translated into zero or more SQLite queries.
+	 *
+	 * @param string $query              Full SQL statement string.
+	 * @param int    $fetch_mode         PDO fetch mode. Default is PDO::FETCH_OBJ.
+	 * @param array  ...$fetch_mode_args Additional fetch mode arguments.
+	 *
+	 * @return mixed Return value, depending on the query type.
+	 *
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 *
+	 * TODO:
+	 *   The API of this function is not final.
+	 *   We should also add support for parametrized queries.
+	 *   See: https://github.com/Automattic/sqlite-database-integration/issues/7
+	 */
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->flush();
+		$this->pdo_fetch_mode   = $fetch_mode;
+		$this->last_mysql_query = $query;
+
+		try {
+			// Parse the MySQL query.
+			$parser = $this->create_parser( $query );
+			$parser->next_query();
+			$ast = $parser->get_query_ast();
+			if ( null === $ast ) {
+				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+			}
+
+			if ( $parser->next_query() ) {
+				throw $this->new_driver_exception( 'Multi-query is not supported.' );
+			}
+
+			/*
+			 * Determine if we need to wrap the translated queries in a transaction.
+			 *
+			 * [GRAMMAR]
+			 * query:
+			 *   EOF
+			 *   | (simpleStatement | beginWork) (SEMICOLON_SYMBOL EOF? | EOF)
+			 */
+			$child_node = $ast->get_first_child_node();
+			if (
+				null === $child_node
+				|| 'beginWork' === $child_node->rule_name
+				|| $child_node->has_child_node( 'transactionOrLockingStatement' )
+			) {
+				$wrap_in_transaction = false;
+			} else {
+				$wrap_in_transaction = true;
+			}
+
+			if ( $wrap_in_transaction ) {
+				$this->begin_wrapper_transaction();
+			}
+
+			$this->execute_mysql_query( $ast );
+
+			if ( $wrap_in_transaction ) {
+				$this->commit_wrapper_transaction();
+			}
+			return $this->last_return_value;
+		} catch ( Throwable $e ) {
+			try {
+				$this->rollback_user_transaction();
+				$this->table_lock_active = false;
+			} catch ( Throwable $rollback_exception ) {
+				// Ignore rollback errors.
+			}
+			if ( $e instanceof WP_SQLite_Driver_Exception ) {
+				throw $e;
+			} elseif ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
+				throw $this->convert_information_schema_exception( $e );
+			}
+			throw $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
+		}
+	}
+
+	/**
 	 * PDO API: Begin a transaction.
 	 *
 	 * @return bool True on success, false on failure.
@@ -838,87 +919,6 @@ class WP_PDO_MySQL_On_SQLite {
 			$last_insert_id = (int) $last_insert_id;
 		}
 		return $last_insert_id;
-	}
-
-	/**
-	 * Translate and execute a MySQL query in SQLite.
-	 *
-	 * A single MySQL query can be translated into zero or more SQLite queries.
-	 *
-	 * @param string $query              Full SQL statement string.
-	 * @param int    $fetch_mode         PDO fetch mode. Default is PDO::FETCH_OBJ.
-	 * @param array  ...$fetch_mode_args Additional fetch mode arguments.
-	 *
-	 * @return mixed Return value, depending on the query type.
-	 *
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
-	 *
-	 * TODO:
-	 *   The API of this function is not final.
-	 *   We should also add support for parametrized queries.
-	 *   See: https://github.com/Automattic/sqlite-database-integration/issues/7
-	 */
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->flush();
-		$this->pdo_fetch_mode   = $fetch_mode;
-		$this->last_mysql_query = $query;
-
-		try {
-			// Parse the MySQL query.
-			$parser = $this->create_parser( $query );
-			$parser->next_query();
-			$ast = $parser->get_query_ast();
-			if ( null === $ast ) {
-				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
-			}
-
-			if ( $parser->next_query() ) {
-				throw $this->new_driver_exception( 'Multi-query is not supported.' );
-			}
-
-			/*
-			 * Determine if we need to wrap the translated queries in a transaction.
-			 *
-			 * [GRAMMAR]
-			 * query:
-			 *   EOF
-			 *   | (simpleStatement | beginWork) (SEMICOLON_SYMBOL EOF? | EOF)
-			 */
-			$child_node = $ast->get_first_child_node();
-			if (
-				null === $child_node
-				|| 'beginWork' === $child_node->rule_name
-				|| $child_node->has_child_node( 'transactionOrLockingStatement' )
-			) {
-				$wrap_in_transaction = false;
-			} else {
-				$wrap_in_transaction = true;
-			}
-
-			if ( $wrap_in_transaction ) {
-				$this->begin_wrapper_transaction();
-			}
-
-			$this->execute_mysql_query( $ast );
-
-			if ( $wrap_in_transaction ) {
-				$this->commit_wrapper_transaction();
-			}
-			return $this->last_return_value;
-		} catch ( Throwable $e ) {
-			try {
-				$this->rollback_user_transaction();
-				$this->table_lock_active = false;
-			} catch ( Throwable $rollback_exception ) {
-				// Ignore rollback errors.
-			}
-			if ( $e instanceof WP_SQLite_Driver_Exception ) {
-				throw $e;
-			} elseif ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
-				throw $this->convert_information_schema_exception( $e );
-			}
-			throw $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
-		}
 	}
 
 	/**
