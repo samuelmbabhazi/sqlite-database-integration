@@ -71,7 +71,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 			"SELECT
 				table_name as 'name',
 				engine AS 'engine',
-				FLOOR( data_length / 1024 / 1024 ) 'data'
+				CAST( data_length / 1024 / 1024 AS UNSIGNED ) AS 'data'
 			FROM INFORMATION_SCHEMA.TABLES
 			WHERE TABLE_NAME = 't'
 			ORDER BY name ASC"
@@ -251,30 +251,67 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 			$result
 		);
 
+		/**
+		 * With SQLite < 3.33.0, the integrity check operation doesn't throw
+		 * an error for missing tables. Let's reflect this in the assertions.
+		 */
+		$is_strict_integrity_check_supported = version_compare( $this->engine->get_sqlite_version(), '3.33.0', '>=' );
+
 		// A missing table.
-		$result = $this->assertQuery( 'CHECK TABLE missing' );
-		$this->assertEquals(
-			array(
-				(object) array(
-					'Table'    => 'wp.missing',
-					'Op'       => 'check',
-					'Msg_type' => 'Error',
-					'Msg_text' => "Table 'missing' doesn't exist",
-				),
+		$result   = $this->assertQuery( 'CHECK TABLE missing' );
+		$expected = array(
+			(object) array(
+				'Table'    => 'wp.missing',
+				'Op'       => 'check',
+				'Msg_type' => 'Error',
+				'Msg_text' => "Table 'missing' doesn't exist",
+			),
+			(object) array(
+				'Table'    => 'wp.missing',
+				'Op'       => 'check',
+				'Msg_type' => 'status',
+				'Msg_text' => 'Operation failed',
+			),
+		);
+
+		if ( ! $is_strict_integrity_check_supported ) {
+			$expected = array(
 				(object) array(
 					'Table'    => 'wp.missing',
 					'Op'       => 'check',
 					'Msg_type' => 'status',
-					'Msg_text' => 'Operation failed',
+					'Msg_text' => 'OK',
 				),
-			),
-			$result
-		);
+			);
+		}
+
+		$this->assertEquals( $expected, $result );
 
 		// One good and one missing table.
-		$result = $this->assertQuery( 'CHECK TABLE t1, missing' );
-		$this->assertEquals(
-			array(
+		$result   = $this->assertQuery( 'CHECK TABLE t1, missing' );
+		$expected = array(
+			(object) array(
+				'Table'    => 'wp.t1',
+				'Op'       => 'check',
+				'Msg_type' => 'status',
+				'Msg_text' => 'OK',
+			),
+			(object) array(
+				'Table'    => 'wp.missing',
+				'Op'       => 'check',
+				'Msg_type' => 'Error',
+				'Msg_text' => "Table 'missing' doesn't exist",
+			),
+			(object) array(
+				'Table'    => 'wp.missing',
+				'Op'       => 'check',
+				'Msg_type' => 'status',
+				'Msg_text' => 'Operation failed',
+			),
+		);
+
+		if ( ! $is_strict_integrity_check_supported ) {
+			$expected = array(
 				(object) array(
 					'Table'    => 'wp.t1',
 					'Op'       => 'check',
@@ -284,18 +321,13 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 				(object) array(
 					'Table'    => 'wp.missing',
 					'Op'       => 'check',
-					'Msg_type' => 'Error',
-					'Msg_text' => "Table 'missing' doesn't exist",
-				),
-				(object) array(
-					'Table'    => 'wp.missing',
-					'Op'       => 'check',
 					'Msg_type' => 'status',
-					'Msg_text' => 'Operation failed',
+					'Msg_text' => 'OK',
 				),
-			),
-			$result
-		);
+			);
+		}
+
+		$this->assertEquals( $expected, $result );
 	}
 
 	public function testOptimizeTable() {

@@ -849,7 +849,7 @@ class WP_PDO_MySQL_On_SQLite {
 	 * @return string SQLite engine version as a string.
 	 */
 	public function get_sqlite_version(): string {
-		return $this->connection->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
+		return $this->connection->get_pdo()->getAttribute( PDO::ATTR_SERVER_VERSION );
 	}
 
 	/**
@@ -1646,7 +1646,8 @@ class WP_PDO_MySQL_On_SQLite {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
-		$parts = array();
+		$parts                   = array();
+		$on_conflict_update_list = null;
 		foreach ( $node->get_children() as $child ) {
 			$is_token = $child instanceof WP_MySQL_Token;
 			$is_node  = $child instanceof WP_Parser_Node;
@@ -1678,14 +1679,87 @@ class WP_PDO_MySQL_On_SQLite {
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
 			} elseif ( $is_node && 'insertUpdateList' === $child->rule_name ) {
-				// Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
-				$parts[] = 'ON CONFLICT DO UPDATE SET ';
-				$parts[] = $this->translate_update_list( $table_name, $child );
+				/*
+				 * Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
+				 *
+				 * For SQLite versions older than 3.35.0, we need to handle the
+				 * ON CONFLICT clause differently, and at this stage, we only
+				 * save the translated update list to a variable.
+				 *
+				 * See bellow at "Handle ON CONFLICT clause for SQLite < 3.35.0".
+				 */
+				$sqlite_version = $this->get_sqlite_version();
+				if ( version_compare( $sqlite_version, '3.35.0', '<' ) ) {
+					$on_conflict_update_list = $this->translate_update_list( $table_name, $child );
+				} else {
+					$parts[] = 'ON CONFLICT DO UPDATE SET ';
+					$parts[] = $this->translate_update_list( $table_name, $child );
+				}
 			} else {
 				$parts[] = $this->translate( $child );
 			}
 		}
+
 		$query = implode( ' ', $parts );
+
+		/*
+		 * Handle ON CONFLICT clause for SQLite < 3.35.0.
+		 *
+		 * If and "$on_conflict_update_list" was saved, we are on SQLite version
+		 * older than 3.35.0 and an ON CONFLICT clause was used in the query.
+		 *
+		 * SQLite supports a generic ON CONFLICT clause without an explicit column
+		 * list only from version 3.35.0.
+		 *
+		 * For older versions, we need to work around this limitation:
+		 *   1. Save the ON CONFLICT update list to a variable.
+		 *   2. Execute the query without the ON CONFLICT clause.
+		 *   3. If a constraint violation error occurs, parse the names of the
+		 *      columns that caused the violation from the error message.
+		 *   4. Execute the query again, appending the ON CONFLICT clause with
+		 *      the column names parsed from the error message.
+		 */
+		if ( null !== $on_conflict_update_list ) {
+			try {
+				$this->execute_sqlite_query( $query );
+				$this->set_result_from_affected_rows();
+			} catch ( PDOException $e ) {
+				$unique_key_violation_prefix = 'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: ';
+				if ( '23000' === $e->getCode() && str_contains( $e->getMessage(), $unique_key_violation_prefix ) ) {
+					/*
+					 * Parse column names from the constraint violation error.
+					 *
+					 * The error message is in the following format:
+					 *   <prefix>: <table>.<col1>, <table>.<col2>, ...
+					 *
+					 * The table and column names in the message are not quoted.
+					 * To be on the safe side, we first strip the error message
+					 * prefix and the "<table>." part for the first column, and
+					 * then split the rest of the list by ", <table>." sequence.
+					 */
+					$column_list         = substr( $e->getMessage(), strlen( $unique_key_violation_prefix ) + strlen( $table_name ) + 1 );
+					$column_names        = explode( ", $table_name.", $column_list );
+					$quoted_column_names = array_map(
+						function ( $column ) {
+							return $this->quote_sqlite_identifier( $column );
+						},
+						$column_names
+					);
+					$this->execute_sqlite_query(
+						$query . sprintf(
+							' ON CONFLICT(%s) DO UPDATE SET %s',
+							implode( ', ', $quoted_column_names ),
+							$on_conflict_update_list
+						)
+					);
+					$this->set_result_from_affected_rows();
+				} else {
+					throw $e;
+				}
+			}
+			return;
+		}
+
 		$this->execute_sqlite_query( $query );
 		$this->set_result_from_affected_rows();
 	}
@@ -2556,7 +2630,9 @@ class WP_PDO_MySQL_On_SQLite {
 			sprintf(
 				'SELECT SCHEMA_NAME AS Database
 				FROM (
-					SELECT IIF(SCHEMA_NAME = ?, ?, SCHEMA_NAME) AS SCHEMA_NAME FROM %s ORDER BY SCHEMA_NAME
+					SELECT CASE WHEN SCHEMA_NAME = ? THEN ? ELSE SCHEMA_NAME END AS SCHEMA_NAME
+					FROM %s
+					ORDER BY SCHEMA_NAME
 				)%s',
 				$this->quote_sqlite_identifier( $schemata_table ),
 				isset( $condition ) ? ( ' WHERE TRUE ' . $condition ) : ''
@@ -3420,6 +3496,22 @@ class WP_PDO_MySQL_On_SQLite {
 				return $this->translate_runtime_function_call( $node );
 			case 'functionCall':
 				return $this->translate_function_call( $node );
+			case 'substringFunction':
+				$nodes = $node->get_child_nodes();
+				if ( count( $nodes ) === 2 ) {
+					return sprintf(
+						'SUBSTR(%s, %s)',
+						$this->translate( $nodes[0] ),
+						$this->translate( $nodes[1] )
+					);
+				} else {
+					return sprintf(
+						'SUBSTR(%s, %s, %s)',
+						$this->translate( $nodes[0] ),
+						$this->translate( $nodes[1] ),
+						$this->translate( $nodes[2] )
+					);
+				}
 			case 'systemVariable':
 				$var_ident_type = $node->get_first_child_node( 'varIdentType' );
 				$type_token     = $var_ident_type ? $var_ident_type->get_first_child_token() : null;
@@ -4040,7 +4132,7 @@ class WP_PDO_MySQL_On_SQLite {
 			case WP_MySQL_Lexer::LEFT_SYMBOL:
 				$nodes = $node->get_child_nodes();
 				return sprintf(
-					'SUBSTRING(%s, 1, %s)',
+					'SUBSTR(%s, 1, %s)',
 					$this->translate( $nodes[0] ),
 					$this->translate( $nodes[1] )
 				);
@@ -4298,7 +4390,7 @@ class WP_PDO_MySQL_On_SQLite {
 	 *   SELECT *, `t`.*, `t`.`table_schema` FROM (
 	 *     SELECT
 	 *       `TABLE_CATALOG`,
-	 *       IIF(`TABLE_SCHEMA` = 'information_schema', `TABLE_SCHEMA`, 'database_name') AS `TABLE_SCHEMA`,
+	 *       CASE WHEN `TABLE_SCHEMA` = 'information_schema' THEN `TABLE_SCHEMA` ELSE 'database_name' END AS `TABLE_SCHEMA`,
 	 *       `TABLE_NAME`,
 	 *       ...
 	 *     FROM `_wp_sqlite_mysql_information_schema_tables` AS `tables`
@@ -4368,7 +4460,7 @@ class WP_PDO_MySQL_On_SQLite {
 				$quoted_column = $this->quote_sqlite_identifier( $column );
 				if ( isset( $information_schema_db_column_map[ strtoupper( $column ) ] ) ) {
 					$expanded_list[] = sprintf(
-						"IIF(%s = 'information_schema', %s, %s) AS %s",
+						"CASE WHEN %s = 'information_schema' THEN %s ELSE %s END AS %s",
 						$quoted_column,
 						$quoted_column,
 						$this->connection->quote( $this->main_db_name ),
@@ -4780,9 +4872,35 @@ class WP_PDO_MySQL_On_SQLite {
 		// Wrap the original insert VALUES, SELECT, or SET list in a FROM clause.
 		if ( 'insertFromConstructor' === $node->rule_name ) {
 			// VALUES (...)
-			$from = $this->translate(
-				$node->get_first_child_node( 'insertValues' )
-			);
+			$insert_values = $node->get_first_child_node( 'insertValues' );
+			$from          = $this->translate( $insert_values );
+
+			/**
+			 * The automatic "columnN" naming for VALUES lists is supported only
+			 * from SQLite 3.33.0. For older versions, we need to emulate it by
+			 * prepending a dummy VALUES list header via the UNION ALL operator:
+			 *
+			 * SELECT
+			 *   NULL AS `column1`, NULL AS `column2`, ... WHERE FALSE
+			 *   UNION ALL
+			 *   VALUES (value1, value2, ...)
+			 */
+			$is_values_naming_supported = version_compare( $this->get_sqlite_version(), '3.33.0', '>=' );
+			if ( ! $is_values_naming_supported ) {
+				$values_list = $insert_values->get_first_child_node( 'valueList' );
+				$values      = $values_list->get_first_child_node( 'values' );
+				$value_count = (
+					count( $values->get_child_nodes( 'expr' ) )
+					+ count( $values->get_child_nodes( WP_MySQL_Lexer::DEFAULT_SYMBOL ) )
+				);
+
+				$columns_list = '';
+				for ( $i = 1; $i <= $value_count; $i++ ) {
+					$columns_list .= $i > 1 ? ', ' : '';
+					$columns_list .= 'NULL AS ' . $this->quote_sqlite_identifier( 'column' . $i );
+				}
+				$from = 'SELECT ' . $columns_list . ' WHERE FALSE UNION ALL ' . $from;
+			}
 		} elseif ( 'insertQueryExpression' === $node->rule_name ) {
 			// SELECT ...
 			$from = $this->translate(
@@ -5726,7 +5844,12 @@ class WP_PDO_MySQL_On_SQLite {
 			$this->quote_sqlite_identifier( $new_table_name ?? $table_name )
 		);
 		$create_table_query .= implode( ",\n", $rows );
-		$create_table_query .= "\n) STRICT";
+		$create_table_query .= "\n)";
+
+		if ( version_compare( $this->get_sqlite_version(), '3.37.0', '>=' ) ) {
+			$create_table_query .= ' STRICT';
+		}
+
 		return array_merge( array( $create_table_query ), $create_index_queries, $on_update_queries );
 	}
 
