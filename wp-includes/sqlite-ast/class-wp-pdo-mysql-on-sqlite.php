@@ -2897,20 +2897,43 @@ class WP_PDO_MySQL_On_SQLite {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'column_name' );
 		}
 
+		// Handle the FULL keyword.
+		$command_type = $node->get_first_child_node( 'showCommandType' );
+		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Lexer::FULL_SYMBOL );
+
 		// Fetch column information.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
-		$stmt          = $this->execute_sqlite_query(
+
+		if ( $is_full ) {
+			$fields = '
+				column_name AS `Field`,
+				column_type AS `Type`,
+				collation_name AS `Collation`,
+				is_nullable AS `Null`,
+				column_key AS `Key`,
+				column_default AS `Default`,
+				extra AS `Extra`,
+				privileges AS `Privileges`,
+				column_comment AS `Comment`
+			';
+		} else {
+			$fields = '
+				column_name AS `Field`,
+				column_type AS `Type`,
+				is_nullable AS `Null`,
+				column_key AS `Key`,
+				column_default AS `Default`,
+				extra AS `Extra`
+			';
+		}
+
+		$stmt = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT
-					column_name AS `Field`,
-					column_type AS `Type`,
-					is_nullable AS `Null`,
-					column_key AS `Key`,
-					column_default AS `Default`,
-					extra AS `Extra`
+				'SELECT %s
 				FROM %s
 				WHERE table_schema = ? AND table_name = ? %s
 				ORDER BY ordinal_position',
+				$fields,
 				$this->quote_sqlite_identifier( $columns_table ),
 				$condition ?? ''
 			),
