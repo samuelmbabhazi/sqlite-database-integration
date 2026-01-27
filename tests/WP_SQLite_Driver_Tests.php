@@ -9294,13 +9294,13 @@ END;
 
 					// The of the check expressions below is not 100% matching MySQL,
 					// because in MySQL the expressions are parsed and normalized.
-					'  CONSTRAINT `c1` CHECK ( id < 10 ),',
-					'  CONSTRAINT `c2` CHECK ( start_timestamp < end_timestamp ),',
-					'  CONSTRAINT `c3` CHECK ( length ( data ) < 20 ),',
-					'  CONSTRAINT `t_chk_1` CHECK ( id > 0 ),',
-					"  CONSTRAINT `t_chk_2` CHECK ( name != '' ),",
-					'  CONSTRAINT `t_chk_3` CHECK ( score > 0 AND score < 100 ),',
-					'  CONSTRAINT `t_chk_4` CHECK ( json_valid ( data ) )',
+					'  CONSTRAINT `c1` CHECK (id < 10),',
+					'  CONSTRAINT `c2` CHECK (start_timestamp < end_timestamp),',
+					'  CONSTRAINT `c3` CHECK (length(data)< 20),',
+					'  CONSTRAINT `t_chk_1` CHECK (id > 0),',
+					"  CONSTRAINT `t_chk_2` CHECK (name != ''),",
+					'  CONSTRAINT `t_chk_3` CHECK (score > 0 AND score < 100),',
+					'  CONSTRAINT `t_chk_4` CHECK (json_valid(data))',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -9326,8 +9326,8 @@ END;
 				array(
 					'CREATE TABLE `t` (',
 					'  `id` int DEFAULT NULL,',
-					'  CONSTRAINT `c` CHECK ( id > 0 ),',
-					'  CONSTRAINT `t_chk_1` CHECK ( id < 10 )',
+					'  CONSTRAINT `c` CHECK (id > 0),',
+					'  CONSTRAINT `t_chk_1` CHECK (id < 10)',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -9396,7 +9396,7 @@ END;
 				array(
 					'CREATE TABLE `t` (',
 					'  `id` int DEFAULT NULL,',
-					'  CONSTRAINT `c` CHECK ( id > 0 ) /*!80016 NOT ENFORCED */',
+					'  CONSTRAINT `c` CHECK (id > 0) /*!80016 NOT ENFORCED */',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -11367,5 +11367,160 @@ END;
 
 		$result = $this->assertQuery( "SELECT SUBSTRING('abcdef' FROM 4) AS s" );
 		$this->assertSame( 'def', $result[0]->s );
+	}
+
+	/**
+	 * Test CREATE TABLE with DEFAULT (now()) - GitHub issue #300
+	 * Tests that DEFAULT with function calls in parentheses works correctly in AST driver.
+	 *
+	 * @see https://github.com/WordPress/sqlite-database-integration/issues/300
+	 */
+	public function testCreateTableWithDefaultNowFunction(): void {
+		// Test the exact SQL from the issue
+		$this->assertQuery(
+			'CREATE TABLE `test_now_default` (
+				`id` int NOT NULL,
+				`updated` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;'
+		);
+
+		// Insert a row to verify the default value works
+		$this->assertQuery( 'INSERT INTO test_now_default (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM test_now_default WHERE id = 1' );
+		$this->assertCount( 1, $result );
+
+		// Verify the updated timestamp was set (should match YYYY-MM-DD HH:MM:SS format)
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->updated );
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE test_now_default' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `test_now_default` (',
+					'  `id` int NOT NULL,',
+					'  `updated` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci',
+				)
+			),
+			$results[0]->{'Create Table'}
+		);
+
+		// DESCRIBE
+		$this->assertQuery( 'DESCRIBE test_now_default' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'updated',
+					'Type'    => 'timestamp',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'now()',
+					'Extra'   => 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP',
+				),
+			),
+			$results
+		);
+
+		// Verify the translated SQLite definition.
+		$result = $this->sqlite->query( 'PRAGMA table_info(test_now_default)' )->fetchAll();
+		$this->assertSame( null, $result[0]['dflt_value'] );
+		$this->assertSame( 'CURRENT_TIMESTAMP', $result[1]['dflt_value'] );
+	}
+
+	public function testCreateTableWithDefaultExpressions(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id int NOT NULL,
+				col1 int NOT NULL DEFAULT (1 + 2),
+				col2 datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR)),
+				col3 varchar(255) NOT NULL DEFAULT (CONCAT(\'a\', \'b\'))
+			)'
+		);
+
+		// Insert a row and verify the default values
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT * FROM t WHERE id = 1' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( 3, $results[0]->col1 );
+		$this->assertStringStartsWith( ( gmdate( 'Y' ) + 1 ) . '-', $results[0]->col2 );
+		$this->assertEquals( 'ab', $results[0]->col3 );
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int NOT NULL,',
+					'  `col1` int NOT NULL DEFAULT (1 + 2),',
+					'  `col2` datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR)),',
+					"  `col3` varchar(255) NOT NULL DEFAULT (CONCAT('a' , 'b'))",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$results[0]->{'Create Table'}
+		);
+
+		// DESCRIBE
+		$this->assertQuery( 'DESCRIBE t' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'col1',
+					'Type'    => 'int',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '1 + 2',
+					'Extra'   => 'DEFAULT_GENERATED',
+				),
+				(object) array(
+					'Field'   => 'col2',
+					'Type'    => 'datetime',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'DATE_ADD(NOW(), INTERVAL 1 YEAR)',
+					'Extra'   => 'DEFAULT_GENERATED',
+				),
+				(object) array(
+					'Field'   => 'col3',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => "CONCAT('a' , 'b')",
+					'Extra'   => 'DEFAULT_GENERATED',
+				),
+			),
+			$results
+		);
+
+		// Verify the translated SQLite definition.
+		$result = $this->sqlite->query( 'PRAGMA table_info(t)' )->fetchAll();
+		$this->assertSame( null, $result[0]['dflt_value'] );
+		$this->assertSame( '1 + 2', $result[1]['dflt_value'] );
+		$this->assertSame( "DATETIME(CURRENT_TIMESTAMP, '+' || 1 || ' YEAR')", $result[2]['dflt_value'] );
+		$this->assertSame( "('a' || 'b')", $result[3]['dflt_value'] );
 	}
 }
