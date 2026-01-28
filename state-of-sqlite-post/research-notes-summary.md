@@ -4,6 +4,7 @@ This is an index to the research gathered for the "State of SQLite" post about t
 
 ## Research Files
 
+### Core Research
 | File | Description | Key Topics |
 |------|-------------|------------|
 | [research-notes-overview.md](research-notes-overview.md) | Project overview and history | Timeline, components, features, contributors |
@@ -11,6 +12,15 @@ This is an index to the research gathered for the "State of SQLite" post about t
 | [research-notes-challenges.md](research-notes-challenges.md) | Challenges and solutions | 18 major challenges and how they were solved |
 | [research-notes-examples.md](research-notes-examples.md) | Query translation examples | MySQL → SQLite transformations |
 | [research-notes-statistics.md](research-notes-statistics.md) | Statistics and metrics | Code stats, releases, tests |
+
+### Extended Research (Phase 2)
+| File | Description | Key Topics |
+|------|-------------|------------|
+| [research-notes-real-world-problems.md](research-notes-real-world-problems.md) | Bugs and issues fixed | Plugin compatibility, WordPress core issues |
+| [research-notes-before-after.md](research-notes-before-after.md) | Old vs new driver comparison | Feature comparison, query support |
+| [research-notes-architecture-diagram.md](research-notes-architecture-diagram.md) | Visual architecture | ASCII diagrams, component flow |
+| [research-notes-why-not-just.md](research-notes-why-not-just.md) | Design decisions explained | Why simpler approaches fail |
+| [research-notes-comparisons.md](research-notes-comparisons.md) | Other projects comparison | History, alternatives, unique contributions |
 
 ## Existing Posts (for reference)
 
@@ -95,6 +105,27 @@ For code examples and deep dives:
 - **MySQL Proxy**: [#272 - MySQL Proxy for SQLite](https://github.com/WordPress/sqlite-database-integration/pull/272)
 - **Releases**: [All releases](https://github.com/WordPress/sqlite-database-integration/releases)
 - **Automattic Fork**: [Archived](https://github.com/Automattic/sqlite-database-integration)
+
+## Key PR Discussion Highlights
+
+From PR #157 (Parser) discussion thread:
+
+1. **Initial Validation**: Jan tested 66k MySQL queries, achieving 97% success rate with minimal fixes
+2. **Grammar Choice**: MySQL Workbench grammar chosen because it covers multiple MySQL versions in single grammar
+3. **Parser Design**: Discussion about LL parsing, conflict resolution, lookahead strategies
+4. **Lexer Improvements**: AI-generated lexer was refined through manual comparison with MySQLLexer.g4
+5. **Performance**: Lexing 66k queries went from 1.6-1.7s to under 1s after optimization
+6. **AST-to-SQLite Design**: Considered AST-to-AST transformation but chose direct AST-to-string for simplicity
+
+## Code Comment Links Referenced
+
+The driver code contains extensive references to external documentation:
+- MySQL documentation on SQL modes, data types, implicit defaults
+- SQLite documentation on STRICT tables, ALTER TABLE limitations
+- PHP bug reports for PDO workarounds
+- WordPress core code for compatibility
+
+See [research-notes-technical.md](research-notes-technical.md) for specific URLs.
 
 ## Next Steps
 
