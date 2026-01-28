@@ -1,0 +1,26 @@
+Adminer and phpMyAdmin in WordPress Playground
+
+
+Jan Jakeš
+9:00 am on December 2, 2025
+A new experimental Database pane is now live on playground.wordpress.net, featuring:
+
+One-click Adminer access
+One-click phpMyAdmin access
+Quick access to the SQLite database file
+Following the recent additions of the File Browser and the Blueprint Editor, it is now possible to browse and modify the Playground SQLite database as if it were MySQL:
+
+
+See it in action:
+
+
+Or head to playground.wordpress.net and try it live.
+
+If you experience any issues, please report them. This feature is under active development, and your feedback is valuable for future improvements.
+
+State of MySQL-on-SQLite emulation
+This new functionality showcases the capabilities of the new SQLite driver and offers a glimpse of what’s ahead. MySQL database administration tools often rely on advanced MySQL schema introspection capabilities, uncommon MySQL statements, and complex query patterns. While you may still encounter some issues and unsupported features, this early experimental integration with MySQL tooling is already very useful, and the compatibility will continue to improve.
+
+Looking ahead, work is already underway on implementing the MySQL binary protocol and the foundational support has been successfully tested with PHP MySQL drivers, several desktop MySQL clients, as well as the native mysql CLI. As the development continues, support for MySQL tooling will make its way into the Playground CLI and WordPress Studio, and ultimately, these efforts will allow most MySQL-based applications and tools to run seamlessly on an SQLite database.
+
++archp2 +codep2

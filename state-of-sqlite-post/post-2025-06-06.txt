@@ -1,0 +1,244 @@
+Introducing a new SQLite driver for WordPress
+
+
+Jan Jakeš
+5:11 pm on June 6, 2025
+We’re returning to Core, and it’s time to announce the new SQLite driver publicly. This post builds on the previous internal announcement and highlights what’s new. It will also serve as the foundation for a public post on make.wordpress.org.
+
+We’re excited to announce a new SQLite driver, aiming to significantly enhance SQLite support in the WordPress ecosystem to unlock new paradigms and possibilities. The new driver was published in the SQLite Database Integration plugin (currently behind a feature flag), and it is already powering the WordPress Playground website today.
+
+The new SQLite driver has reached feature parity with the current driver, and already significantly exceeds its capabilities in some areas, while requiring additional feedback in others. It’s entirely new architecture enables faster integration of new features, and we expect the MySQL compatibility to improve further as the development continues.
+
+Let’s try it out
+We invite you to test the new SQLite driver using any of the following methods:
+
+In Playground — try it directly on the WordPress Playground website.
+On your site — use the SQLite Database Integration plugin in version 2.2.1 or newer, and define the WP_SQLITE_AST_DRIVER constant as true in your wp-config.php file.
+We look forward to hearing your feedback!
+
+Running WordPress on SQLite
+WordPress and its plugin ecosystem have historically relied on MySQL, and changing that reality without breaking backward compatibility is not feasible. As a result, previous SQLite integrations for WordPress have typically focused on converting MySQL SQL dialect into SQLite-compatible SQL. While the core capabilities of both engines are similar, supporting more advanced use cases and MySQL-specific behaviors has always been challenging.
+
+That fundamental premise remains the same with the new driver — we still process MySQL queries and emulate them on top of SQLite. Sometimes this means directly converting MySQL queries to their SQLite equivalents; other times, it involves more complex transformations. What has changed is how deeply we understand and emulate the MySQL behavior. The new driver parses the queries into an abstract syntax tree (AST), giving us their complete and detailed representation, and it emulates the key MySQL information schema tables by storing relevant data in SQLite.
+
+This new approach enables us to implement a far greater range of MySQL features in a significantly more robust way, making a larger portion of the WordPress ecosystem compatible with SQLite.
+
+New features
+While the initial goal of the new SQLite driver was to reach full feature parity with the current implementation, it also introduces numerous enhancements and advanced capabilities:
+
+Advanced support of the MySQL syntax.
+Advanced support for subqueries.
+Advanced support for UNION and UNION ALL operators.
+Advanced support for SHOW and DESCRIBE statements.
+Advanced support for INFORMATION_SCHEMA tables.
+Advanced support for TEMPORARY tables.
+Advanced support for table administration statements (TRUNCATE, ANALYZE, CHECK OPTIMIZE, REPAIR).
+Support for STRICT_TRANS_TABLES and STRICT_ALL_TABLES SQL modes.
+Support for NO_BACKSLASH_ESCAPES SQL mode.
+Support for USE <database> statement for the main database and INFORMATION_SCHEMA.
+Automatic migration of databases created with the current SQLite driver.
+Thanks to its redesigned architecture, the new driver lays the groundwork for future support of additional MySQL features, some of which were nearly impossible to implement in the current driver.
+
+How it works
+The new SQLite driver translates MySQL queries into SQLite statements and emulates MySQL behavior using a robust new approach, which includes:
+
+A complete, fast MySQL SQL lexer written in pure PHP with zero dependencies.
+A complete, version-aware MySQL SQL grammar definition, adapted from the MySQL Workbench grammar.
+Basic tooling to process and compress the grammar in pure PHP.
+An extra lightweight, universal grammar parser written in pure PHP with zero dependencies, by @zieladam.
+An extensive test suite of 70 000 MySQL queries that we can parse successfully.
+A new SQLite driver that translates and emulates MySQL queries on top of SQLite, using the abstract syntax tree produced by the new parser.
+A comprehensive MySQL information schema emulation layer on top of SQLite.
+An automated migration flow for databases created with the previous SQLite driver.
+New test suites, including the WordPress Core PHPUnit test suite, with over 99% of tests already passing.
+Examples
+Let’s a take a quick look at some of the new tricks that the new driver can already handle.
+
+First, we will create the wp_users table:
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+CREATE TABLE wp_users (
+    ID bigint(20) unsigned NOT NULL auto_increment,
+    user_login varchar(60) NOT NULL default '',
+    user_pass varchar(255) NOT NULL default '',
+    user_nicename varchar(50) NOT NULL default '',
+    user_email varchar(100) NOT NULL default '',
+    user_url varchar(100) NOT NULL default '',
+    user_registered datetime NOT NULL default '0000-00-00 00:00:00',
+    user_activation_key varchar(255) NOT NULL default '',
+    user_status int(11) NOT NULL default '0',
+    display_name varchar(250) NOT NULL default '',
+    PRIMARY KEY  (ID),
+    KEY user_login_key (user_login),
+    KEY user_nicename (user_nicename),
+    KEY user_email (user_email)
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+With the new driver, we can execute arbitrarily complex queries using the INFROMATION_SCHEMA:
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+SELECT
+    cols.DATA_TYPE,
+    stats.INDEX_NAME,
+    stats.COLUMN_NAME
+FROM INFORMATION_SCHEMA.COLUMNS AS cols
+JOIN INFORMATION_SCHEMA.STATISTICS AS stats
+    ON  cols.TABLE_SCHEMA = stats.TABLE_SCHEMA
+    AND cols.TABLE_NAME   = stats.TABLE_NAME
+    AND cols.COLUMN_NAME  = stats.COLUMN_NAME
+WHERE
+    cols.TABLE_SCHEMA   = 'wp'
+    AND cols.TABLE_NAME = 'wp_users'
+ORDER BY INDEX_NAME ASC;
+
+-- bigint   PRIMARY         ID
+-- varchar  user_email      user_email
+-- varchar  user_login_key  user_login
+-- varchar  user_nicename   user_nicename
+Now, let’s try to add a bit more advanced syntax like UNION, DISTINCT, CTEs, and function calls:
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+WITH
+    cols AS (
+        SELECT COLUMN_NAME AS column_name
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'wp' AND TABLE_NAME = 'wp_users'
+    ),
+    indexes AS (
+        SELECT DISTINCT INDEX_NAME AS index_name
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = 'wp' AND TABLE_NAME = 'wp_users'
+    )
+SELECT CONCAT(column_name, ' (column)') AS name
+FROM cols
+UNION ALL
+SELECT CONCAT(index_name, ' (index)') AS name
+FROM indexes
+ORDER BY name;
+
+-- ID (column)
+-- PRIMARY (index)
+-- display_name (column)
+-- user_activation_key (column)
+-- user_email (column)
+-- user_email (index)
+-- user_login (column)
+-- user_login_key (index)
+-- user_nicename (column)
+-- user_nicename (index)
+-- user_pass (column)
+-- user_registered (column)
+-- user_status (column)
+-- user_url (column)
+Finally, let’s export the table schema:
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+SHOW CREATE TABLE wp_users;
+
+-- CREATE TABLE `wp_users` (
+--   `ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+--   `user_login` varchar(60) NOT NULL DEFAULT '',
+--   `user_pass` varchar(255) NOT NULL DEFAULT '',
+--   `user_nicename` varchar(50) NOT NULL DEFAULT '',
+--   `user_email` varchar(100) NOT NULL DEFAULT '',
+--   `user_url` varchar(100) NOT NULL DEFAULT '',
+--   `user_registered` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+--   `user_activation_key` varchar(255) NOT NULL DEFAULT '',
+--   `user_status` int(11) NOT NULL DEFAULT '0',
+--   `display_name` varchar(250) NOT NULL DEFAULT '',
+--   PRIMARY KEY (`ID`),
+--   KEY `user_login_key` (`user_login`),
+--   KEY `user_nicename` (`user_nicename`),
+--   KEY `user_email` (`user_email`)
+-- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+We’ll get the table definition back exactly as we’ve defined it in the first step.
+
+The above scenario was never supported by the previous driver, and implementing it would have been extremely difficult due to its basic, token-based architecture. With the new driver design, advanced use cases like this can now be supported much more naturally.
+
+What’s next
+We’re seeking feedback on the new SQLite driver in the 2.x line of the SQLite Database Integration plugin with the intent of stabilizing the engine and migration path, and making the new driver the default in version 3.0. In parallel, we’re evaluating the new driver compatibility with plugins from the WordPress Plugin Directory and expanding feature coverage.
+
+Once version 3.0 is released with the new SQLite driver enabled by default, we’ll shift focus to expanding MySQL functionality coverage, improving performance, and stabilizing the API, with the future prospect of integrating the driver into WordPress Core.
+
+Looking even further ahead, the new lexer and parser pipeline lays the foundation for supporting additional database engines within the WordPress ecosystem.
+
++orbitp2 +archp2 +dotorg

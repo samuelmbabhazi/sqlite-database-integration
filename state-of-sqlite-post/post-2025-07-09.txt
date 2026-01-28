@@ -1,0 +1,52 @@
+Integrating SQLite with Query Monitor
+
+
+Jan Jakeš
+2:44 pm on July 9, 2025
+I’ve been working on integrating the new SQLite driver with Query Monitor to enable the plugins to work together and to expose the underlying SQLite queries alongside MySQL ones.
+
+This poses some challenges, as both plugins rely on their custom wp-content/db.php file. I’ve worked around this using a few tricks on the SQLite side, and I plan to propose some changes to Query Monitor to support a more robust integration. Once merged, this solution should also work in Playground, even though it initializes the SQLite driver without using the db.php drop-in.
+
+Here’s a quick preview of the new functionality:
+
+
+MySQL query cells can now be expanded to display the underlying SQLite queries
+Enabling SQLite and Query Monitor at the same time
+The SQLite Database Integration plugin competes with Query Monitor for control of the wp-content/db.php file. To resolve this, I’ve enabled the SQLite plugin to override the db.php file created by Query Monitor while also ensuring it eagerly boots Query Monitor when needed.
+
+The behavior depends on which plugin is activated first:
+
+If the SQLite plugin is activated first, its db.php file will never be replaced by Query Monitor. The SQLite plugin will detect when Query Monitor is active and boot it eagerly while also storing detailed query information for Query Monitor to consume.
+If Query Monitor is activated first, the SQLite plugin will detect that on its activation, it will replace the existing db.php file, and it will retain the eager boot logic for Query Monitor. The user will be notified about the db.php file replacement.
+
+Notice informing that Query Monitor’s db.php file was detected
+Beyond the activation flow and boot process, the SQLite plugin also stores enhanced query information for Query Monitor when it’s active, effectively mirroring a tiny portion of the Query Monitor code. To reduce duplication, we can propose changes to the Query Monitor codebase that would allow this logic to be reused rather than reimplemented.
+
+Extending Query Monitor
+Once both the SQLite and Query Monitor plugins are running together, we can extend the Query Monitor panel to display information about executed SQLite queries. This makes it easy to inspect and debug which SQLite queries correspond to each MySQL statement:
+
+
+Query Monitor panel with a MySQL query and its corresponding SQLite queries
+Currently, Query Monitor doesn’t offer a way to customize the rendered query information. To overcome this limitation, I implemented this by capturing the generated HTML and modifying it before it is sent to the browser. This is another area where we could improve integration by proposing upstream changes to the Query Monitor plugin.
+
+Playground support
+The new Query Monitor integration for SQLite will also make the Query Monitor plugin compatible with WordPress Playground. Currently, Query Monitor doesn’t boot in Playground at all. This is because Playground loads the SQLite Database Integration differently, without creating a db.php file. As a result, third-party plugins can still inject their db.php file, which typically extends the wpdb class and when initialized, it fails with the following error:
+
+1
+2
+3
+4
+PHP Fatal error: Uncaught Error: Call to undefined function mysqli_report() in /wordpress/wp-includes/class-wpdb.php:4
+Stack trace:
+#0 /wordpress/wp-includes/class-wpdb.php(4): wpdb->db_connect()
+...
+For Query Monitor, I’ve added a simple fix. Setting the QM_DB_SYMLINK constant to false prevents it from using the db.php drop-in, and the SQLite plugin will boot it as needed.
+
+To address this Playground-specific issue more generally, we could consider replacing the wpdb class with the inherited WP_SQLite_DB in the Playground context. This would allow third-party plugins to use their own db.php file while extending WP_SQLite_DB instead of directly wpdb.
+
+Pull request
+Feel free to check out the implementation and share your thoughts or feedback:
+
+Query Monitor supportPull Request #212
+WordPress/sqlite-database-integration · Merged 6 months ago byadamziel
++orbitp2 +archp2

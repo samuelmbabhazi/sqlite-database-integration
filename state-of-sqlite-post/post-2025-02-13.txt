@@ -1,0 +1,49 @@
+New SQLite driver for WordPress (🎥)
+
+
+Jan Jakeš
+5:43 pm on February 13, 2025
+A new SQLite driver, aiming at significantly improving SQLite support in WordPress, has just landed in our fork of the SQLite Database Integration. Currently, it’s behind a feature flag and can be considered a beta. Today, I presented it to +orbitp2 and you can find the recording below.
+
+🕹️ You can also try the new driver in WordPress Playground now.
+
+The new SQLite driver translates MySQL queries into SQLite statements and emulates MySQL behavior using a new robust AST-based approach, comprising:
+
+A complete, fast MySQL SQL lexer written in pure PHP with zero dependencies.
+A complete, version-aware MySQL SQL grammar definition, adapted from MySQL Workbench grammar.
+Basic tooling to process and compress the grammar in pure PHP.
+An extra lightweight, universal grammar parser written in pure PHP with zero dependencies, by @zieladam.
+An extensive test suite of MySQL 70 000 queries that we can parse successfully.
+A new SQLite driver that translates and emulates MySQL queries on top of SQLite, using the AST produced by the new parser.
+An comprehensive MySQL information schema emulation on top of SQLite.
+Advanced SQLite support for WordPress is essential for WordPress Playground and derived projects and apps, including WordPress Studio, but it’s also important in itself to make WordPress fully SQLite-compatible and establish official SQLite support in WordPress.
+
+Presentation 🎥
+I presented the architecture and internals of the new driver today, and here’s the recording:
+
+
+Project context
+Here’s a summary of the most important links and explorations related to the project:
+
+Proposal to support nuances of the SELECT syntax: WITH, UNION, subqueries etc. by @zieladam.
+Proposal to switch to an AST-based approach, including an extensive research of existing grammars and parsers by @zieladam.
+An amazing AI lexer and parser generation exploration by @zieladam.
+Exhaustive MySQL parser by @zieladam and @janjakes.
+New AST-based SQLite driver by @janjakes.
+Next steps
+Currently, the new SQLite driver passes the legacy driver test suite, and it can run WordPress, including many plugins. That said, it needs to be considered a beta until we evaluate the plugin compatibility when compared to the legacy driver.
+
+Here’s what I think we need to focus on next (roughly, but not necessarily, in this order):
+
+Manually examine the old driver to ensure 100% coverage.
+Evaluate the coverage of WordPress Core unit tests (related Playground ticket).
+Evaluate plugin compatibility using Playground Tester by @berislavgrgicak.
+Identify impactful fixes for some of the failures reported by the test suites.
+Evaluate performance, optimize the parser and the driver.
+Support all WP-CLI commands.
+Monitor support for all the SQL queries used by all the WordPress plugins.
+Stabilize new APIs.
+Beyond SQLite
+The new lexer and parser pipeline lays foundations for support of other databases in WordPress. The first obvious candidate is PostgreSQL, which, I believe, can handle many more MySQL-like features than SQLite, which could make the driver simpler and more powerful.
+
+I think the PostgreSQL support is worth investigating and prototyping also to scrutinize the design of the new APIs and to reveal possibilities for improvements.
