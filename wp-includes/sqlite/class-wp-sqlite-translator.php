@@ -1417,7 +1417,7 @@ class WP_SQLite_Translator {
 		// SELECT to fetch the IDs of the rows to delete, then delete them
 		// using a separate DELETE query.
 
-		$this->table_name = $rewriter->skip()->value;
+		$this->table_name = $this->normalize_column_name( $rewriter->skip()->value );
 		$rewriter->add( new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
 
 		/*
@@ -1433,7 +1433,7 @@ class WP_SQLite_Translator {
 		for ( $i = $index + 1; $i < $rewriter->max; $i++ ) {
 			// Assume the table name is the first token after FROM.
 			if ( ! $rewriter->input_tokens[ $i ]->is_semantically_void() ) {
-				$this->table_name = $rewriter->input_tokens[ $i ]->value;
+				$this->table_name = $this->normalize_column_name( $rewriter->input_tokens[ $i ]->value );
 				break;
 			}
 		}
@@ -1491,10 +1491,12 @@ class WP_SQLite_Translator {
 			$ids_to_delete[] = $id['id_1'];
 		}
 
+		$quoted_table = $this->quote_identifier( $this->table_name );
+		$quoted_pk    = $this->quote_identifier( $pk_name );
 		$query = (
 		count( $ids_to_delete )
-			? "DELETE FROM {$this->table_name} WHERE {$pk_name} IN (" . implode( ',', $ids_to_delete ) . ')'
-			: "DELETE FROM {$this->table_name} WHERE 0=1"
+			? "DELETE FROM {$quoted_table} WHERE {$quoted_pk} IN (" . implode( ',', $ids_to_delete ) . ')'
+			: "DELETE FROM {$quoted_table} WHERE 0=1"
 		);
 		$this->execute_sqlite_query( $query );
 		$this->set_result_from_affected_rows(
@@ -4048,6 +4050,21 @@ class WP_SQLite_Translator {
 	 */
 	private function normalize_column_name( $column_name ) {
 		return trim( $column_name, '`\'"' );
+	}
+
+	/**
+	 * Quotes an identifier for safe use in SQLite queries.
+	 *
+	 * Wraps the identifier in backticks and escapes any internal backticks
+	 * by doubling them. This ensures identifiers with special characters
+	 * are properly escaped in the target SQLite query context.
+	 *
+	 * @param string $identifier The unquoted identifier.
+	 *
+	 * @return string The properly quoted identifier.
+	 */
+	private function quote_identifier( $identifier ) {
+		return '`' . str_replace( '`', '``', $identifier ) . '`';
 	}
 
 	/**
