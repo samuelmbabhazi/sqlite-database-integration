@@ -920,7 +920,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				KEY user_email (user_email)
 			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$this->assertQuery( 'DESCRIBE wptests_users;' );
 		$results = $this->engine->get_query_results();
@@ -1018,7 +1018,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				PRIMARY KEY  (ID)
 			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci'
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 	}
 
 	public function testCreateTableSpatialIndex() {
@@ -1028,7 +1028,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				UNIQUE KEY (ID)
 			)'
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 	}
 
 	public function testCreateTableWithMultiValueColumnTypeModifiers() {
@@ -1041,7 +1041,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				PRIMARY KEY  (ID)
 			)"
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$this->assertQuery( 'DESCRIBE wptests_users;' );
 		$results = $this->engine->get_query_results();
@@ -1090,10 +1090,10 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				name varchar(20) NOT NULL default ''
 			);"
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD COLUMN `column` int;' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$this->assertQuery( 'DESCRIBE _tmp_table;' );
 		$results = $this->engine->get_query_results();
@@ -1120,7 +1120,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD `column2` int;' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$this->assertQuery( 'DESCRIBE _tmp_table;' );
 		$results = $this->engine->get_query_results();
@@ -1155,7 +1155,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table DROP COLUMN `column`;' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$this->assertQuery( 'DESCRIBE _tmp_table;' );
 		$results = $this->engine->get_query_results();
@@ -1182,7 +1182,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table DROP `column2`;' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$this->assertQuery( 'DESCRIBE _tmp_table;' );
 		$results = $this->engine->get_query_results();
@@ -1209,7 +1209,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$result = $this->assertQuery( "ALTER TABLE _tmp_table ADD COLUMN `column` VARCHAR(20) NOT NULL DEFAULT 'foo';" );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$this->assertQuery( 'DESCRIBE _tmp_table;' );
 		$results = $this->engine->get_query_results();
@@ -1809,7 +1809,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD INDEX name (name);' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Verify that the index was created in the information schema.
 		$this->assertQuery( 'SHOW INDEX FROM _tmp_table;' );
@@ -1862,7 +1862,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD UNIQUE INDEX name (name(20));' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Verify that the index was created in the information schema.
 		$this->assertQuery( 'SHOW INDEX FROM _tmp_table;' );
@@ -1915,7 +1915,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD FULLTEXT INDEX name (name);' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Verify that the index was created in the information schema.
 		$this->assertQuery( 'SHOW INDEX FROM _tmp_table;' );
@@ -2038,7 +2038,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 
 		// Rename the "name" field to "firstname":
 		$result = $this->engine->query( "ALTER TABLE _tmp_table CHANGE column name firstname varchar(50) NOT NULL default 'mark';" );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Confirm the original data is still there:
 		$result = $this->engine->query( 'SELECT * FROM _tmp_table;' );
@@ -2108,7 +2108,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 
 		// Rename the "name" field to "firstname":
 		$result = $this->engine->query( "ALTER TABLE _tmp_table CHANGE name firstname varchar(50) NOT NULL default 'mark';" );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Confirm the original data is still there:
 		$result = $this->engine->query( 'SELECT * FROM _tmp_table;' );
@@ -2149,12 +2149,12 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				`foo-bar` varchar(255) DEFAULT NULL
 			)'
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$result = $this->assertQuery(
 			'ALTER TABLE wptests_dbdelta_test2 CHANGE COLUMN `foo-bar` `foo-bar` text DEFAULT NULL'
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$result = $this->assertQuery( 'DESCRIBE wptests_dbdelta_test2;' );
 		$this->assertNotFalse( $result );
@@ -2183,19 +2183,19 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				PRIMARY KEY (ID, name)
 			);"
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Add a unique index
 		$result = $this->assertQuery(
 			'ALTER TABLE _tmp_table ADD UNIQUE INDEX "test_unique_composite" (name, lastname);'
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Add a regular index
 		$result = $this->assertQuery(
 			'ALTER TABLE _tmp_table ADD INDEX "test_regular" (lastname);'
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Confirm the table is well-behaved so far:
 
@@ -2236,10 +2236,10 @@ class WP_SQLite_Driver_Tests extends TestCase {
 
 		// Now – let's change a few columns:
 		$result = $this->engine->query( 'ALTER TABLE _tmp_table CHANGE COLUMN name firstname varchar(20)' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$result = $this->engine->query( 'ALTER TABLE _tmp_table CHANGE COLUMN date_as_string datetime datetime NOT NULL' );
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		// Finally, let's confirm our data is intact and the table is still well-behaved:
 		$result = $this->engine->query( 'SELECT * FROM _tmp_table ORDER BY ID;' );
@@ -2283,7 +2283,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				UNIQUE KEY last (lastname)
 			);"
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$result1 = $this->engine->query( "INSERT INTO _tmp_table (name, lastname) VALUES ('first', 'last');" );
 		$this->assertEquals( 1, $result1 );
@@ -3342,6 +3342,31 @@ QUERY
 		);
 	}
 
+	public function testDeleteReturnsZeroAffectedRowsWhenNoMatchingRows() {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		$result = $this->assertQuery( 'DELETE FROM t WHERE id = 1' );
+		$this->assertSame( 1, $result );
+		$this->assertSame( 1, $this->engine->get_last_return_value() );
+
+		$result = $this->assertQuery( 'DELETE FROM t WHERE id = 1' );
+		$this->assertSame( 0, $result );
+		$this->assertSame( 0, $this->engine->get_last_return_value() );
+	}
+
+	public function testUpdateReturnsZeroAffectedRowsWhenNoMatchingRows() {
+		$this->assertQuery( 'CREATE TABLE t (id INT, val TEXT)' );
+		$this->assertQuery( "INSERT INTO t (id, val) VALUES (1, 'a')" );
+
+		$result = $this->assertQuery( "UPDATE t SET val = 'b' WHERE id = 1" );
+		$this->assertSame( 1, $result );
+
+		$result = $this->assertQuery( "UPDATE t SET val = 'c' WHERE id = 999" );
+		$this->assertSame( 0, $result );
+		$this->assertSame( 0, $this->engine->get_last_return_value() );
+	}
+
 	public function testTranslatesDoubleAlterTable() {
 		$result = $this->assertQuery(
 			'ALTER TABLE _options
@@ -3350,7 +3375,7 @@ QUERY
 				ADD INDEX test_index2(option_name(140),option_value(51))
 			'
 		);
-		$this->assertNull( $result );
+		$this->assertSame( 0, $result );
 
 		$result = $this->assertQuery(
 			'SHOW INDEX FROM _options'
