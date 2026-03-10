@@ -80,6 +80,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'ucase'                        => 'ucase',
 		'lcase'                        => 'lcase',
 		'unhex'                        => 'unhex',
+		'from_base64'                  => 'from_base64',
+		'to_base64'                    => 'to_base64',
 		'inet_ntoa'                    => 'inet_ntoa',
 		'inet_aton'                    => 'inet_aton',
 		'datediff'                     => 'datediff',
@@ -665,6 +667,44 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function unhex( $number ) {
 		return pack( 'H*', $number );
+	}
+
+	/**
+	 * Method to emulate MySQL FROM_BASE64() function.
+	 *
+	 * Takes a base64-encoded string and returns the decoded result as a binary
+	 * string. Returns NULL if the argument is NULL or is not a valid base64 string.
+	 *
+	 * @param string|null $str The base64-encoded string.
+	 *
+	 * @return string|null Decoded binary string, or NULL.
+	 */
+	public function from_base64( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		$decoded = base64_decode( $str, true );
+		if ( false === $decoded ) {
+			return null;
+		}
+		return $decoded;
+	}
+
+	/**
+	 * Method to emulate MySQL TO_BASE64() function.
+	 *
+	 * Takes a string and returns a base64-encoded result.
+	 * Returns NULL if the argument is NULL.
+	 *
+	 * @param string|null $str The string to encode.
+	 *
+	 * @return string|null Base64-encoded string, or NULL.
+	 */
+	public function to_base64( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		return base64_encode( $str );
 	}
 
 	/**

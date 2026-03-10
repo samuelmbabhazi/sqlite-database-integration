@@ -11363,6 +11363,42 @@ END;
 		$this->assertSame( '8.0.38', $result[0]->{'VERSION()'} );
 	}
 
+	public function testFromBase64Function(): void {
+		// Basic decoding.
+		$result = $this->assertQuery( "SELECT FROM_BASE64('SGVsbG8gV29ybGQ=') AS decoded" );
+		$this->assertSame( 'Hello World', $result[0]->decoded );
+
+		// Empty string.
+		$result = $this->assertQuery( "SELECT FROM_BASE64('') AS decoded" );
+		$this->assertSame( '', $result[0]->decoded );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT FROM_BASE64(NULL) AS decoded' );
+		$this->assertNull( $result[0]->decoded );
+
+		// Binary data round-trip.
+		$result = $this->assertQuery( "SELECT FROM_BASE64(TO_BASE64('binary\\0data')) AS decoded" );
+		$this->assertSame( "binary\0data", $result[0]->decoded );
+	}
+
+	public function testToBase64Function(): void {
+		// Basic encoding.
+		$result = $this->assertQuery( "SELECT TO_BASE64('Hello World') AS encoded" );
+		$this->assertSame( 'SGVsbG8gV29ybGQ=', $result[0]->encoded );
+
+		// Empty string.
+		$result = $this->assertQuery( "SELECT TO_BASE64('') AS encoded" );
+		$this->assertSame( '', $result[0]->encoded );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT TO_BASE64(NULL) AS encoded' );
+		$this->assertNull( $result[0]->encoded );
+
+		// Round-trip: TO_BASE64(FROM_BASE64(x)) = x.
+		$result = $this->assertQuery( "SELECT TO_BASE64(FROM_BASE64('dGVzdA==')) AS encoded" );
+		$this->assertSame( 'dGVzdA==', $result[0]->encoded );
+	}
+
 	public function testSubstringFunction(): void {
 		$result = $this->assertQuery( "SELECT SUBSTRING('abcdef', 1, 3) AS s" );
 		$this->assertSame( 'abc', $result[0]->s );
