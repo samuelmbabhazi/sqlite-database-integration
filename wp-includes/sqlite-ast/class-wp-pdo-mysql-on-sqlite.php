@@ -5696,34 +5696,26 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 *   - Enabled without strict mode: zero-part dates produce a warning and are stored as '0000-00-00'.
 				 *   - Enabled with strict mode: zero-part dates produce an error.
 				 */
-				$reject_zero_date    = (
-					$this->is_sql_mode_active( 'NO_ZERO_DATE' ) && $is_strict_mode
-				) ? 1 : 0;
-				$reject_zero_in_date = $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? 1 : 0;
-				$zero_date_value     = 'date' === $mysql_data_type
-					? "'0000-00-00'"
-					: "'0000-00-00 00:00:00'";
-
-				return sprintf(
+				return strtr(
 					"CASE
-						WHEN %s IS NULL THEN NULL
-						WHEN %s IN ('0000-00-00', '0000-00-00 00:00:00') AND NOT %d THEN %s
-						WHEN SUBSTR(%s, 1, 4) != '0000' AND (SUBSTR(%s, 6, 2) = '00' OR SUBSTR(%s, 9, 2) = '00') AND NOT %d THEN %s
-						WHEN %s > '0' THEN %s
-						ELSE %s
+						WHEN {value} IS NULL THEN NULL
+						WHEN {value} IN ('0000-00-00', '0000-00-00 00:00:00') AND NOT {reject_zero_date} THEN {zero_date_value}
+						WHEN SUBSTR({value}, 1, 4) != '0000' AND (SUBSTR({value}, 6, 2) = '00' OR SUBSTR({value}, 9, 2) = '00') AND NOT {reject_zero_in_date} THEN {value}
+						WHEN {value} > '0' THEN {function_call}
+						ELSE {fallback}
 					END",
-					$translated_value,
-					$translated_value,
-					$reject_zero_date,
-					$zero_date_value,
-					$translated_value,
-					$translated_value,
-					$translated_value,
-					$reject_zero_in_date,
-					$translated_value,
-					$function_call,
-					$function_call,
-					$fallback
+					array(
+						'{value}'               => $translated_value,
+						'{reject_zero_date}'    => (
+							$this->is_sql_mode_active( 'NO_ZERO_DATE' ) && $is_strict_mode
+						) ? 1 : 0,
+						'{zero_date_value}'     => 'date' === $mysql_data_type
+													? "'0000-00-00'"
+													: "'0000-00-00 00:00:00'",
+						'{reject_zero_in_date}' => $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? 1 : 0,
+						'{function_call}'       => $function_call,
+						'{fallback}'            => $fallback,
+					)
 				);
 			default:
 				/*
