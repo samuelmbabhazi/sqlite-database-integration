@@ -161,10 +161,8 @@ class WP_SQLite_Driver {
 
 		if ( $stmt->columnCount() > 0 ) {
 			$this->last_result = $stmt->fetchAll( $fetch_mode );
-		} elseif ( $stmt->rowCount() > 0 ) {
-			$this->last_result = $stmt->rowCount();
 		} else {
-			$this->last_result = null;
+			$this->last_result = $stmt->rowCount();
 		}
 		return $this->last_result;
 	}
