@@ -5701,7 +5701,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						WHEN {value} IS NULL THEN NULL
 						WHEN {value} IN ('0000-00-00', '0000-00-00 00:00:00') AND NOT {reject_zero_date} THEN {zero_date_value}
 						WHEN SUBSTR({value}, 1, 4) != '0000' AND (SUBSTR({value}, 6, 2) = '00' OR SUBSTR({value}, 9, 2) = '00') AND NOT {reject_zero_in_date} THEN {value}
-						WHEN {value} > '0' THEN {function_call}
+						WHEN {function_call} > '0' THEN {function_call}
 						ELSE {fallback}
 					END",
 					array(
