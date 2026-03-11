@@ -2436,10 +2436,10 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
 
 		$this->assertQuery(
-			"CREATE TABLE _date_test (
+			'CREATE TABLE _date_test (
 				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				col_date DATE NOT NULL
-			);"
+			);'
 		);
 
 		$this->assertQuery( "INSERT INTO _date_test (col_date) VALUES ('0000-00-00');" );
