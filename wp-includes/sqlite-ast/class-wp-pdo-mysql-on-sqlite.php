@@ -4494,14 +4494,30 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * In the future, let's update WordPress to do its own date validation
 		 * and stop relying on this MySQL feature,
 		 */
-		if ( 1 === preg_match( '/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/', $value, $matches ) ) {
+		if ( 1 === preg_match( '/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})$/', $value, $matches ) ) {
 			/*
 			 * Calling strtotime("0000-00-00 00:00:00") in 32-bit environments triggers
 			 * an "out of integer range" warning – let's avoid that call for the popular
 			 * case of "zero" dates.
 			 */
 			if ( '0000-00-00 00:00:00' !== $value && false === strtotime( $value ) ) {
-				$value = '0000-00-00 00:00:00';
+				/*
+				 * Check for dates with zero month/day parts (e.g. '2020-00-15 00:00:00').
+				 *
+				 * When the NO_ZERO_IN_DATE SQL mode is not active, MySQL accepts dates
+				 * where the year is nonzero but the month or day is zero. We must
+				 * preserve these values so that cast_value_for_saving() can handle
+				 * them correctly at the column level.
+				 *
+				 * See: https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_in_date
+				 */
+				$is_zero_in_date = (
+					'0000' !== $matches[1]
+					&& ( '00' === $matches[2] || '00' === $matches[3] )
+				);
+				if ( ! $is_zero_in_date || $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ) {
+					$value = '0000-00-00 00:00:00';
+				}
 			}
 		}
 		return $value;
@@ -5660,13 +5676,74 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						? 'NULL'
 						: $this->quote_sqlite_value( $implicit_default );
 				}
+
+				/*
+				 * Build additional WHEN clauses to accept zero dates based
+				 * on the NO_ZERO_DATE and NO_ZERO_IN_DATE SQL modes.
+				 *
+				 * In MySQL, the behavior of zero dates depends on these modes:
+				 *
+				 * NO_ZERO_DATE (see https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_date):
+				 *   - Disabled: '0000-00-00' is permitted and produces no warning.
+				 *   - Enabled without strict mode: '0000-00-00' is permitted but produces a warning.
+				 *   - Enabled with strict mode: '0000-00-00' is not permitted and produces an error.
+				 *
+				 * NO_ZERO_IN_DATE (see https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_in_date):
+				 *   - Disabled: dates with zero month/day parts (e.g. '2020-00-15') are permitted.
+				 *   - Enabled without strict mode: zero-part dates produce a warning and are stored as '0000-00-00'.
+				 *   - Enabled with strict mode: zero-part dates produce an error.
+				 *
+				 * SQLite's DATE()/DATETIME() functions return NULL for zero dates,
+				 * so without these extra WHEN clauses, zero dates would always fall
+				 * through to the error/implicit-default fallback.
+				 */
+				$zero_date_whens = '';
+				if ( 'time' !== $mysql_data_type ) {
+					/*
+					 * When NO_ZERO_DATE is not active, or when it is active but
+					 * strict mode is off, accept all-zero dates. In MySQL, only
+					 * the combination of NO_ZERO_DATE + strict mode rejects them.
+					 */
+					$reject_zero_date = (
+						$this->is_sql_mode_active( 'NO_ZERO_DATE' )
+						&& $is_strict_mode
+					);
+					if ( ! $reject_zero_date ) {
+						$zero_date_value = 'date' === $mysql_data_type
+							? "'0000-00-00'"
+							: "'0000-00-00 00:00:00'";
+						$zero_date_whens .= sprintf(
+							"WHEN %s IN ('0000-00-00', '0000-00-00 00:00:00') THEN %s\n",
+							$translated_value,
+							$zero_date_value
+						);
+					}
+
+					/*
+					 * When NO_ZERO_IN_DATE is not active, accept dates where the
+					 * year is nonzero but the month or day part is zero (e.g.
+					 * '2020-00-15' or '2020-01-00'). These are valid in MySQL when
+					 * the NO_ZERO_IN_DATE mode is disabled.
+					 */
+					if ( ! $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ) {
+						$zero_date_whens .= sprintf(
+							"WHEN SUBSTR(%s, 1, 4) != '0000' AND (SUBSTR(%s, 6, 2) = '00' OR SUBSTR(%s, 9, 2) = '00') THEN %s\n",
+							$translated_value,
+							$translated_value,
+							$translated_value,
+							$translated_value
+						);
+					}
+				}
+
 				return sprintf(
 					"CASE
 						WHEN %s IS NULL THEN NULL
-						WHEN %s > '0' THEN %s
+						%sWHEN %s > '0' THEN %s
 						ELSE %s
 					END",
 					$translated_value,
+					$zero_date_whens,
 					$function_call,
 					$function_call,
 					$fallback
