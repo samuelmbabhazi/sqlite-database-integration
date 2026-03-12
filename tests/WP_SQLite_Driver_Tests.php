@@ -2663,7 +2663,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 
 		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero', '0000-00-00 00:00:00');" );
 
-		$this->assertQuery( "SELECT YEAR(option_value) as y, MONTH(option_value) as m, DAY(option_value) as d FROM _dates;" );
+		$this->assertQuery( 'SELECT YEAR(option_value) as y, MONTH(option_value) as m, DAY(option_value) as d FROM _dates;' );
 		$results = $this->engine->get_query_results();
 		$this->assertCount( 1, $results );
 		$this->assertEquals( 0, $results[0]->y );
