@@ -243,7 +243,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * zero month parts like '2020-00-15'. PHP's strtotime() can't
 		 * parse these, so we extract the month directly from the string.
 		 */
-		if ( preg_match( '/\d{4}-(\d{2})/', $field, $matches ) ) {
+		if ( preg_match( '/^\d{4}-(\d{2})/', $field, $matches ) ) {
 			return intval( $matches[1] );
 		}
 		/*
@@ -267,7 +267,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * MySQL returns 0 for YEAR('0000-00-00'). PHP's strtotime()
 		 * can't parse zero dates, so we extract the year directly.
 		 */
-		if ( preg_match( '/(\d{4})-\d{2}/', $field, $matches ) ) {
+		if ( preg_match( '/^(\d{4})-\d{2}/', $field, $matches ) ) {
 			return intval( $matches[1] );
 		}
 		/*
@@ -291,7 +291,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * zero day parts like '2020-01-00'. PHP's strtotime() can't
 		 * parse these, so we extract the day directly from the string.
 		 */
-		if ( preg_match( '/\d{4}-\d{2}-(\d{2})/', $field, $matches ) ) {
+		if ( preg_match( '/^\d{4}-\d{2}-(\d{2})/', $field, $matches ) ) {
 			return intval( $matches[1] );
 		}
 		/*
