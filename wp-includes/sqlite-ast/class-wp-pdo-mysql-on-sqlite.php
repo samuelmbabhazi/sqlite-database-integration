@@ -4494,14 +4494,30 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * In the future, let's update WordPress to do its own date validation
 		 * and stop relying on this MySQL feature,
 		 */
-		if ( 1 === preg_match( '/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/', $value, $matches ) ) {
+		if ( 1 === preg_match( '/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})$/', $value, $matches ) ) {
 			/*
 			 * Calling strtotime("0000-00-00 00:00:00") in 32-bit environments triggers
 			 * an "out of integer range" warning – let's avoid that call for the popular
 			 * case of "zero" dates.
 			 */
 			if ( '0000-00-00 00:00:00' !== $value && false === strtotime( $value ) ) {
-				$value = '0000-00-00 00:00:00';
+				/*
+				 * Check for dates with zero month/day parts (e.g. '2020-00-15 00:00:00').
+				 *
+				 * When the NO_ZERO_IN_DATE SQL mode is not active, MySQL accepts dates
+				 * where the year is nonzero but the month or day is zero. We must
+				 * preserve these values so that cast_value_for_saving() can handle
+				 * them correctly at the column level.
+				 *
+				 * See: https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_in_date
+				 */
+				$has_zero_in_date = (
+					( '00' === $matches[2] || '00' === $matches[3] ) &&
+					'0000' !== $matches[1]
+				);
+				if ( ! $has_zero_in_date || $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ) {
+					$value = '0000-00-00 00:00:00';
+				}
 			}
 		}
 		return $value;
@@ -5660,16 +5676,46 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						? 'NULL'
 						: $this->quote_sqlite_value( $implicit_default );
 				}
-				return sprintf(
+
+				/*
+				 * Build the CASE expression for date/time validation.
+				 *
+				 * SQLite's DATE()/DATETIME() functions return NULL for zero
+				 * dates, so the CASE includes explicit checks controlled by
+				 * the NO_ZERO_DATE and NO_ZERO_IN_DATE SQL modes.
+				 *
+				 * In MySQL, the behavior of zero dates depends on these modes:
+				 *
+				 * NO_ZERO_DATE (see https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_date):
+				 *   - Disabled: '0000-00-00' is permitted and produces no warning.
+				 *   - Enabled without strict mode: '0000-00-00' is permitted but produces a warning.
+				 *   - Enabled with strict mode: '0000-00-00' is not permitted and produces an error.
+				 *
+				 * NO_ZERO_IN_DATE (see https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_in_date):
+				 *   - Disabled: dates with zero month/day parts (e.g. '2020-00-15') are permitted.
+				 *   - Enabled without strict mode: zero-part dates produce a warning and are stored as '0000-00-00'.
+				 *   - Enabled with strict mode: zero-part dates produce an error.
+				 */
+				return strtr(
 					"CASE
-						WHEN %s IS NULL THEN NULL
-						WHEN %s > '0' THEN %s
-						ELSE %s
+						WHEN {value} IS NULL THEN NULL
+						WHEN {value} IN ('0000-00-00', '0000-00-00 00:00:00') AND NOT {reject_zero_date} THEN {zero_date_value}
+						WHEN SUBSTR({value}, 1, 4) != '0000' AND (SUBSTR({value}, 6, 2) = '00' OR SUBSTR({value}, 9, 2) = '00') AND NOT {reject_zero_in_date} THEN {value}
+						WHEN {function_call} > '0' THEN {function_call}
+						ELSE {fallback}
 					END",
-					$translated_value,
-					$function_call,
-					$function_call,
-					$fallback
+					array(
+						'{value}'               => $translated_value,
+						'{reject_zero_date}'    => (
+							$this->is_sql_mode_active( 'NO_ZERO_DATE' ) && $is_strict_mode
+						) ? 1 : 0,
+						'{zero_date_value}'     => 'date' === $mysql_data_type
+													? "'0000-00-00'"
+													: "'0000-00-00 00:00:00'",
+						'{reject_zero_in_date}' => $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? 1 : 0,
+						'{function_call}'       => $function_call,
+						'{fallback}'            => $fallback,
+					)
 				);
 			default:
 				/*

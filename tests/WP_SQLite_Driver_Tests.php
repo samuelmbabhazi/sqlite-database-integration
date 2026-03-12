@@ -2370,6 +2370,307 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertEquals( '0000-00-00 00:00:00', $results[1]->option_value );
 	}
 
+	/**
+	 * Test NO_ZERO_DATE SQL mode behavior.
+	 *
+	 * MySQL reference (https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_date):
+	 *
+	 *   "The NO_ZERO_DATE mode affects whether the server permits '0000-00-00' as a valid date.
+	 *    Its effect also depends on whether strict SQL mode is enabled.
+	 *    - If this mode is not enabled, '0000-00-00' is permitted and inserts produce no warning.
+	 *    - If this mode is enabled, '0000-00-00' is permitted but produces a warning.
+	 *    - If this mode and strict mode are both enabled, '0000-00-00' is not permitted
+	 *      and inserts produce an error, unless IGNORE is also given."
+	 */
+	public function testZeroDateAcceptedWhenNoZeroDateModeIsOff() {
+		// With NO_ZERO_DATE disabled, '0000-00-00 00:00:00' should be accepted.
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('0000-00-00 00:00:00');" );
+
+		$this->assertQuery( 'SELECT * FROM _dates;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( '0000-00-00 00:00:00', $results[0]->option_value );
+	}
+
+	/**
+	 * Test that zero dates are rejected in strict mode when NO_ZERO_DATE is active.
+	 *
+	 * MySQL reference (https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_date):
+	 *
+	 *   "If this mode and strict mode are both enabled, '0000-00-00' is not
+	 *    permitted and inserts produce an error."
+	 */
+	public function testZeroDateRejectedWhenNoZeroDateAndStrictModeAreOn() {
+		// Default modes include both NO_ZERO_DATE and STRICT_TRANS_TABLES.
+		$this->assertQueryError(
+			"INSERT INTO _dates (option_value) VALUES ('0000-00-00 00:00:00');",
+			"Incorrect datetime value: '0000-00-00 00:00:00'"
+		);
+	}
+
+	/**
+	 * Test that zero dates are accepted (with warning) when NO_ZERO_DATE is on
+	 * but strict mode is off.
+	 *
+	 * MySQL reference (https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_date):
+	 *
+	 *   "If this mode is enabled, '0000-00-00' is permitted but produces a warning."
+	 */
+	public function testZeroDateAcceptedWhenNoZeroDateOnButStrictModeOff() {
+		$this->assertQuery( "SET sql_mode = 'NO_ZERO_DATE'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('0000-00-00 00:00:00');" );
+
+		$this->assertQuery( 'SELECT * FROM _dates;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( '0000-00-00 00:00:00', $results[0]->option_value );
+	}
+
+	/**
+	 * Test that zero dates work with the DATE column type too.
+	 */
+	public function testZeroDateAcceptedForDateColumn() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery(
+			'CREATE TABLE _date_test (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				col_date DATE NOT NULL
+			);'
+		);
+
+		$this->assertQuery( "INSERT INTO _date_test (col_date) VALUES ('0000-00-00');" );
+
+		$this->assertQuery( 'SELECT * FROM _date_test;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( '0000-00-00', $results[0]->col_date );
+	}
+
+	/**
+	 * Test NO_ZERO_IN_DATE SQL mode behavior.
+	 *
+	 * MySQL reference (https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_in_date):
+	 *
+	 *   "The NO_ZERO_IN_DATE mode affects whether the server permits dates in
+	 *    which the year part is nonzero but the month or day part is 0. (This
+	 *    mode affects dates such as '2010-00-01' or '2010-01-00', but not
+	 *    '0000-00-00'. To control whether the server permits '0000-00-00',
+	 *    use the NO_ZERO_DATE mode.)
+	 *    - If this mode is not enabled, dates with zero parts are permitted
+	 *      and inserts produce no warning.
+	 *    - If this mode is enabled, dates with zero parts are inserted as
+	 *      '0000-00-00' and produce a warning.
+	 *    - If this mode and strict mode are both enabled, dates with zero parts
+	 *      are not permitted and inserts produce an error."
+	 */
+	public function testZeroInDateAcceptedWhenNoZeroInDateModeIsOff() {
+		// Disable NO_ZERO_IN_DATE but keep strict mode on.
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2020-00-15 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2020-01-00 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2020-00-00 00:00:00');" );
+
+		$this->assertQuery( 'SELECT * FROM _dates;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEquals( '2020-00-15 00:00:00', $results[0]->option_value );
+		$this->assertEquals( '2020-01-00 00:00:00', $results[1]->option_value );
+		$this->assertEquals( '2020-00-00 00:00:00', $results[2]->option_value );
+	}
+
+	/**
+	 * Test that dates with zero parts are rejected in strict mode when
+	 * NO_ZERO_IN_DATE is active.
+	 */
+	public function testZeroInDateRejectedWhenNoZeroInDateAndStrictModeAreOn() {
+		// Default modes include both NO_ZERO_IN_DATE and STRICT_TRANS_TABLES.
+		$this->assertQueryError(
+			"INSERT INTO _dates (option_value) VALUES ('2020-00-15 00:00:00');",
+			"Incorrect datetime value: '2020-00-15 00:00:00'"
+		);
+	}
+
+	/**
+	 * Test that dates with zero parts get stored as '0000-00-00 00:00:00'
+	 * when NO_ZERO_IN_DATE is on but strict mode is off.
+	 *
+	 * MySQL reference (https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_zero_in_date):
+	 *
+	 *   "If this mode is enabled, dates with zero parts are inserted as
+	 *    '0000-00-00' and produce a warning."
+	 */
+	public function testZeroInDateBecomesZeroDateWhenNoZeroInDateOnButStrictOff() {
+		$this->assertQuery( "SET sql_mode = 'NO_ZERO_IN_DATE'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2020-00-15 00:00:00');" );
+
+		$this->assertQuery( 'SELECT * FROM _dates;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( '0000-00-00 00:00:00', $results[0]->option_value );
+	}
+
+	/**
+	 * Test that all modes disabled allows both zero dates and zero-in-dates.
+	 */
+	public function testBothZeroDateModesDisabledAcceptsAll() {
+		$this->assertQuery( "SET sql_mode = ''" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('0000-00-00 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2020-00-15 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2020-01-00 00:00:00');" );
+
+		$this->assertQuery( 'SELECT * FROM _dates;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEquals( '0000-00-00 00:00:00', $results[0]->option_value );
+		$this->assertEquals( '2020-00-15 00:00:00', $results[1]->option_value );
+		$this->assertEquals( '2020-01-00 00:00:00', $results[2]->option_value );
+	}
+
+	/**
+	 * Test that valid dates still work correctly regardless of zero date modes.
+	 */
+	public function testValidDatesWorkWithZeroDateModes() {
+		// Default modes (NO_ZERO_DATE + STRICT_TRANS_TABLES).
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2022-01-15 14:30:00');" );
+
+		$this->assertQuery( 'SELECT * FROM _dates;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( '2022-01-15 14:30:00', $results[0]->option_value );
+	}
+
+	/**
+	 * Test zero date handling in UPDATE statements.
+	 */
+	public function testZeroDateInUpdate() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2022-01-15 14:30:00');" );
+		$this->assertQuery( "UPDATE _dates SET option_value = '0000-00-00 00:00:00';" );
+
+		$this->assertQuery( 'SELECT * FROM _dates;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( '0000-00-00 00:00:00', $results[0]->option_value );
+	}
+
+	/**
+	 * Test that zero dates are rejected in UPDATE when NO_ZERO_DATE and strict mode are on.
+	 */
+	public function testZeroDateInUpdateRejectedWhenNoZeroDateAndStrictModeAreOn() {
+		// Default modes include both NO_ZERO_DATE and STRICT_TRANS_TABLES.
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2022-01-15 14:30:00');" );
+		$this->assertQueryError(
+			"UPDATE _dates SET option_value = '0000-00-00 00:00:00';",
+			"Incorrect datetime value: '0000-00-00 00:00:00'"
+		);
+	}
+
+	/**
+	 * Test that dates with zero parts are rejected in UPDATE when
+	 * NO_ZERO_IN_DATE and strict mode are on.
+	 */
+	public function testZeroInDateInUpdateRejectedWhenNoZeroInDateAndStrictModeAreOn() {
+		// Default modes include both NO_ZERO_IN_DATE and STRICT_TRANS_TABLES.
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2022-01-15 14:30:00');" );
+		$this->assertQueryError(
+			"UPDATE _dates SET option_value = '2020-00-15 00:00:00';",
+			"Incorrect datetime value: '2020-00-15 00:00:00'"
+		);
+	}
+
+	/**
+	 * Test that stored zero dates can be selected and compared.
+	 *
+	 * In MySQL, zero dates are regular values for reads — they can appear in
+	 * WHERE, ORDER BY, and comparisons regardless of the current SQL mode.
+	 */
+	public function testSelectZeroDatesComparison() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero', '0000-00-00 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('real', '2022-01-15 14:30:00');" );
+
+		// Zero dates compare as less than real dates.
+		$this->assertQuery( "SELECT option_name FROM _dates WHERE option_value < '2000-01-01 00:00:00' ORDER BY option_value;" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'zero', $results[0]->option_name );
+
+		// Equality match on zero date.
+		$this->assertQuery( "SELECT option_name FROM _dates WHERE option_value = '0000-00-00 00:00:00';" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'zero', $results[0]->option_name );
+	}
+
+	/**
+	 * Test ORDER BY with a mix of zero and non-zero dates.
+	 */
+	public function testSelectZeroDatesOrderBy() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('b', '2022-06-01 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('a', '0000-00-00 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('c', '2023-01-01 00:00:00');" );
+
+		$this->assertQuery( 'SELECT option_name FROM _dates ORDER BY option_value ASC;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEquals( 'a', $results[0]->option_name );
+		$this->assertEquals( 'b', $results[1]->option_name );
+		$this->assertEquals( 'c', $results[2]->option_name );
+	}
+
+	/**
+	 * Test that zero-in-dates stored in the database can be read back
+	 * and filtered in SELECT statements.
+	 */
+	public function testSelectZeroInDates() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero-month', '2020-00-15 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero-day', '2020-01-00 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('normal', '2020-01-15 00:00:00');" );
+
+		// All three rows are readable.
+		$this->assertQuery( 'SELECT option_name, option_value FROM _dates ORDER BY option_value ASC;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEquals( '2020-00-15 00:00:00', $results[0]->option_value );
+		$this->assertEquals( '2020-01-00 00:00:00', $results[1]->option_value );
+		$this->assertEquals( '2020-01-15 00:00:00', $results[2]->option_value );
+
+		// Filtering by a zero-in-date value works.
+		$this->assertQuery( "SELECT option_name FROM _dates WHERE option_value = '2020-00-15 00:00:00';" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'zero-month', $results[0]->option_name );
+	}
+
+	/**
+	 * Test date functions on zero dates — YEAR(), MONTH(), DAY() all return 0.
+	 */
+	public function testDateFunctionsOnZeroDates() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero', '0000-00-00 00:00:00');" );
+
+		$this->assertQuery( 'SELECT YEAR(option_value) as y, MONTH(option_value) as m, DAY(option_value) as d FROM _dates;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 0, $results[0]->y );
+		$this->assertEquals( 0, $results[0]->m );
+		$this->assertEquals( 0, $results[0]->d );
+	}
+
 	public function testCaseInsensitiveSelect() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (

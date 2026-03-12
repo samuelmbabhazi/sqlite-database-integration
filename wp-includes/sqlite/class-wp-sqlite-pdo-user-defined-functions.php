@@ -239,6 +239,14 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function month( $field ) {
 		/*
+		 * MySQL returns 0 for MONTH('0000-00-00') and for dates with
+		 * zero month parts like '2020-00-15'. PHP's strtotime() can't
+		 * parse these, so we extract the month directly from the string.
+		 */
+		if ( preg_match( '/^\d{4}-(\d{2})/', $field, $matches ) ) {
+			return intval( $matches[1] );
+		}
+		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * n - Numeric representation of a month, without leading zeros.
@@ -256,6 +264,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function year( $field ) {
 		/*
+		 * MySQL returns 0 for YEAR('0000-00-00'). PHP's strtotime()
+		 * can't parse zero dates, so we extract the year directly.
+		 */
+		if ( preg_match( '/^(\d{4})-\d{2}/', $field, $matches ) ) {
+			return intval( $matches[1] );
+		}
+		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * Y - A full numeric representation of a year, 4 digits.
@@ -271,6 +286,14 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return string Representing the number of the day of the month from 1 and 31.
 	 */
 	public function day( $field ) {
+		/*
+		 * MySQL returns 0 for DAY('0000-00-00') and for dates with
+		 * zero day parts like '2020-01-00'. PHP's strtotime() can't
+		 * parse these, so we extract the day directly from the string.
+		 */
+		if ( preg_match( '/^\d{4}-\d{2}-(\d{2})/', $field, $matches ) ) {
+			return intval( $matches[1] );
+		}
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
