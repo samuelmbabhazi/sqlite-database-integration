@@ -246,6 +246,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		if ( preg_match( '/\d{4}-(\d{2})/', $field, $matches ) ) {
 			return intval( $matches[1] );
 		}
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * n - Numeric representation of a month, without leading zeros.
+		 *     1 through 12
+		 */
 		return intval( gmdate( 'n', strtotime( $field ) ) );
 	}
 
@@ -264,6 +270,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		if ( preg_match( '/(\d{4})-\d{2}/', $field, $matches ) ) {
 			return intval( $matches[1] );
 		}
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * Y - A full numeric representation of a year, 4 digits.
+		 */
 		return intval( gmdate( 'Y', strtotime( $field ) ) );
 	}
 
@@ -283,6 +294,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		if ( preg_match( '/\d{4}-\d{2}-(\d{2})/', $field, $matches ) ) {
 			return intval( $matches[1] );
 		}
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * j - Day of the month without leading zeros.
+		 *     1 to 31.
+		 */
 		return intval( gmdate( 'j', strtotime( $field ) ) );
 	}
 
