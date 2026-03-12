@@ -2586,6 +2586,91 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * Test that stored zero dates can be selected and compared.
+	 *
+	 * In MySQL, zero dates are regular values for reads — they can appear in
+	 * WHERE, ORDER BY, and comparisons regardless of the current SQL mode.
+	 */
+	public function testSelectZeroDatesComparison() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero', '0000-00-00 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('real', '2022-01-15 14:30:00');" );
+
+		// Zero dates compare as less than real dates.
+		$this->assertQuery( "SELECT option_name FROM _dates WHERE option_value < '2000-01-01 00:00:00' ORDER BY option_value;" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'zero', $results[0]->option_name );
+
+		// Equality match on zero date.
+		$this->assertQuery( "SELECT option_name FROM _dates WHERE option_value = '0000-00-00 00:00:00';" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'zero', $results[0]->option_name );
+	}
+
+	/**
+	 * Test ORDER BY with a mix of zero and non-zero dates.
+	 */
+	public function testSelectZeroDatesOrderBy() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('b', '2022-06-01 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('a', '0000-00-00 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('c', '2023-01-01 00:00:00');" );
+
+		$this->assertQuery( 'SELECT option_name FROM _dates ORDER BY option_value ASC;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEquals( 'a', $results[0]->option_name );
+		$this->assertEquals( 'b', $results[1]->option_name );
+		$this->assertEquals( 'c', $results[2]->option_name );
+	}
+
+	/**
+	 * Test that zero-in-dates stored in the database can be read back
+	 * and filtered in SELECT statements.
+	 */
+	public function testSelectZeroInDates() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero-month', '2020-00-15 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero-day', '2020-01-00 00:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('normal', '2020-01-15 00:00:00');" );
+
+		// All three rows are readable.
+		$this->assertQuery( 'SELECT option_name, option_value FROM _dates ORDER BY option_value ASC;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEquals( '2020-00-15 00:00:00', $results[0]->option_value );
+		$this->assertEquals( '2020-01-00 00:00:00', $results[1]->option_value );
+		$this->assertEquals( '2020-01-15 00:00:00', $results[2]->option_value );
+
+		// Filtering by a zero-in-date value works.
+		$this->assertQuery( "SELECT option_name FROM _dates WHERE option_value = '2020-00-15 00:00:00';" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'zero-month', $results[0]->option_name );
+	}
+
+	/**
+	 * Test date functions on zero dates — YEAR(), MONTH(), DAY() all return 0.
+	 */
+	public function testDateFunctionsOnZeroDates() {
+		$this->assertQuery( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('zero', '0000-00-00 00:00:00');" );
+
+		$this->assertQuery( "SELECT YEAR(option_value) as y, MONTH(option_value) as m, DAY(option_value) as d FROM _dates;" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 0, $results[0]->y );
+		$this->assertEquals( 0, $results[0]->m );
+		$this->assertEquals( 0, $results[0]->d );
+	}
+
 	public function testCaseInsensitiveSelect() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
