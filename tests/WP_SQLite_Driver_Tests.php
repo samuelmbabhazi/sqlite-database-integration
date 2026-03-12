@@ -2561,6 +2561,31 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertEquals( '0000-00-00 00:00:00', $results[0]->option_value );
 	}
 
+	/**
+	 * Test that zero dates are rejected in UPDATE when NO_ZERO_DATE and strict mode are on.
+	 */
+	public function testZeroDateInUpdateRejectedWhenNoZeroDateAndStrictModeAreOn() {
+		// Default modes include both NO_ZERO_DATE and STRICT_TRANS_TABLES.
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2022-01-15 14:30:00');" );
+		$this->assertQueryError(
+			"UPDATE _dates SET option_value = '0000-00-00 00:00:00';",
+			"Incorrect datetime value: '0000-00-00 00:00:00'"
+		);
+	}
+
+	/**
+	 * Test that dates with zero parts are rejected in UPDATE when
+	 * NO_ZERO_IN_DATE and strict mode are on.
+	 */
+	public function testZeroInDateInUpdateRejectedWhenNoZeroInDateAndStrictModeAreOn() {
+		// Default modes include both NO_ZERO_IN_DATE and STRICT_TRANS_TABLES.
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2022-01-15 14:30:00');" );
+		$this->assertQueryError(
+			"UPDATE _dates SET option_value = '2020-00-15 00:00:00';",
+			"Incorrect datetime value: '2020-00-15 00:00:00'"
+		);
+	}
+
 	public function testCaseInsensitiveSelect() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
