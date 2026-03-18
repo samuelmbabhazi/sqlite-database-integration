@@ -306,6 +306,24 @@ class WP_SQLite_DB extends wpdb {
 		if ( isset( $GLOBALS['@pdo'] ) ) {
 			$pdo = $GLOBALS['@pdo'];
 		}
+
+		// Migrate the database file from the legacy default name (".ht.sqlite") to
+		// the new default name (".ht.sqlite.php"). This only runs when using the
+		// default file name and the new file does not already exist.
+		if ( ! defined( 'DB_FILE' ) && ! file_exists( FQDB ) ) {
+			$old_db_path = FQDBDIR . '.ht.sqlite';
+
+			if ( file_exists( $old_db_path ) ) {
+				rename( $old_db_path, FQDB );
+
+				foreach ( array( '-wal', '-shm' ) as $suffix ) {
+					if ( file_exists( $old_db_path . $suffix ) ) {
+						rename( $old_db_path . $suffix, FQDB . $suffix );
+					}
+				}
+			}
+		}
+
 		if ( defined( 'WP_SQLITE_AST_DRIVER' ) && WP_SQLITE_AST_DRIVER ) {
 			if ( null === $this->dbname || '' === $this->dbname ) {
 				$this->bail(

@@ -57,6 +57,11 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		return $retval;
 	}
 
+	public function testApplicationID() {
+		$app_id = $this->sqlite->query( 'PRAGMA application_id' )->fetchColumn();
+		$this->assertSame( SQLITE_DB_APPLICATION_ID, (int) $app_id );
+	}
+
 	public function testRegexp() {
 		$this->assertQuery(
 			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"

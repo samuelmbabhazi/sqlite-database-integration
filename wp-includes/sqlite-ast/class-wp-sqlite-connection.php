@@ -96,6 +96,9 @@ class WP_SQLite_Connection {
 		if ( $journal_mode && in_array( $journal_mode, self::SQLITE_JOURNAL_MODES, true ) ) {
 			$this->query( 'PRAGMA journal_mode = ' . $journal_mode );
 		}
+
+		// Set the application ID to identify this as a WordPress SQLite database.
+		$this->query( 'PRAGMA application_id = ' . SQLITE_DB_APPLICATION_ID );
 	}
 
 	/**

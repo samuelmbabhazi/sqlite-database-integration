@@ -48,9 +48,19 @@ if ( ! defined( 'FQDB' ) ) {
 	if ( defined( 'DB_FILE' ) ) {
 		define( 'FQDB', FQDBDIR . DB_FILE );
 	} else {
-		define( 'FQDB', FQDBDIR . '.ht.sqlite' );
+		define( 'FQDB', FQDBDIR . '.ht.sqlite.php' );
 	}
 }
+
+/**
+ * The application ID identifying an SQLite database created by this driver.
+ *
+ * This value is stored in the SQLite database file header and can be used to
+ * identify databases managed by this driver.
+ *
+ * See: https://www.sqlite.org/pragma.html#pragma_application_id
+ */
+define( 'SQLITE_DB_APPLICATION_ID', 3948349 );
 
 // Allow enabling the SQLite AST driver via environment variable.
 if ( ! defined( 'WP_SQLITE_AST_DRIVER' ) && isset( $_ENV['WP_SQLITE_AST_DRIVER'] ) && 'true' === $_ENV['WP_SQLITE_AST_DRIVER'] ) {
