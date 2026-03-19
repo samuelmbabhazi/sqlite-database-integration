@@ -427,9 +427,6 @@ class WP_SQLite_Translator {
 		if ( defined( 'SQLITE_JOURNAL_MODE' ) && in_array( SQLITE_JOURNAL_MODE, $valid_journal_modes, true ) ) {
 			$this->pdo->query( 'PRAGMA journal_mode = ' . SQLITE_JOURNAL_MODE );
 		}
-
-		// Set the application ID to identify this as a WordPress SQLite database.
-		$this->pdo->query( 'PRAGMA application_id = ' . SQLITE_DB_APPLICATION_ID );
 	}
 
 	/**

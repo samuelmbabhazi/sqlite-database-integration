@@ -15,7 +15,12 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
 
 		$this->engine = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			new WP_SQLite_Connection(
+				array(
+					'pdo'            => $this->sqlite,
+					'application_id' => 42, // Test application ID.
+				)
+			),
 			'wp'
 		);
 		$this->engine->query(
@@ -53,7 +58,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 
 	public function testApplicationID() {
 		$app_id = $this->sqlite->query( 'PRAGMA application_id' )->fetchColumn();
-		$this->assertSame( SQLITE_DB_APPLICATION_ID, (int) $app_id );
+		$this->assertSame( 42, (int) $app_id );
 	}
 
 	public function testRegexp() {

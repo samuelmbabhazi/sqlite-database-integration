@@ -31,6 +31,13 @@ class WP_SQLite_DB extends wpdb {
 	private $allow_unsafe_unquoted_parameters = true;
 
 	/**
+	 * The application ID for the SQLite database.
+	 *
+	 * @see https://www.sqlite.org/pragma.html#pragma_application_id
+	 */
+	const SQLITE_DB_APPLICATION_ID = 3948349;
+
+	/**
 	 * Connects to the SQLite database.
 	 *
 	 * Unlike for MySQL, no credentials and host are needed.
@@ -343,9 +350,10 @@ class WP_SQLite_DB extends wpdb {
 			try {
 				$connection      = new WP_SQLite_Connection(
 					array(
-						'pdo'          => $pdo,
-						'path'         => FQDB,
-						'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+						'pdo'            => $pdo,
+						'path'           => FQDB,
+						'journal_mode'   => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+						'application_id' => self::SQLITE_DB_APPLICATION_ID,
 					)
 				);
 				$this->dbh       = new WP_SQLite_Driver( $connection, $this->dbname );
