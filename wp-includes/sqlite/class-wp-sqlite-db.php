@@ -314,11 +314,15 @@ class WP_SQLite_DB extends wpdb {
 			$old_db_path = FQDBDIR . '.ht.sqlite';
 
 			if ( file_exists( $old_db_path ) ) {
-				rename( $old_db_path, FQDB );
+				if ( ! rename( $old_db_path, FQDB ) ) {
+					wp_die( 'Failed to rename database file.', 'Error!' );
+				}
 
 				foreach ( array( '-wal', '-shm' ) as $suffix ) {
 					if ( file_exists( $old_db_path . $suffix ) ) {
-						rename( $old_db_path . $suffix, FQDB . $suffix );
+						if ( ! rename( $old_db_path . $suffix, FQDB . $suffix ) ) {
+							wp_die( 'Failed to rename database file.', 'Error!' );
+						}
 					}
 				}
 			}
