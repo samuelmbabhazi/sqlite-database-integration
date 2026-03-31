@@ -15,9 +15,7 @@
 		<!-- Default test suite to run all tests. -->
 		<testsuite name="default">
 			<directory suffix="_Tests.php">tests/</directory>
-			<directory suffix="_Tests.php">tests/e2e/</directory>
-			<exclude>packages/</exclude>
-			<exclude>wordpress/</exclude>
+			<exclude>tests/tools</exclude>
 		</testsuite>
 	</testsuites>
 </phpunit>

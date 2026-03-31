@@ -1,11 +1,13 @@
 <?php
 
 require_once __DIR__ . '/wp-sqlite-schema.php';
-require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-query-rewriter.php';
-require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-lexer.php';
-require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-token.php';
-require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
-require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-translator.php';
+require_once __DIR__ . '/../src/load.php';
+
+// When on an older SQLite version, enable unsafe back compatibility.
+$sqlite_version = ( new PDO( 'sqlite::memory:' ) )->query( 'SELECT SQLITE_VERSION();' )->fetch()[0];
+if ( version_compare( $sqlite_version, WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' ) ) {
+	define( 'WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS', true );
+}
 
 // Configure the test environment.
 error_reporting( E_ALL );
@@ -42,8 +44,6 @@ if ( ! function_exists( 'apply_filters' ) ) {
 		return $value;
 	}
 }
-
-require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/php-polyfills.php';
 
 if ( extension_loaded( 'mbstring' ) ) {
 
