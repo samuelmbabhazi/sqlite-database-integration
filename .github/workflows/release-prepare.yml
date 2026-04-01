@@ -113,9 +113,9 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           # Remove any previously uploaded zip.
-          gh release delete-asset "$RELEASE_TAG" "sqlite-database-integration.zip" --yes 2>/dev/null || true
+          gh release delete-asset "$RELEASE_TAG" "plugin-sqlite-database-integration.zip" --yes 2>/dev/null || true
           # Upload the new zip.
-          gh release upload "$RELEASE_TAG" "build/sqlite-database-integration.zip"
+          gh release upload "$RELEASE_TAG" "build/plugin-sqlite-database-integration.zip"
 
       - name: Create or update pull request
         id: pr

@@ -3,7 +3,7 @@
 ##
 # Build the SQLite Database Integration plugin zip.
 #
-# This script copies the plugin package into ./build/sqlite-database-integration/,
+# This script copies the plugin package into ./build/plugin-sqlite-database-integration/,
 # resolves the driver symlink, removes dev-only files, and creates a zip archive.
 ##
 
@@ -11,8 +11,8 @@ set -e
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$DIR/build"
-PLUGIN_DIR="$BUILD_DIR/sqlite-database-integration"
-ZIP_FILE="$BUILD_DIR/sqlite-database-integration.zip"
+PLUGIN_DIR="$BUILD_DIR/plugin-sqlite-database-integration"
+ZIP_FILE="$BUILD_DIR/plugin-sqlite-database-integration.zip"
 
 # Clean previous build.
 rm -rf "$PLUGIN_DIR"
@@ -36,6 +36,6 @@ bash "$DIR/bin/verify-release-metadata.sh" "$PLUGIN_DIR"
 
 # Create the zip archive.
 cd "$BUILD_DIR"
-zip -r "$ZIP_FILE" "sqlite-database-integration/" -x "*.DS_Store"
+zip -r "$ZIP_FILE" "$(basename "$PLUGIN_DIR")/" -x "*.DS_Store"
 
 echo "Built: $ZIP_FILE"
