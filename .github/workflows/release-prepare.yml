@@ -105,7 +105,7 @@ jobs:
           git push -f origin "$BRANCH"
 
       - name: Build plugin zip
-        run: composer run build
+        run: composer run build-sqlite-plugin-zip
 
       - name: Upload zip to draft release
         env:

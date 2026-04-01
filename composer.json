@@ -36,8 +36,8 @@
 		"fix-cs": [
 			"@php ./vendor/bin/phpcbf"
 		],
-		"build": [
-			"./bin/build-plugin-zip.sh"
+		"build-sqlite-plugin-zip": [
+			"./bin/build-sqlite-plugin-zip.sh"
 		],
 		"test": [
 			"phpunit"

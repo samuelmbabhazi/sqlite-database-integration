@@ -45,7 +45,7 @@ The following commands are useful for development and testing:
 composer install                        # Install dependencies
 composer run check-cs                   # Check coding standards (PHPCS)
 composer run fix-cs                     # Auto-fix coding standards (PHPCBF)
-composer run build                      # Build the plugin zip
+composer run build-sqlite-plugin-zip    # Build the plugin zip
 
 # SQLite driver tests (under packages/mysql-on-sqlite)
 cd packages/mysql-on-sqlite
