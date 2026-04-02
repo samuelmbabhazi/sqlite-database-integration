@@ -74,7 +74,7 @@ Release is streamlined with a local preparation script and GitHub Actions:
 
 1. **Run the release preparation script locally.**
    ```bash
-   composer run prepare-release -- <version>
+   composer run prepare-release <version>
    ```
    The script will:
      - Bump version numbers and generate a changelog from merged PRs.
