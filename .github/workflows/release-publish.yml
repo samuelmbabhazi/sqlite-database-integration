@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
 
     steps:
       - name: Checkout repository
@@ -121,3 +124,12 @@ jobs:
         env:
           BRANCH: ${{ github.event.pull_request.head.ref }}
         run: git push origin --delete "$BRANCH" 2>/dev/null || true
+
+  deploy-wporg:
+    name: Deploy to WordPress.org
+    needs: publish-release
+    if: needs.publish-release.outputs.prerelease == 'false'
+    uses: ./.github/workflows/release-wporg.yml
+    with:
+      tag: ${{ needs.publish-release.outputs.tag }}
+    secrets: inherit
