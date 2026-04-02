@@ -33,10 +33,18 @@ jobs:
           sparse-checkout: bin/
           sparse-checkout-cone-mode: false
 
+      - name: Resolve tag
+        id: resolve
+        run: |
+          TAG="${{ inputs.tag }}"
+          # Ensure the tag has a "v" prefix.
+          [[ "$TAG" == v* ]] || TAG="v$TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
       - name: Download plugin zip from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           gh release download "$TAG" \
             --repo "${{ github.repository }}" \
@@ -46,7 +54,7 @@ jobs:
 
       - name: Verify release metadata
         env:
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           VERSION="${TAG#v}"
           bash bin/verify-release-metadata.sh plugin-sqlite-database-integration "$VERSION"
