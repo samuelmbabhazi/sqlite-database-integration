@@ -58,18 +58,19 @@ git pull --ff-only origin trunk --quiet || fail "trunk is not up to date with or
 LATEST_TAG="v$CURRENT_VERSION"
 
 echo "Generating changelog from merged PRs since $LATEST_TAG..."
-TAG_DATE="$(git log -1 --format='%aI' "$LATEST_TAG" 2>/dev/null | cut -d'T' -f1 || true)"
 CHANGELOG=""
 
-if [ -n "$TAG_DATE" ]; then
+if git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
+	TAG_TIMESTAMP="$(git log -1 --format='%aI' "$LATEST_TAG")"
+
 	CHANGELOG="$(gh pr list \
 		--state merged \
 		--base trunk \
-		--search "merged:>=$TAG_DATE" \
+		--search "merged:>$TAG_TIMESTAMP" \
 		--limit 100 \
-		--json number,title \
-		--jq ".[] | \"* \\(.title) ([#\\(.number)]($REPO_URL/pull/\\(.number)))\"" 2>/dev/null \
-		| grep -v "^\* Release $CURRENT_VERSION " || true)"
+		--json number,title,mergedAt \
+		--jq "sort_by(.mergedAt) | reverse | .[]
+			| \"* \\(.title) ([#\\(.number)]($REPO_URL/pull/\\(.number)))\"" 2>/dev/null || true)"
 fi
 
 if [ -z "$CHANGELOG" ]; then
