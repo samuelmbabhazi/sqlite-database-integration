@@ -22,7 +22,6 @@ jobs:
     name: Deploy plugin to WordPress.org
     if: github.repository == 'WordPress/sqlite-database-integration'
     runs-on: ubuntu-latest
-    environment: WordPress.org
     permissions:
       contents: read
 
