@@ -532,6 +532,148 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider regexpSubstrCases
+	 */
+	public function testRegexpSubstr( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->engine->get_query_results()[0]->r );
+	}
+
+	public static function regexpSubstrCases() {
+		return array(
+			'basic match'           => array( "REGEXP_SUBSTR('abc123def', '[0-9]+')", '123' ),
+			'no match'              => array( "REGEXP_SUBSTR('abcdef', '[0-9]+')", null ),
+			'pos'                   => array( "REGEXP_SUBSTR('abc123def456', '[0-9]+', 5)", '23' ),
+			'pos with occurrence=2' => array( "REGEXP_SUBSTR('abc123def456', '[0-9]+', 5, 2)", '456' ),
+			'occurrence'            => array( "REGEXP_SUBSTR('a1 b2 c3', '[a-z][0-9]', 1, 2)", 'b2' ),
+			'occurrence too high'   => array( "REGEXP_SUBSTR('a1 b2', '[a-z][0-9]', 1, 5)", null ),
+			'match_type c'          => array( "REGEXP_SUBSTR('ABC', 'abc', 1, 1, 'c')", null ),
+			'multibyte match'       => array( "REGEXP_SUBSTR('café', 'é')", 'é' ),
+			'null expr'             => array( 'REGEXP_SUBSTR(NULL, \'abc\')', null ),
+			'null pattern'          => array( "REGEXP_SUBSTR('abc', NULL)", null ),
+		);
+	}
+
+	public function testRegexpSubstrNullPos() {
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abc', 'a', NULL) AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpSubstrNullOccurrence() {
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abc', 'a', 1, NULL) AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpSubstrNullMatchType() {
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abc', 'a', 1, 1, NULL) AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abc', '(abc', 0, 1, NULL) AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpSubstrValidatesBeforeNullPropagation() {
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR(NULL, '(abc')",
+			'Invalid regular expression: (abc.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR(NULL, 'a', 0)",
+			'Index out of bounds in regular expression search.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR(NULL, 'a', 1, 1, 'x')",
+			'Invalid match_type flag: x.'
+		);
+	}
+
+	public function testRegexpSubstrOccurrenceClampedToOne() {
+		// MySQL clamps occurrence <= 0 to 1.
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abcabc', 'b', 1, 0) AS r" );
+		$this->assertSame( 'b', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abcabc', 'b', 1, -5) AS r" );
+		$this->assertSame( 'b', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpSubstrPosOutOfRange() {
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', 'a', 10)",
+			'Index out of bounds in regular expression search.'
+		);
+	}
+
+	public function testRegexpSubstrPosAtEnd() {
+		// MySQL allows pos = char_count + 1 for SUBSTR.
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abc', 'a', 4) AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abc', '\$', 4) AS r" );
+		$this->assertSame( '', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpSubstrPosBeyondEnd() {
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', 'a', 5)",
+			'Index out of bounds in regular expression search.'
+		);
+	}
+
+	public function testRegexpSubstrPosZero() {
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', 'a', 0)",
+			'Index out of bounds in regular expression search.'
+		);
+	}
+
+	public function testRegexpSubstrInvalidPattern() {
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', '(abc')",
+			'Invalid regular expression: (abc.'
+		);
+	}
+
+	public function testRegexpSubstrInvalidFlag() {
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', 'a', 1, 1, 'x')",
+			'Invalid match_type flag: x.'
+		);
+	}
+
+	public function testRegexpSubstrLookbehindAcrossPos() {
+		// The lookbehind sees bytes before pos because the full subject is kept.
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('ab', '(?<=a)b', 2) AS r" );
+		$this->assertSame( 'b', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpSubstrRoundsNumericPositionArguments() {
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('a1b2c3', '[0-9]', 2.9, 1.9) AS r" );
+		$this->assertSame( '3', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('a1b2c3', '[0-9]', '2.9', '1.9') AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpSubstrNumericSubject() {
+		$this->assertQuery( "SELECT REGEXP_SUBSTR(123, '2') AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR(1.2300, '.*') AS r" );
+		$this->assertSame( '1.2300', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR(-1.2300, '.*') AS r" );
+		$this->assertSame( '-1.2300', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpSubstrValidatesUtf8BeforePos() {
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR(CAST(X'FF61' AS CHAR), 'a', 2)",
+			'Invalid UTF-8 data in regular expression input.'
+		);
+	}
+
+	public function testRegexpSubstrRejectsUnsupportedArgumentCount() {
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', 'a', 1, 1, 'c', 'extra')",
+			'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_SUBSTR()'
+		);
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"

@@ -76,6 +76,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp'                       => 'regexp',
 		'regexp_like'                  => 'regexp_like',
 		'regexp_replace'               => 'regexp_replace',
+		'regexp_substr'                => 'regexp_substr',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -111,6 +112,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	private $function_arities = array(
 		'regexp_like'    => array( 2, 3 ),
 		'regexp_replace' => array( 3, 4, 5, 6 ),
+		'regexp_substr'  => array( 2, 3, 4, 5 ),
 	);
 
 	/** @var string|null Last validated regex pattern. */
@@ -768,6 +770,57 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$out .= substr( $expr, $cur );
 
 		return $out;
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_SUBSTR() function.
+	 *
+	 * Values of `occurrence` less than 1 are clamped to 1, matching MySQL.
+	 * `pos = char_count + 1` is accepted and can return a zero-width match.
+	 *
+	 * @param string|null $expr       Subject string.
+	 * @param string|null $pattern    Regex pattern.
+	 * @param int|float|string|null $pos        1-based character position to start matching.
+	 * @param int|float|string|null $occurrence Which match to return (1-based; <= 0 clamps to 1).
+	 * @param string|null $match_type MySQL match_type flags.
+	 *
+	 * @throws Exception If the pattern is not a valid regular expression, or pos is out of range.
+	 * @return string|null The matched substring, NULL if no match or any argument is NULL.
+	 */
+	public function regexp_substr( $expr, $pattern, $pos = 1, $occurrence = 1, $match_type = '' ) {
+		if ( null === $match_type ) {
+			return null;
+		}
+		$compiled = $this->regexp_compile( $pattern, $match_type );
+		$position = null === $pos ? null : $this->regexp_int_arg( $pos );
+		$n        = null === $occurrence ? null : $this->regexp_int_arg( $occurrence );
+		if ( null !== $position && $position < 1 ) {
+			throw new Exception( 'Index out of bounds in regular expression search.' );
+		}
+		if (
+			null === $expr || null === $pattern
+			|| null === $pos || null === $occurrence
+		) {
+			return null;
+		}
+
+		$expr    = $this->regexp_string_arg( $expr );
+		$pattern = $this->regexp_string_arg( $pattern );
+		$this->regexp_validate_subject( $expr, $pattern );
+
+		// MySQL clamps occurrence <= 0 to 1.
+		$n = max( 1, $n );
+
+		$byte_start = $this->regexp_char_to_byte_offset( $expr, $position, true );
+
+		$match = $this->regexp_find_nth_match( $compiled, $expr, $byte_start, $n );
+		if ( false === $match ) {
+			$this->regexp_fail( $pattern );
+		}
+		if ( null === $match ) {
+			return null;
+		}
+		return $match[0][0];
 	}
 
 	/**
