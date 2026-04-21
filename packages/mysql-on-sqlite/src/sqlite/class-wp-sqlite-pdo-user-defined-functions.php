@@ -77,6 +77,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_like'                  => 'regexp_like',
 		'regexp_replace'               => 'regexp_replace',
 		'regexp_substr'                => 'regexp_substr',
+		'regexp_instr'                 => 'regexp_instr',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -113,6 +114,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_like'    => array( 2, 3 ),
 		'regexp_replace' => array( 3, 4, 5, 6 ),
 		'regexp_substr'  => array( 2, 3, 4, 5 ),
+		'regexp_instr'   => array( 2, 3, 4, 5, 6 ),
 	);
 
 	/** @var string|null Last validated regex pattern. */
@@ -824,6 +826,72 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
+	 * Method to emulate MySQL REGEXP_INSTR() function.
+	 *
+	 * Values of `occurrence` less than 1 are clamped to 1, matching MySQL.
+	 * `pos` greater than char_count is rejected (unlike SUBSTR and REPLACE).
+	 *
+	 * @param string|null $expr          Subject string.
+	 * @param string|null $pattern       Regex pattern.
+	 * @param int|float|string|null $pos           1-based character position to start matching.
+	 * @param int|float|string|null $occurrence    Which match to locate (1-based; <= 0 clamps to 1).
+	 * @param int|float|string|null $return_option 0 = start of match (default), 1 = one past end.
+	 * @param string|null $match_type    MySQL match_type flags.
+	 *
+	 * @throws Exception If the pattern is invalid, pos is out of range, or
+	 *                   return_option is not 0 or 1.
+	 * @return int|null 1-based character position, 0 if no match, NULL on NULL input.
+	 */
+	public function regexp_instr( $expr, $pattern, $pos = 1, $occurrence = 1, $return_option = 0, $match_type = '' ) {
+		$ret = null === $return_option ? null : $this->regexp_int_arg( $return_option );
+		if ( null !== $ret && 0 !== $ret && 1 !== $ret ) {
+			throw new Exception( 'Incorrect arguments to regexp_instr: return_option must be 1 or 0.' );
+		}
+		if ( null === $match_type ) {
+			return null;
+		}
+		$compiled = $this->regexp_compile( $pattern, $match_type );
+		$position = null === $pos ? null : $this->regexp_int_arg( $pos );
+		$n        = null === $occurrence ? null : $this->regexp_int_arg( $occurrence );
+		if ( null !== $position && $position < 1 ) {
+			throw new Exception( 'Index out of bounds in regular expression search.' );
+		}
+		if (
+			null === $expr || null === $pattern
+			|| null === $pos || null === $occurrence
+			|| null === $return_option
+		) {
+			return null;
+		}
+
+		$expr    = $this->regexp_string_arg( $expr );
+		$pattern = $this->regexp_string_arg( $pattern );
+		$this->regexp_validate_subject( $expr, $pattern );
+
+		// MySQL clamps occurrence <= 0 to 1.
+		$n = max( 1, $n );
+
+		$byte_start = $this->regexp_char_to_byte_offset( $expr, $position );
+		$region     = substr( $expr, $byte_start );
+
+		$match = $this->regexp_find_nth_match( $compiled, $region, 0, $n );
+		if ( false === $match ) {
+			$this->regexp_fail( $pattern );
+		}
+		if ( null === $match ) {
+			return 0;
+		}
+
+		list( $matched_text, $matched_byte_offset ) = $match[0];
+		$target_byte                                = $byte_start + $matched_byte_offset;
+		if ( 1 === $ret ) {
+			$target_byte += strlen( $matched_text );
+		}
+
+		return $this->regexp_byte_offset_to_char_index( $expr, $target_byte ) + 1;
+	}
+
+	/**
 	 * Method to emulate MySQL FIELD() function.
 	 *
 	 * This function gets the list argument and compares the first item to all the others.
@@ -1462,6 +1530,29 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return $byte_len;
 		}
 		throw new Exception( 'Index out of bounds in regular expression search.' );
+	}
+
+	/**
+	 * Convert a byte offset within a UTF-8 string into the 0-based character index.
+	 *
+	 * The byte offset is expected to fall on a UTF-8 code point boundary, as is
+	 * the case for offsets returned by PCRE. Offsets greater than the string
+	 * length are clamped to the string length as a defensive measure.
+	 *
+	 * @param string $s           UTF-8 string.
+	 * @param int    $byte_offset Byte offset on a code point boundary.
+	 *
+	 * @return int 0-based character index.
+	 */
+	private function regexp_byte_offset_to_char_index( $s, $byte_offset ) {
+		$byte_offset = min( $byte_offset, strlen( $s ) );
+		$chars       = 0;
+		for ( $i = 0; $i < $byte_offset; $i++ ) {
+			if ( ( ord( $s[ $i ] ) & 0xC0 ) !== 0x80 ) {
+				++$chars;
+			}
+		}
+		return $chars;
 	}
 
 	/**

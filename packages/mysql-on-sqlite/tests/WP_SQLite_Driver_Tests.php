@@ -674,6 +674,179 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider regexpInstrCases
+	 */
+	public function testRegexpInstr( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->engine->get_query_results()[0]->r );
+	}
+
+	public static function regexpInstrCases() {
+		return array(
+			'basic'                 => array( "REGEXP_INSTR('dog cat dog', 'dog')", '1' ),
+			'no match'              => array( "REGEXP_INSTR('abc', 'xyz')", '0' ),
+			'second match'          => array( "REGEXP_INSTR('dog cat dog', 'dog', 1, 2)", '9' ),
+			'pos skips first match' => array( "REGEXP_INSTR('dog cat dog', 'dog', 5)", '9' ),
+			'return_option=1 (end)' => array( "REGEXP_INSTR('dog cat dog', 'dog', 1, 1, 1)", '4' ),
+			'match_type c miss'     => array( "REGEXP_INSTR('DOG', 'dog', 1, 1, 0, 'c')", '0' ),
+			'multibyte position'    => array( "REGEXP_INSTR('café123', '[0-9]+')", '5' ),
+		);
+	}
+
+	public function testRegexpInstrNullExpr() {
+		$this->assertQuery( "SELECT REGEXP_INSTR(NULL, 'abc') AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrNullPattern() {
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', NULL) AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrNullMatchType() {
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '(abc', 0, 1, 0, NULL) AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrValidatesBeforeNullPropagation() {
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR(NULL, '(abc')",
+			'Invalid regular expression: (abc.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR(NULL, 'a', 0)",
+			'Index out of bounds in regular expression search.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR(NULL, 'a', 1, 1, 2)",
+			'Incorrect arguments to regexp_instr: return_option must be 1 or 0.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR(NULL, 'a', 1, 1, 0, 'x')",
+			'Invalid match_type flag: x.'
+		);
+	}
+
+	public function testRegexpInstrPosZero() {
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', 'a', 0)",
+			'Index out of bounds in regular expression search.'
+		);
+	}
+
+	public function testRegexpInstrPosOutOfRange() {
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', 'a', 10)",
+			'Index out of bounds in regular expression search.'
+		);
+	}
+
+	public function testRegexpInstrInvalidReturnOption() {
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', 'a', 1, 1, 2)",
+			'Incorrect arguments to regexp_instr: return_option must be 1 or 0.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', '(abc', 1, 1, 2)",
+			'Incorrect arguments to regexp_instr: return_option must be 1 or 0.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', 'a', 1, 1, 1e100)",
+			'Incorrect arguments to regexp_instr: return_option must be 1 or 0.'
+		);
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', 'a', 1, 1, 4294967296) AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', 'a', 1, 1, 4294967297) AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrInvalidReturnOptionWithOccurrenceZero() {
+		// return_option must be validated before occurrence is clamped, so an
+		// invalid return_option consistently errors regardless of occurrence.
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', 'a', 1, 0, 99)",
+			'Incorrect arguments to regexp_instr: return_option must be 1 or 0.'
+		);
+	}
+
+	public function testRegexpInstrInvalidPattern() {
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', '(abc')",
+			'Invalid regular expression: (abc.'
+		);
+	}
+
+	public function testRegexpInstrInvalidFlag() {
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', 'a', 1, 1, 0, 'x')",
+			'Invalid match_type flag: x.'
+		);
+	}
+
+	public function testRegexpInstrOccurrenceClampedToOne() {
+		// MySQL clamps occurrence <= 0 to 1.
+		$this->assertQuery( "SELECT REGEXP_INSTR('abcabc', 'b', 1, 0) AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('abcabc', 'b', 1, -5) AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrStraddlingMatch() {
+		// A match that starts before pos is not returned; the next match at or
+		// after pos is returned instead.
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc123def', '[0-9]+', 5) AS r" );
+		$this->assertSame( '5', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrMultibyteReturnOptionEnd() {
+		// Multibyte match ('é' is 2 bytes) with return_option=1 (one past end).
+		// 'aéb' char positions: a=1, é=2, b=3. 'é' matches at char 2, end char position = 3.
+		$this->assertQuery( "SELECT REGEXP_INSTR('aéb', 'é', 1, 1, 1) AS r" );
+		$this->assertSame( '3', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrPatternIsRelativeToPos() {
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '^b', 2) AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('ab', '(?<=a)b', 2) AS r" );
+		$this->assertSame( '0', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrRoundsNumericPositionArguments() {
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '.', 2.9) AS r" );
+		$this->assertSame( '3', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '.', '2.9') AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '.', 1, 1.9) AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '.', 1, '1.9') AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', 'a', 1, 1, 0.9) AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', 'a', 1, 1, '0.9') AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrNumericSubject() {
+		$this->assertQuery( "SELECT REGEXP_INSTR(123, '2') AS r" );
+		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpInstrValidatesUtf8BeforePos() {
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR(CAST(X'FF61' AS CHAR), 'a', 2)",
+			'Invalid UTF-8 data in regular expression input.'
+		);
+	}
+
+	public function testRegexpInstrRejectsUnsupportedArgumentCount() {
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', 'a', 1, 1, 0, 'c', 'extra')",
+			'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_INSTR()'
+		);
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
