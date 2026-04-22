@@ -628,6 +628,227 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testInformationSchemaTablesAutoIncrement(): void {
+		// A non-AUTO_INCREMENT table reports NULL.
+		$this->assertQuery( 'CREATE TABLE plain (id INT, name TEXT)' );
+		$result = $this->assertQuery( "SELECT * FROM information_schema.tables WHERE table_name = 'plain'" );
+		$this->assertSame( null, $result[0]->AUTO_INCREMENT );
+
+		// A fresh AUTO_INCREMENT table reports 1.
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$result = $this->assertQuery( "SELECT * FROM information_schema.tables WHERE table_name = 't'" );
+		$this->assertSame( '1', $result[0]->AUTO_INCREMENT );
+
+		// After inserts, the sequence advances.
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('a'), ('b'), ('c')" );
+		$result = $this->assertQuery( "SELECT * FROM information_schema.tables WHERE table_name = 't'" );
+		$this->assertSame( '4', $result[0]->AUTO_INCREMENT );
+
+		// DELETE preserves the counter.
+		$this->assertQuery( 'DELETE FROM t' );
+		$result = $this->assertQuery( "SELECT * FROM information_schema.tables WHERE table_name = 't'" );
+		$this->assertSame( '4', $result[0]->AUTO_INCREMENT );
+
+		// TRUNCATE resets the counter.
+		$this->assertQuery( 'TRUNCATE TABLE t' );
+		$result = $this->assertQuery( "SELECT * FROM information_schema.tables WHERE table_name = 't'" );
+		$this->assertSame( '1', $result[0]->AUTO_INCREMENT );
+	}
+
+	public function testInformationSchemaTablesFilterByAutoIncrement(): void {
+		$this->assertQuery( 'CREATE TABLE low (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE high (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE plain (id INT, name TEXT)' );
+		$this->assertQuery( "INSERT INTO low (name) VALUES ('a')" );
+		$this->assertQuery( "INSERT INTO high (name) VALUES ('a'), ('b'), ('c'), ('d'), ('e')" );
+
+		// > 3
+		$result = $this->assertQuery(
+			'SELECT TABLE_NAME FROM information_schema.tables WHERE `AUTO_INCREMENT` > 3'
+		);
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'high', $result[0]->TABLE_NAME );
+
+		// IS NULL
+		$result = $this->assertQuery(
+			'SELECT TABLE_NAME FROM information_schema.tables WHERE `AUTO_INCREMENT` IS NULL'
+		);
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'plain', $result[0]->TABLE_NAME );
+	}
+
+	public function testShowTableStatusAutoIncrement(): void {
+		// A non-AUTO_INCREMENT table reports NULL.
+		$this->assertQuery( 'CREATE TABLE plain (id INT, name TEXT)' );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 'plain'" );
+		$this->assertSame( null, $result[0]->Auto_increment );
+
+		// A fresh AUTO_INCREMENT table reports 1.
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '1', $result[0]->Auto_increment );
+
+		// After inserts, the sequence advances.
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('a'), ('b'), ('c')" );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '4', $result[0]->Auto_increment );
+
+		// DELETE preserves the counter.
+		$this->assertQuery( 'DELETE FROM t' );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '4', $result[0]->Auto_increment );
+
+		// TRUNCATE resets the counter.
+		$this->assertQuery( 'TRUNCATE TABLE t' );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '1', $result[0]->Auto_increment );
+	}
+
+	public function testShowTableStatusFilterByAutoIncrement(): void {
+		$this->assertQuery( 'CREATE TABLE low (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE high (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE plain (id INT, name TEXT)' );
+		$this->assertQuery( "INSERT INTO low (name) VALUES ('a')" );
+		$this->assertQuery( "INSERT INTO high (name) VALUES ('a'), ('b'), ('c'), ('d'), ('e')" );
+
+		// > 3
+		$result = $this->assertQuery( 'SHOW TABLE STATUS WHERE `Auto_increment` > 3' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'high', $result[0]->Name );
+
+		// IS NULL
+		$result = $this->assertQuery( 'SHOW TABLE STATUS WHERE `Auto_increment` IS NULL' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'plain', $result[0]->Name );
+	}
+
+	public function testShowCreateTableAutoIncrement(): void {
+		// No AUTO_INCREMENT=N on a non-AUTO_INCREMENT table.
+		$this->assertQuery( 'CREATE TABLE plain (id INT, name TEXT)' );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE plain' );
+		$this->assertStringNotContainsString( 'AUTO_INCREMENT=', $result[0]->{'Create Table'} );
+
+		// No AUTO_INCREMENT=N on a fresh AUTO_INCREMENT table (sequence not advanced).
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringNotContainsString( 'AUTO_INCREMENT=', $result[0]->{'Create Table'} );
+
+		// After inserts, the sequence advances.
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('a'), ('b'), ('c')" );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( 'AUTO_INCREMENT=4', $result[0]->{'Create Table'} );
+
+		// DELETE preserves the counter.
+		$this->assertQuery( 'DELETE FROM t' );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( 'AUTO_INCREMENT=4', $result[0]->{'Create Table'} );
+
+		// TRUNCATE resets the counter.
+		$this->assertQuery( 'TRUNCATE TABLE t' );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringNotContainsString( 'AUTO_INCREMENT=', $result[0]->{'Create Table'} );
+	}
+
+
+	public function testCreateTableSetAutoIncrement(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT=100'
+		);
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '100', $result[0]->Auto_increment );
+
+		// INSERT advances the sequence.
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('a')" );
+		$this->assertSame( '100', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+
+		// SHOW TABLE STATUS
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '101', $result[0]->Auto_increment );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( 'AUTO_INCREMENT=101', $result[0]->{'Create Table'} );
+
+		// Without an AUTO_INCREMENT column, the option is ignored.
+		$this->assertQuery( 'CREATE TABLE plain (id INT, name TEXT) AUTO_INCREMENT=500' );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 'plain'" );
+		$this->assertSame( null, $result[0]->Auto_increment );
+	}
+
+	public function testAlterTableSetAutoIncrement(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+
+		// Set the sequence value on an empty table.
+		$this->assertQuery( 'ALTER TABLE t AUTO_INCREMENT = 50' );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '50', $result[0]->Auto_increment );
+
+		// INSERT advances the sequence.
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('a')" );
+		$this->assertSame( '50', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '51', $result[0]->Auto_increment );
+
+		// Update the sequence value.
+		$this->assertQuery( 'ALTER TABLE t AUTO_INCREMENT = 200' );
+
+		// SHOW TABLE STATUS
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '200', $result[0]->Auto_increment );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( 'AUTO_INCREMENT=200', $result[0]->{'Create Table'} );
+
+		// Lowering the counter at or below MAX(id) clamps to MAX(id) + 1.
+		$this->assertQuery( 'ALTER TABLE t AUTO_INCREMENT = 1' );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '51', $result[0]->Auto_increment );
+
+		// Without an AUTO_INCREMENT column, the option is ignored.
+		$this->assertQuery( 'CREATE TABLE plain (id INT, name TEXT) AUTO_INCREMENT=500' );
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 'plain'" );
+		$this->assertSame( null, $result[0]->Auto_increment );
+	}
+
+	public function testTemporaryTableAutoIncrement(): void {
+		// Persistent and temporary tables must keep independent sequences.
+
+		// Persistent table (next sequence value is 3).
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('a'), ('b')" );
+
+		// Temporary table with the same name (seeded to start at 500).
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT=500'
+		);
+
+		// SHOW TABLE STATUS lists only persistent tables.
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '3', $result[0]->Auto_increment );
+
+		// INFORMATION_SCHEMA.TABLES lists only persistent tables.
+		$result = $this->assertQuery(
+			"SELECT `AUTO_INCREMENT` FROM information_schema.tables WHERE table_name = 't'"
+		);
+		$this->assertCount( 1, $result );
+		$this->assertSame( '3', $result[0]->AUTO_INCREMENT );
+
+		// Unqualified statements target the temporary table.
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('x')" );
+		$result = $this->assertQuery( "SELECT id FROM t WHERE name = 'x'" );
+		$this->assertSame( '500', $result[0]->id );
+
+		$this->assertQuery( 'ALTER TABLE t AUTO_INCREMENT = 1000' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('y')" );
+		$this->assertSame( '1000', $this->assertQuery( "SELECT id FROM t WHERE name = 'y'" )[0]->id );
+
+		// The persistent table's sequence remains unaffected.
+		$result = $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" );
+		$this->assertSame( '3', $result[0]->Auto_increment );
+	}
+
 	public function testShowFullColumns(): void {
 		$this->assertQuery( "CREATE TABLE t (id INT COMMENT 'Comment ID', name TEXT COMMENT 'Comment Name')" );
 		$result = $this->assertQuery( 'SHOW FULL COLUMNS FROM t' );
