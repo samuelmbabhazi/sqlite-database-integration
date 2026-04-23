@@ -3960,9 +3960,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				return 'AUTOINCREMENT';
 			case WP_MySQL_Lexer::BINARY_SYMBOL:
 				/*
-				 * There is no "BINARY expr" equivalent in SQLite. We look for the
-				 * keyword from a higher level to respect it in particular cases
-				 * (REGEXP, LIKE, etc.) and then remove it from the output here.
+				 * "BINARY expr" is translated in "translate_simple_expr_body()".
+				 * Returning null here is a safety net for any unhandled context
+				 * where a bare BINARY token would otherwise leak into the output.
 				 */
 				return null;
 			case WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL:
@@ -4310,6 +4310,24 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			);
 		}
 
+		/*
+		 * Translate "BINARY expr" to "expr COLLATE BINARY".
+		 *
+		 * The MySQL BINARY operator enforces byte-by-byte string comparison.
+		 * In SQLite, COLLATE BINARY is equivalent in comparison contexts.
+		 */
+		if ( null !== $token && WP_MySQL_Lexer::BINARY_SYMBOL === $token->id ) {
+			$expr = $node->get_first_child_node( 'simpleExpr' );
+			return sprintf( '%s COLLATE BINARY', $this->translate( $expr ) );
+		}
+
+		// Translate "CAST(expr AS type)" to its SQLite equivalent.
+		if ( null !== $token && WP_MySQL_Lexer::CAST_SYMBOL === $token->id ) {
+			$expr      = $node->get_first_child_node( 'expr' );
+			$cast_type = $node->get_first_child_node( 'castType' );
+			return $this->translate_cast_expr( $expr, $cast_type );
+		}
+
 		/**
 		 * Translate MySQL CONVERT() expression.
 		 *
@@ -4318,21 +4336,42 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 *   2. CONVERT(expr USING charset): Converts the character set.
 		 */
 		if ( null !== $token && WP_MySQL_Lexer::CONVERT_SYMBOL === $token->id ) {
-			$expr      = $this->translate( $node->get_first_child_node( 'expr' ) );
+			$expr      = $node->get_first_child_node( 'expr' );
 			$cast_type = $node->get_first_child_node( 'castType' );
 
 			if ( null !== $cast_type ) {
 				// CONVERT(expr, type): Translate to cast expression.
 				// TODO: Emulate UNSIGNED cast. SQLite has no unsigned integer type.
-				return sprintf( 'CAST(%s AS %s)', $expr, $this->translate( $cast_type ) );
+				return $this->translate_cast_expr( $expr, $cast_type );
 			} else {
 				// CONVERT(expr USING charset): Keep "expr" as is (no SQLite support).
 				// TODO: Consider rejecting UTF-8-incompatible charasets.
-				return $expr;
+				return $this->translate( $expr );
 			}
 		}
 
 		return $this->translate_sequence( $node->get_children() );
+	}
+
+	/**
+	 * Translate a MySQL CAST expression to SQLite.
+	 *
+	 * Shared by the CAST(expr AS type) and CONVERT(expr, type) forms.
+	 *
+	 * @param  WP_Parser_Node $expr      The "expr" AST node.
+	 * @param  WP_Parser_Node $cast_type The "castType" AST node.
+	 * @return string                    The translated SQLite expression.
+	 */
+	private function translate_cast_expr( WP_Parser_Node $expr, WP_Parser_Node $cast_type ): string {
+		/*
+		 * Translate "CAST(expr AS BINARY)" to "CAST(expr AS TEXT) COLLATE BINARY".
+		 * Emitting "CAST(expr AS BLOB)" would break equality against TEXT values
+		 * due to SQLite's storage-class ordering (BLOB > TEXT).
+		 */
+		if ( $cast_type->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
+			return sprintf( 'CAST(%s AS TEXT) COLLATE BINARY', $this->translate( $expr ) );
+		}
+		return sprintf( 'CAST(%s AS %s)', $this->translate( $expr ), $this->translate( $cast_type ) );
 	}
 
 	/**
@@ -4693,11 +4732,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 *
 		 * For example, for "SELECT 'abc'", the resulting column name is "abc"
 		 * in MySQL, but would be "'abc'" in SQLite if an alias was not used.
+		 *
+		 * Descend the AST until we reach a textStringLiteral. If at any level
+		 * we don't have a single child node, bail out; it's not a bare literal.
 		 */
-		$text_string_literal    = $node->get_first_descendant_node( 'textStringLiteral' );
-		$is_text_string_literal = $text_string_literal && $item === $this->translate( $text_string_literal );
-		if ( $is_text_string_literal ) {
-			$alias = $text_string_literal->get_first_child_token()->get_value();
+		$current = $node;
+		while ( 'textStringLiteral' !== $current->rule_name ) {
+			$children = $current->get_children();
+			if ( 1 !== count( $children ) || ! $children[0] instanceof WP_Parser_Node ) {
+				break;
+			}
+			$current = $children[0];
+		}
+		if ( 'textStringLiteral' === $current->rule_name ) {
+			$alias = $current->get_first_child_token()->get_value();
 
 			// When the literal value contains a NULL byte, MySQL truncates the
 			// resulting identifier at the position of the first one of them.

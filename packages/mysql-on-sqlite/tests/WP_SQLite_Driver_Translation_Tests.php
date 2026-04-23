@@ -104,7 +104,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testConvert(): void {
 		// CONVERT(expr, type) → CAST(expr AS type)
 		$this->assertQuery(
-			"SELECT CAST('abc' AS BLOB) AS `CONVERT('abc', BINARY)`",
+			"SELECT CAST('abc' AS TEXT) COLLATE BINARY AS `CONVERT('abc', BINARY)`",
 			"SELECT CONVERT('abc', BINARY)"
 		);
 
@@ -120,12 +120,12 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 		// CONVERT(expr USING charset) → expr
 		$this->assertQuery(
-			"SELECT 'Customer' AS `Customer`",
+			"SELECT 'Customer' AS `CONVERT('Customer' USING utf8mb4)`",
 			"SELECT CONVERT('Customer' USING utf8mb4)"
 		);
 
 		$this->assertQuery(
-			"SELECT 'test' AS `test`",
+			"SELECT 'test' AS `CONVERT('test' USING utf8)`",
 			"SELECT CONVERT('test' USING utf8)"
 		);
 
@@ -133,6 +133,56 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertQuery(
 			"SELECT 'Customer' COLLATE `utf8mb4_bin` AS `CONVERT('Customer' USING utf8mb4) COLLATE utf8mb4_bin`",
 			"SELECT CONVERT('Customer' USING utf8mb4) COLLATE utf8mb4_bin"
+		);
+	}
+
+	public function testBinary(): void {
+		// "BINARY expr" on the left side of comparison
+		$this->assertQuery(
+			'SELECT `a` COLLATE BINARY = `b` AS `BINARY a = b` FROM `t`',
+			'SELECT BINARY a = b FROM t'
+		);
+
+		// "BINARY expr" on the right side of comparison
+		$this->assertQuery(
+			'SELECT `a` = `b` COLLATE BINARY AS `a = BINARY b` FROM `t`',
+			'SELECT a = BINARY b FROM t'
+		);
+
+		// "BINARY literal"
+		$this->assertQuery(
+			"SELECT 'abc' COLLATE BINARY AS `BINARY 'abc'`",
+			"SELECT BINARY 'abc'"
+		);
+
+		// "BINARY expr" in ORDER BY
+		$this->assertQuery(
+			'SELECT `a` FROM `t` ORDER BY `a` COLLATE BINARY',
+			'SELECT a FROM t ORDER BY BINARY a'
+		);
+
+		// "BINARY expr" in GROUP BY
+		$this->assertQuery(
+			'SELECT `a` FROM `t` GROUP BY `a` COLLATE BINARY',
+			'SELECT a FROM t GROUP BY BINARY a'
+		);
+
+		// "BINARY expr" wrapping a parenthesized expression
+		$this->assertQuery(
+			"SELECT ( `a` || `b` ) COLLATE BINARY = 'x' AS `BINARY (a || b) = 'x'` FROM `t`",
+			"SELECT BINARY (a || b) = 'x' FROM t"
+		);
+
+		// "CAST(expr AS BINARY)" → "CAST(expr AS TEXT) COLLATE BINARY"
+		$this->assertQuery(
+			"SELECT CAST('abc' AS TEXT) COLLATE BINARY AS `CAST('abc' AS BINARY)`",
+			"SELECT CAST('abc' AS BINARY)"
+		);
+
+		// "CAST(expr AS BINARY) = expr" → "CAST(expr AS TEXT) COLLATE BINARY = expr"
+		$this->assertQuery(
+			"SELECT CAST('abc' AS TEXT) COLLATE BINARY = 'abc' AS `CAST('abc' AS BINARY) = 'abc'`",
+			"SELECT CAST('abc' AS BINARY) = 'abc'"
 		);
 	}
 
