@@ -72,6 +72,7 @@ class WP_Parser {
 		$branches            = $this->rules[ $rule_id ];
 		$fragment_ids        = $this->fragment_ids;
 		$rule_name           = $this->rule_names[ $rule_id ];
+		$is_fragment         = isset( $fragment_ids[ $rule_id ] );
 		$is_select_statement = 'selectStatement' === $rule_name;
 		$branch_matches      = false;
 		$children            = array();
@@ -102,8 +103,11 @@ class WP_Parser {
 				if ( true === $subnode ) {
 					continue;
 				}
-				if ( isset( $fragment_ids[ $subrule_id ] ) ) {
-					foreach ( $subnode->get_children_ref() as $c ) {
+				if ( is_array( $subnode ) ) {
+					// Fragment results are returned directly as a children
+					// array so the parser does not allocate a Parser_Node
+					// that would immediately be unwrapped into the parent.
+					foreach ( $subnode as $c ) {
 						$children[] = $c;
 					}
 				} else {
@@ -139,6 +143,14 @@ class WP_Parser {
 
 		if ( ! $children ) {
 			return true;
+		}
+
+		// Fragments exist only to group symbols for reuse; their "node" would
+		// get inlined into the parent on the very next step. Return the raw
+		// children array so the caller can splice it without allocating a
+		// throwaway WP_Parser_Node.
+		if ( $is_fragment ) {
+			return $children;
 		}
 
 		return new WP_Parser_Node( $rule_id, $rule_name, $children );
