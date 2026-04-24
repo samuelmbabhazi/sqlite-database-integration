@@ -16,7 +16,6 @@ class WP_Parser {
 
 	// Grammar data cached as instance fields so the hot path avoids an extra
 	// property hop via $this->grammar on every recursive call.
-	private $rules;
 	private $rule_names;
 	private $fragment_ids;
 	private $branches_for_token;
@@ -35,7 +34,6 @@ class WP_Parser {
 		$tokens[]                  = new WP_Parser_Token( WP_Parser_Grammar::EMPTY_RULE_ID, 0, 0, '' );
 		$this->tokens              = $tokens;
 		$this->position            = 0;
-		$this->rules               = $grammar->rules;
 		$this->rule_names          = $grammar->rule_names;
 		$this->fragment_ids        = $grammar->fragment_ids ?? array();
 		$this->branches_for_token  = $grammar->branches_for_token;
@@ -89,13 +87,11 @@ class WP_Parser {
 		}
 
 		$highest_terminal_id = $this->highest_terminal_id;
-		$branches            = $this->rules[ $rule_id ];
 		$is_fragment         = isset( $this->fragment_ids[ $rule_id ] );
 		$is_select_statement = $rule_id === $this->select_statement_rule_id;
 		$branch_matches      = false;
 		$children            = array();
-		foreach ( $candidate_branches as $idx ) {
-			$branch         = $branches[ $idx ];
+		foreach ( $candidate_branches as $branch ) {
 			$this->position = $position;
 			$children       = array();
 			$branch_matches = true;

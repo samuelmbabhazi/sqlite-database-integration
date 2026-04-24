@@ -337,19 +337,26 @@ class WP_Parser_Grammar {
 				$this->nullable_branches[ $rule_id ] = true;
 			}
 			if ( $selector ) {
-				// Many tokens in the same rule end up mapping to the same
-				// branch-id list (often because they all belong to a single
-				// branch's FIRST set). Deduplicate by signature so tokens
-				// share a single inner array via copy-on-write, turning the
-				// nested selector table from ~40 MB into ~1-2 MB without
-				// changing runtime behavior.
+				// Expand branch indexes to the branch symbol sequences so
+				// the parser can foreach candidate branches without an
+				// extra $branches[$idx] indirection on every attempt. Many
+				// tokens inside the same rule end up pointing to the same
+				// branch-id list, so deduplicate by signature and let
+				// copy-on-write share one sequences array across all of
+				// them. Without this the nested table would be ~40 MB; with
+				// it, ~1 MB.
 				$by_signature = array();
 				foreach ( $selector as $tid => $idx_list ) {
 					$sig = implode( ',', $idx_list );
 					if ( isset( $by_signature[ $sig ] ) ) {
 						$selector[ $tid ] = $by_signature[ $sig ];
 					} else {
-						$by_signature[ $sig ] = $idx_list;
+						$seqs = array();
+						foreach ( $idx_list as $idx ) {
+							$seqs[] = $branches[ $idx ];
+						}
+						$by_signature[ $sig ] = $seqs;
+						$selector[ $tid ]     = $seqs;
 					}
 				}
 				$this->branches_for_token[ $rule_id ] = $selector;
