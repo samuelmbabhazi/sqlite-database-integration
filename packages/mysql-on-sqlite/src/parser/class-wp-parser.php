@@ -97,9 +97,12 @@ class WP_Parser {
 		// on the MySQL corpus. Skipping the outer foreach avoids the
 		// foreach iterator setup for those calls.
 		if ( isset( $this->single_candidate_rules[ $rule_id ] ) ) {
-			$branch         = $candidate_branches[0];
-			$branch_matches = true;
-			$children       = array();
+			// Single-candidate fast path: the rule has exactly one branch
+			// to try for this token, so skip the outer foreach and the
+			// $branch_matches bookkeeping - every failure path just
+			// rewinds the position and returns false directly.
+			$branch   = $candidate_branches[0];
+			$children = array();
 			foreach ( $branch as $subrule_id ) {
 				if ( $subrule_id <= $highest_terminal_id ) {
 					if ( $tokens[ $this->position ]->id === $subrule_id ) {
@@ -107,14 +110,14 @@ class WP_Parser {
 						++$this->position;
 						continue;
 					}
-					$branch_matches = false;
-					break;
+					$this->position = $position;
+					return false;
 				}
 
 				$subnode = $this->parse_recursive( $subrule_id );
 				if ( false === $subnode ) {
-					$branch_matches = false;
-					break;
+					$this->position = $position;
+					return false;
 				}
 				if ( true === $subnode ) {
 					continue;
@@ -128,15 +131,7 @@ class WP_Parser {
 				}
 			}
 
-			if (
-				$branch_matches
-				&& $is_select_statement
-				&& WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $this->position ]->id
-			) {
-				$branch_matches = false;
-			}
-
-			if ( ! $branch_matches ) {
+			if ( $is_select_statement && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $this->position ]->id ) {
 				$this->position = $position;
 				return false;
 			}
