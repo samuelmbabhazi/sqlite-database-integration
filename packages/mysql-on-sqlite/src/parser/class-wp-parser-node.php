@@ -9,7 +9,7 @@
  * In this way, a parser node constitutes a recursive structure that represents
  * a parse (sub)tree at each level of the full grammar tree.
  */
-class WP_Parser_Node {
+final class WP_Parser_Node {
 	/**
 	 * @TODO: Review and document these properties and their visibility.
 	 */
