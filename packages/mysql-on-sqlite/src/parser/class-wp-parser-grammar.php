@@ -188,8 +188,8 @@ class WP_Parser_Grammar {
 		}
 
 		// Depth-first expansion memoized per rule, with cycle detection.
-		$expanded = array();
-		$visiting = array();
+		$expanded      = array();
+		$visiting      = array();
 		$expand_branch = function ( array $branch ) use ( &$expand_branch, &$expanded, &$visiting, $rules, $low_nt, $inlinable ) {
 			$out = array();
 			foreach ( $branch as $sym ) {
@@ -207,8 +207,8 @@ class WP_Parser_Grammar {
 					continue;
 				}
 				if ( ! isset( $expanded[ $sym ] ) ) {
-					$visiting[ $sym ]    = true;
-					$expanded[ $sym ]    = $expand_branch( $rules[ $sym ][0] );
+					$visiting[ $sym ] = true;
+					$expanded[ $sym ] = $expand_branch( $rules[ $sym ][0] );
 					unset( $visiting[ $sym ] );
 				}
 				foreach ( $expanded[ $sym ] as $s ) {
@@ -239,12 +239,12 @@ class WP_Parser_Grammar {
 	 * of the branch attempts that the parser used to try and fail.
 	 */
 	private function build_branch_selectors() {
-		$rules        = $this->rules;
-		$low_nt       = $this->lowest_non_terminal_id;
-		$empty_rule   = self::EMPTY_RULE_ID;
-		$rule_ids     = array_keys( $rules );
-		$nullable     = array();
-		$first_sets   = array();
+		$rules      = $this->rules;
+		$low_nt     = $this->lowest_non_terminal_id;
+		$empty_rule = self::EMPTY_RULE_ID;
+		$rule_ids   = array_keys( $rules );
+		$nullable   = array();
+		$first_sets = array();
 
 		foreach ( $rule_ids as $rule_id ) {
 			$nullable[ $rule_id ]   = false;

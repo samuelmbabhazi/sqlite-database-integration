@@ -24,8 +24,8 @@ class WP_Parser {
 	private $select_statement_rule_id;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
-		$this->grammar             = $grammar;
-		$this->token_count         = count( $tokens );
+		$this->grammar     = $grammar;
+		$this->token_count = count( $tokens );
 		// Append an end-of-input sentinel token whose id is EMPTY_RULE_ID
 		// (0). The hot path can then read $tokens[$pos]->id unconditionally
 		// when $pos is the current cursor, because the sentinel naturally
