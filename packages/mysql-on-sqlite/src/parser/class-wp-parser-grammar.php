@@ -111,7 +111,37 @@ class WP_Parser_Grammar {
 		}
 
 		$this->inline_single_branch_fragments();
+		$this->strip_epsilon_markers();
 		$this->build_branch_selectors();
+	}
+
+	/**
+	 * Remove explicit `EMPTY_RULE_ID` markers from branches.
+	 *
+	 * The epsilon marker is a zero-width, always-matching symbol used in the
+	 * grammar to express optional productions. At parse time it would still
+	 * be walked and "continued" over for no effect, so stripping it ahead of
+	 * time removes a per-symbol branch in the hot loop.
+	 *
+	 * A pure-epsilon branch (`[EMPTY_RULE_ID]`) becomes an empty branch (`[]`)
+	 * which the parser already handles: the inner symbol loop does nothing and
+	 * the rule returns a successful empty match.
+	 */
+	private function strip_epsilon_markers() {
+		foreach ( $this->rules as $rule_id => $branches ) {
+			foreach ( $branches as $i => $branch ) {
+				if ( in_array( self::EMPTY_RULE_ID, $branch, true ) ) {
+					$this->rules[ $rule_id ][ $i ] = array_values(
+						array_filter(
+							$branch,
+							static function ( $s ) {
+								return self::EMPTY_RULE_ID !== $s;
+							}
+						)
+					);
+				}
+			}
+		}
 	}
 
 	/**

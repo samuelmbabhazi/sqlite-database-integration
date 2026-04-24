@@ -14,11 +14,26 @@ class WP_Parser {
 	protected $token_count;
 	protected $position;
 
+	// Grammar data cached as instance fields so the hot path avoids an extra
+	// property hop via $this->grammar on every recursive call.
+	private $rules;
+	private $rule_names;
+	private $fragment_ids;
+	private $branches_for_token;
+	private $nullable_branches;
+	private $highest_terminal_id;
+
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
-		$this->grammar     = $grammar;
-		$this->tokens      = $tokens;
-		$this->token_count = count( $tokens );
-		$this->position    = 0;
+		$this->grammar             = $grammar;
+		$this->tokens              = $tokens;
+		$this->token_count         = count( $tokens );
+		$this->position            = 0;
+		$this->rules               = $grammar->rules;
+		$this->rule_names          = $grammar->rule_names;
+		$this->fragment_ids        = $grammar->fragment_ids ?? array();
+		$this->branches_for_token  = $grammar->branches_for_token;
+		$this->nullable_branches   = $grammar->nullable_branches;
+		$this->highest_terminal_id = $grammar->highest_terminal_id;
 	}
 
 	public function parse() {
@@ -36,7 +51,6 @@ class WP_Parser {
 	 * round trip per consumed token.
 	 */
 	private function parse_recursive( $rule_id ) {
-		$grammar     = $this->grammar;
 		$tokens      = $this->tokens;
 		$token_count = $this->token_count;
 		$position    = $this->position;
@@ -45,21 +59,19 @@ class WP_Parser {
 		// sets. When no entry exists for the current token but the rule is
 		// nullable, all candidate branches would match empty, so we return
 		// immediately without entering any branch.
-		$branch_selector = $grammar->branches_for_token[ $rule_id ];
-		$tid             = $position < $token_count ? $tokens[ $position ]->id : WP_Parser_Grammar::EMPTY_RULE_ID;
-		if ( isset( $branch_selector[ $tid ] ) ) {
-			$candidate_branches = $branch_selector[ $tid ];
-		} elseif ( isset( $grammar->nullable_branches[ $rule_id ] ) ) {
+		$tid = $position < $token_count ? $tokens[ $position ]->id : WP_Parser_Grammar::EMPTY_RULE_ID;
+		if ( isset( $this->branches_for_token[ $rule_id ][ $tid ] ) ) {
+			$candidate_branches = $this->branches_for_token[ $rule_id ][ $tid ];
+		} elseif ( isset( $this->nullable_branches[ $rule_id ] ) ) {
 			return true;
 		} else {
 			return false;
 		}
 
-		$highest_terminal_id = $grammar->highest_terminal_id;
-		$branches            = $grammar->rules[ $rule_id ];
-
-		$rule_name           = $grammar->rule_names[ $rule_id ];
-		$fragment_ids        = $grammar->fragment_ids;
+		$highest_terminal_id = $this->highest_terminal_id;
+		$branches            = $this->rules[ $rule_id ];
+		$fragment_ids        = $this->fragment_ids;
+		$rule_name           = $this->rule_names[ $rule_id ];
 		$is_select_statement = 'selectStatement' === $rule_name;
 		$branch_matches      = false;
 		$children            = array();
@@ -70,9 +82,6 @@ class WP_Parser {
 			$branch_matches = true;
 			foreach ( $branch as $subrule_id ) {
 				if ( $subrule_id <= $highest_terminal_id ) {
-					if ( WP_Parser_Grammar::EMPTY_RULE_ID === $subrule_id ) {
-						continue;
-					}
 					if (
 						$this->position < $token_count
 						&& $tokens[ $this->position ]->id === $subrule_id
@@ -132,8 +141,6 @@ class WP_Parser {
 			return true;
 		}
 
-		$node = new WP_Parser_Node( $rule_id, $rule_name );
-		$node->set_children( $children );
-		return $node;
+		return new WP_Parser_Node( $rule_id, $rule_name, $children );
 	}
 }
