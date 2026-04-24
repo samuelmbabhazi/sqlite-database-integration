@@ -22,6 +22,7 @@ class WP_Parser {
 	private $nullable_branches;
 	private $highest_terminal_id;
 	private $select_statement_rule_id;
+	private $single_candidate_rules;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
 		$this->grammar     = $grammar;
@@ -31,14 +32,15 @@ class WP_Parser {
 		// when $pos is the current cursor, because the sentinel naturally
 		// fails to match any real grammar terminal while feeding the
 		// nullable-fallback branch of the selector check.
-		$tokens[]                  = new WP_Parser_Token( WP_Parser_Grammar::EMPTY_RULE_ID, 0, 0, '' );
-		$this->tokens              = $tokens;
-		$this->position            = 0;
-		$this->rule_names          = $grammar->rule_names;
-		$this->fragment_ids        = $grammar->fragment_ids ?? array();
-		$this->branches_for_token  = $grammar->branches_for_token;
-		$this->nullable_branches   = $grammar->nullable_branches;
-		$this->highest_terminal_id = $grammar->highest_terminal_id;
+		$tokens[]                     = new WP_Parser_Token( WP_Parser_Grammar::EMPTY_RULE_ID, 0, 0, '' );
+		$this->tokens                 = $tokens;
+		$this->position               = 0;
+		$this->rule_names             = $grammar->rule_names;
+		$this->fragment_ids           = $grammar->fragment_ids ?? array();
+		$this->branches_for_token     = $grammar->branches_for_token;
+		$this->nullable_branches      = $grammar->nullable_branches;
+		$this->highest_terminal_id    = $grammar->highest_terminal_id;
+		$this->single_candidate_rules = $grammar->single_candidate_rules ?? array();
 
 		// The INTO negative-lookahead only fires for selectStatement. Cache
 		// the rule id so the per-call check is an int compare instead of a
@@ -89,8 +91,66 @@ class WP_Parser {
 		$highest_terminal_id = $this->highest_terminal_id;
 		$is_fragment         = isset( $this->fragment_ids[ $rule_id ] );
 		$is_select_statement = $rule_id === $this->select_statement_rule_id;
-		$branch_matches      = false;
-		$children            = array();
+
+		// Fast path for rules where every (rule, token) selector entry
+		// points to exactly one branch - about 55% of nonterminal calls
+		// on the MySQL corpus. Skipping the outer foreach avoids the
+		// foreach iterator setup for those calls.
+		if ( isset( $this->single_candidate_rules[ $rule_id ] ) ) {
+			$branch         = $candidate_branches[0];
+			$branch_matches = true;
+			$children       = array();
+			foreach ( $branch as $subrule_id ) {
+				if ( $subrule_id <= $highest_terminal_id ) {
+					if ( $tokens[ $this->position ]->id === $subrule_id ) {
+						$children[] = $tokens[ $this->position ];
+						++$this->position;
+						continue;
+					}
+					$branch_matches = false;
+					break;
+				}
+
+				$subnode = $this->parse_recursive( $subrule_id );
+				if ( false === $subnode ) {
+					$branch_matches = false;
+					break;
+				}
+				if ( true === $subnode ) {
+					continue;
+				}
+				if ( is_array( $subnode ) ) {
+					foreach ( $subnode as $c ) {
+						$children[] = $c;
+					}
+				} else {
+					$children[] = $subnode;
+				}
+			}
+
+			if (
+				$branch_matches
+				&& $is_select_statement
+				&& WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $this->position ]->id
+			) {
+				$branch_matches = false;
+			}
+
+			if ( ! $branch_matches ) {
+				$this->position = $position;
+				return false;
+			}
+			if ( ! $children ) {
+				return true;
+			}
+			if ( $is_fragment ) {
+				return $children;
+			}
+			return new WP_Parser_Node( $rule_id, $this->rule_names[ $rule_id ], $children );
+		}
+
+		$branch_matches = false;
+		$children       = array();
 		foreach ( $candidate_branches as $branch ) {
 			$this->position = $position;
 			$children       = array();

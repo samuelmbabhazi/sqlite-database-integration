@@ -55,6 +55,15 @@ class WP_Parser_Grammar {
 	 */
 	public $nullable_branches = array();
 
+	/**
+	 * Per-rule flag indicating every (rule, token) selector entry points
+	 * to exactly one branch. The parser uses this to skip the outer
+	 * foreach when a single candidate is the only possibility.
+	 *
+	 * @var array<int,true>
+	 */
+	public $single_candidate_rules = array();
+
 	public $lowest_non_terminal_id;
 	public $highest_terminal_id;
 
@@ -345,8 +354,12 @@ class WP_Parser_Grammar {
 				// copy-on-write share one sequences array across all of
 				// them. Without this the nested table would be ~40 MB; with
 				// it, ~1 MB.
-				$by_signature = array();
+				$by_signature          = array();
+				$all_single_candidates = true;
 				foreach ( $selector as $tid => $idx_list ) {
+					if ( 1 !== count( $idx_list ) ) {
+						$all_single_candidates = false;
+					}
 					$sig = implode( ',', $idx_list );
 					if ( isset( $by_signature[ $sig ] ) ) {
 						$selector[ $tid ] = $by_signature[ $sig ];
@@ -360,6 +373,9 @@ class WP_Parser_Grammar {
 					}
 				}
 				$this->branches_for_token[ $rule_id ] = $selector;
+				if ( $all_single_candidates ) {
+					$this->single_candidate_rules[ $rule_id ] = true;
+				}
 			}
 		}
 	}
