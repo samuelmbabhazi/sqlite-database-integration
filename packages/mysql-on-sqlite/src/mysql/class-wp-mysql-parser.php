@@ -40,7 +40,7 @@ class WP_MySQL_Parser extends WP_Parser {
 	 * @return bool Whether a query was successfully parsed.
 	 */
 	public function next_query(): bool {
-		if ( $this->position >= count( $this->tokens ) ) {
+		if ( $this->position >= $this->token_count ) {
 			return false;
 		}
 		$this->current_ast = $this->parse();

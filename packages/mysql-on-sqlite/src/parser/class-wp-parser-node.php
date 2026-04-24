@@ -27,79 +27,15 @@ class WP_Parser_Node {
 	}
 
 	/**
-	 * Flatten the matched rule fragments as if their children were direct
-	 * descendants of the current rule.
+	 * Replace all children with the given array.
 	 *
-	 * What are rule fragments?
+	 * This is used by the parser to attach a batch of children built up in a
+	 * local array while trying branches, without allocating a node per attempt.
 	 *
-	 * When we initially parse the grammar file, it has compound rules such
-	 * as this one:
-	 *
-	 *      query ::= EOF | ((simpleStatement | beginWork) ((SEMICOLON_SYMBOL EOF?) | EOF))
-	 *
-	 * Building a parser that can understand such rules is way more complex than building
-	 * a parser that only follows simple rules, so we flatten those compound rules into
-	 * simpler ones. The above rule would be flattened to:
-	 *
-	 *      query ::= EOF | %query0
-	 *      %query0 ::= %%query01 %%query02
-	 *      %%query01 ::= simpleStatement | beginWork
-	 *      %%query02 ::= SEMICOLON_SYMBOL EOF_zero_or_one | EOF
-	 *      EOF_zero_or_one ::= EOF | ε
-	 *
-	 * This factorization happens in "convert-grammar.php".
-	 *
-	 * "Fragments" are intermediate artifacts whose names are not in the original grammar.
-	 * They are extremely useful for the parser, but the API consumer should never have to
-	 * worry about them. Fragment names start with a percent sign ("%").
-	 *
-	 * The code below inlines every fragment back in its parent rule.
-	 *
-	 * We could optimize this. The current $match may be discarded later on so any inlining
-	 * effort here would be wasted. However, inlining seems cheap and doing it bottom-up here
-	 * is **much** easier than reprocessing the parse tree top-down later on.
-	 *
-	 * The following parse tree:
-	 *
-	 * [
-	 *      'query' => [
-	 *          [
-	 *              '%query01' => [
-	 *                  [
-	 *                      'simpleStatement' => [
-	 *                          MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-	 *                      ],
-	 *                      '%query02' => [
-	 *                          [
-	 *                              'simpleStatement' => [
-	 *                                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-	 *                          ]
-	 *                      ],
-	 *                  ]
-	 *              ]
-	 *          ]
-	 *      ]
-	 * ]
-	 *
-	 * Would be inlined as:
-	 *
-	 * [
-	 *      'query' => [
-	 *          [
-	 *              'simpleStatement' => [
-	 *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-	 *              ]
-	 *          ],
-	 *          [
-	 *              'simpleStatement' => [
-	 *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-	 *              ]
-	 *          ]
-	 *      ]
-	 * ]
+	 * @param array<WP_Parser_Node|WP_Parser_Token> $children The new children.
 	 */
-	public function merge_fragment( $node ) {
-		$this->children = array_merge( $this->children, $node->children );
+	public function set_children( array $children ): void {
+		$this->children = $children;
 	}
 
 	/**
