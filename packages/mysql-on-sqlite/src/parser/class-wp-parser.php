@@ -54,42 +54,48 @@ class WP_Parser {
 			return false;
 		}
 
-		// Bale out from processing the current branch if none of its rules can
-		// possibly match the current token.
-		$rule_lookahead = $grammar->lookahead_is_match_possible[ $rule_id ] ?? null;
-		if ( null !== $rule_lookahead ) {
-			$token_id = $this->tokens[ $this->position ]->id;
-			if (
-				! isset( $rule_lookahead[ $token_id ] ) &&
-				! isset( $rule_lookahead[ WP_Parser_Grammar::EMPTY_RULE_ID ] )
-			) {
+		$tokens      = $this->tokens;
+		$token_count = $this->token_count;
+		$position    = $this->position;
+
+		// Narrow the set of branches worth trying using the precomputed FIRST
+		// sets. When no entry exists for the current token, fall back to the
+		// rule's nullable branches (if any); if both are empty the rule cannot
+		// match here.
+		$branch_selector = $grammar->branches_for_token[ $rule_id ] ?? null;
+		if ( null !== $branch_selector ) {
+			$tid = $position < $token_count ? $tokens[ $position ]->id : WP_Parser_Grammar::EMPTY_RULE_ID;
+			if ( isset( $branch_selector[ $tid ] ) ) {
+				$candidate_branches = $branch_selector[ $tid ];
+			} elseif ( isset( $grammar->nullable_branches[ $rule_id ] ) ) {
+				$candidate_branches = $grammar->nullable_branches[ $rule_id ];
+			} else {
 				return false;
 			}
+		} else {
+			$candidate_branches = array_keys( $branches );
 		}
 
-		$rule_name         = $grammar->rule_names[ $rule_id ];
-		$fragment_ids      = $grammar->fragment_ids;
-		$rules             = $grammar->rules;
-		$tokens            = $this->tokens;
-		$token_count       = $this->token_count;
-		$starting_position = $this->position;
-		$branch_matches    = false;
-		foreach ( $branches as $branch ) {
-			$this->position = $starting_position;
+		$rule_name           = $grammar->rule_names[ $rule_id ];
+		$fragment_ids        = $grammar->fragment_ids;
+		$is_select_statement = 'selectStatement' === $rule_name;
+		$branch_matches      = false;
+		$children            = array();
+		foreach ( $candidate_branches as $idx ) {
+			$branch         = $branches[ $idx ];
+			$this->position = $position;
 			$children       = array();
 			$branch_matches = true;
 			foreach ( $branch as $subrule_id ) {
-				// Inline terminal matching to avoid a recursive call per token.
 				if ( $subrule_id <= $highest_terminal_id ) {
 					if ( WP_Parser_Grammar::EMPTY_RULE_ID === $subrule_id ) {
-						// Epsilon rule: matches without consuming input.
 						continue;
 					}
 					if (
 						$this->position < $token_count
 						&& $tokens[ $this->position ]->id === $subrule_id
 					) {
-						$children[]       = $tokens[ $this->position ];
+						$children[] = $tokens[ $this->position ];
 						++$this->position;
 						continue;
 					}
@@ -103,17 +109,9 @@ class WP_Parser {
 					break;
 				}
 				if ( true === $subnode ) {
-					/*
-					 * The subrule was matched without actually matching a token.
-					 * This means a special empty "ε" (epsilon) rule was matched.
-					 * An "ε" rule in a grammar matches an empty input of 0 bytes.
-					 * It is used to represent optional grammar productions.
-					 */
 					continue;
 				}
 				if ( isset( $fragment_ids[ $subrule_id ] ) ) {
-					// Fragments: inline their children directly to avoid building
-					// a throwaway WP_Parser_Node that would be merged afterwards.
 					foreach ( $subnode->get_children_ref() as $c ) {
 						$children[] = $c;
 					}
@@ -131,7 +129,7 @@ class WP_Parser {
 			//        See: https://github.com/antlr/antlr4/issues/488
 			if (
 				$branch_matches
-				&& 'selectStatement' === $rule_name
+				&& $is_select_statement
 				&& $this->position < $token_count
 				&& WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $this->position ]->id
 			) {
@@ -144,7 +142,7 @@ class WP_Parser {
 		}
 
 		if ( ! $branch_matches ) {
-			$this->position = $starting_position;
+			$this->position = $position;
 			return false;
 		}
 

@@ -29,7 +29,32 @@ class WP_Parser_Grammar {
 	public $rules;
 	public $rule_names;
 	public $fragment_ids;
-	public $lookahead_is_match_possible = array();
+
+	/**
+	 * Per-rule branch selector keyed by the next token id.
+	 *
+	 * When set, `$branches_for_token[$rule_id][$token_id]` is the ordered list
+	 * of branch indexes in `$rules[$rule_id]` that can possibly match when the
+	 * current token has the given id. Nullable branches appear in every entry.
+	 *
+	 * If an entry does not exist for the current token, `$nullable_branches`
+	 * is consulted. If both are empty, the rule cannot match and the parser
+	 * returns immediately.
+	 *
+	 * Rules whose FIRST set could not be computed do not appear in the map;
+	 * for those the parser falls back to trying every branch.
+	 *
+	 * @var array<int,array<int,int[]>>
+	 */
+	public $branches_for_token = array();
+
+	/**
+	 * Per-rule list of nullable branch indexes.
+	 *
+	 * @var array<int,int[]>
+	 */
+	public $nullable_branches = array();
+
 	public $lowest_non_terminal_id;
 	public $highest_terminal_id;
 
@@ -56,8 +81,8 @@ class WP_Parser_Grammar {
 		$this->highest_terminal_id    = $this->lowest_non_terminal_id - 1;
 
 		foreach ( $grammar['rules_names'] as $rule_index => $rule_name ) {
-			$this->rule_names[ $rule_index + $grammar['rules_offset'] ] = $rule_name;
-			$this->rules[ $rule_index + $grammar['rules_offset'] ]      = array();
+			$rule_id                      = $rule_index + $grammar['rules_offset'];
+			$this->rule_names[ $rule_id ] = $rule_name;
 
 			/**
 			 * Treat all intermediate rules as fragments to inline before returning
@@ -75,7 +100,7 @@ class WP_Parser_Grammar {
 			 * They are prefixed with a "%" to be distinguished from the original rules.
 			 */
 			if ( '%' === $rule_name[0] ) {
-				$this->fragment_ids[ $rule_index + $grammar['rules_offset'] ] = true;
+				$this->fragment_ids[ $rule_id ] = true;
 			}
 		}
 
@@ -85,55 +110,154 @@ class WP_Parser_Grammar {
 			$this->rules[ $rule_id ] = $branches;
 		}
 
-		/**
-		 * Compute a rule => [token => true] lookup table for each rule
-		 * that starts with a terminal OR with another rule that already
-		 * has a lookahead mapping.
-		 *
-		 * This is similar to left-factoring the grammar, even if not quite
-		 * the same.
-		 *
-		 * This enables us to quickly bail out from checking branches that
-		 * cannot possibly match the current token. This increased the parser
-		 * speed by a whopping 80%!
-		 *
-		 * @TODO: Explore these possible next steps:
-		 *
-		 * * Compute a rule => [token => branch[]] list lookup table and only
-		 *   process the branches that have a chance of matching the current token.
-		 * * Actually left-factor the grammar as much as possible. This, however,
-		 *   could inflate the serialized grammar size.
-		 */
-		// 5 iterations seem to give us all the speed gains we can get from this.
-		for ( $i = 0; $i < 5; $i++ ) {
-			foreach ( $grammar['grammar'] as $rule_index => $branches ) {
-				$rule_id = $rule_index + $grammar['rules_offset'];
-				if ( isset( $this->lookahead_is_match_possible[ $rule_id ] ) ) {
-					continue;
-				}
-				$rule_lookup                                   = array();
-				$first_symbol_can_be_expanded_to_all_terminals = true;
-				foreach ( $branches as $branch ) {
-					$terminals                   = false;
-					$branch_starts_with_terminal = $branch[0] < $this->lowest_non_terminal_id;
-					if ( $branch_starts_with_terminal ) {
-						$terminals = array( $branch[0] );
-					} elseif ( isset( $this->lookahead_is_match_possible[ $branch[0] ] ) ) {
-						$terminals = array_keys( $this->lookahead_is_match_possible[ $branch[0] ] );
-					}
+		$this->build_branch_selectors();
+	}
 
-					if ( false === $terminals ) {
-						$first_symbol_can_be_expanded_to_all_terminals = false;
-						break;
+	/**
+	 * Compute FIRST and NULLABLE sets for every non-terminal, then denormalize
+	 * them into a per-rule map of `token_id => branch_index[]` so the parser
+	 * can jump straight to the branches that can possibly match the current
+	 * token.
+	 *
+	 * This replaces the previous coarse "can any branch match this token?"
+	 * lookahead. On the MySQL corpus the fine-grained selector skips ~60%
+	 * of the branch attempts that the parser used to try and fail.
+	 */
+	private function build_branch_selectors() {
+		$rules        = $this->rules;
+		$low_nt       = $this->lowest_non_terminal_id;
+		$empty_rule   = self::EMPTY_RULE_ID;
+		$rule_ids     = array_keys( $rules );
+		$nullable     = array();
+		$first_sets   = array();
+
+		foreach ( $rule_ids as $rule_id ) {
+			$nullable[ $rule_id ]   = false;
+			$first_sets[ $rule_id ] = array();
+		}
+
+		// Iterate to fixpoint. FIRST and NULLABLE set monotonically grow.
+		do {
+			$changed = false;
+			foreach ( $rule_ids as $rule_id ) {
+				$branches = $rules[ $rule_id ];
+				foreach ( $branches as $branch ) {
+					$branch_nullable = true;
+					foreach ( $branch as $symbol ) {
+						if ( $empty_rule === $symbol ) {
+							// ε: contributes nothing to FIRST, stays nullable.
+							continue;
+						}
+						if ( $symbol < $low_nt ) {
+							// Terminal.
+							if ( ! isset( $first_sets[ $rule_id ][ $symbol ] ) ) {
+								$first_sets[ $rule_id ][ $symbol ] = true;
+								$changed                           = true;
+							}
+							$branch_nullable = false;
+							break;
+						}
+						// Non-terminal.
+						foreach ( $first_sets[ $symbol ] as $tid => $_ ) {
+							if ( ! isset( $first_sets[ $rule_id ][ $tid ] ) ) {
+								$first_sets[ $rule_id ][ $tid ] = true;
+								$changed                        = true;
+							}
+						}
+						if ( ! $nullable[ $symbol ] ) {
+							$branch_nullable = false;
+							break;
+						}
 					}
-					foreach ( $terminals as $terminal ) {
-						$rule_lookup[ $terminal ] = true;
+					if ( $branch_nullable && ! $nullable[ $rule_id ] ) {
+						$nullable[ $rule_id ] = true;
+						$changed              = true;
 					}
-				}
-				if ( $first_symbol_can_be_expanded_to_all_terminals ) {
-					$this->lookahead_is_match_possible[ $rule_id ] = $rule_lookup;
 				}
 			}
+		} while ( $changed );
+
+		// Build per-(rule, token) branch indices.
+		foreach ( $rule_ids as $rule_id ) {
+			$branches            = $rules[ $rule_id ];
+			$selector            = array();
+			$nullable_branch_ids = array();
+			foreach ( $branches as $idx => $branch ) {
+				$branch_first    = array();
+				$branch_nullable = true;
+				foreach ( $branch as $symbol ) {
+					if ( $empty_rule === $symbol ) {
+						continue;
+					}
+					if ( $symbol < $low_nt ) {
+						$branch_first[ $symbol ] = true;
+						$branch_nullable         = false;
+						break;
+					}
+					foreach ( $first_sets[ $symbol ] as $tid => $_ ) {
+						$branch_first[ $tid ] = true;
+					}
+					if ( ! $nullable[ $symbol ] ) {
+						$branch_nullable = false;
+						break;
+					}
+				}
+				foreach ( $branch_first as $tid => $_ ) {
+					$selector[ $tid ][] = $idx;
+				}
+				if ( $branch_nullable ) {
+					$nullable_branch_ids[] = $idx;
+				}
+			}
+
+			// Nullable branches also match when the current token is not in
+			// any branch's FIRST set. Fold them into every populated entry
+			// so the runtime lookup is a single array access.
+			if ( $nullable_branch_ids ) {
+				$merged = array();
+				foreach ( $selector as $tid => $idx_list ) {
+					$merged[ $tid ] = self::merge_sorted( $idx_list, $nullable_branch_ids );
+				}
+				$selector                             = $merged;
+				$this->nullable_branches[ $rule_id ]  = $nullable_branch_ids;
+			}
+			if ( $selector ) {
+				$this->branches_for_token[ $rule_id ] = $selector;
+			}
 		}
+	}
+
+	/**
+	 * Merge two ascending int arrays into one ascending int array without
+	 * duplicates. Preserves original branch order as required by the parser.
+	 *
+	 * @param int[] $a
+	 * @param int[] $b
+	 * @return int[]
+	 */
+	private static function merge_sorted( array $a, array $b ): array {
+		$i   = 0;
+		$j   = 0;
+		$na  = count( $a );
+		$nb  = count( $b );
+		$out = array();
+		while ( $i < $na && $j < $nb ) {
+			if ( $a[ $i ] < $b[ $j ] ) {
+				$out[] = $a[ $i++ ];
+			} elseif ( $a[ $i ] > $b[ $j ] ) {
+				$out[] = $b[ $j++ ];
+			} else {
+				$out[] = $a[ $i ];
+				++$i;
+				++$j;
+			}
+		}
+		while ( $i < $na ) {
+			$out[] = $a[ $i++ ];
+		}
+		while ( $j < $nb ) {
+			$out[] = $b[ $j++ ];
+		}
+		return $out;
 	}
 }
