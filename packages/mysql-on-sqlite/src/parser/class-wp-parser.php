@@ -16,12 +16,12 @@ class WP_Parser {
 
 	// Grammar data cached as instance fields so the hot path avoids an extra
 	// property hop via $this->grammar on every recursive call.
-	private $rules;
 	private $rule_names;
 	private $fragment_ids;
 	private $branches_for_token;
 	private $nullable_branches;
 	private $highest_terminal_id;
+	private $select_statement_rule_id;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
 		$this->grammar             = $grammar;
@@ -34,12 +34,19 @@ class WP_Parser {
 		$tokens[]                  = new WP_Parser_Token( WP_Parser_Grammar::EMPTY_RULE_ID, 0, 0, '' );
 		$this->tokens              = $tokens;
 		$this->position            = 0;
-		$this->rules               = $grammar->rules;
 		$this->rule_names          = $grammar->rule_names;
 		$this->fragment_ids        = $grammar->fragment_ids ?? array();
 		$this->branches_for_token  = $grammar->branches_for_token;
 		$this->nullable_branches   = $grammar->nullable_branches;
 		$this->highest_terminal_id = $grammar->highest_terminal_id;
+
+		// The INTO negative-lookahead only fires for selectStatement. Cache
+		// the rule id so the per-call check is an int compare instead of a
+		// string compare.
+		if ( null === $grammar->select_statement_rule_id ) {
+			$grammar->select_statement_rule_id = $grammar->get_rule_id( 'selectStatement' );
+		}
+		$this->select_statement_rule_id = $grammar->select_statement_rule_id;
 	}
 
 	public function parse() {
@@ -80,9 +87,8 @@ class WP_Parser {
 		}
 
 		$highest_terminal_id = $this->highest_terminal_id;
-		$rule_name           = $this->rule_names[ $rule_id ];
 		$is_fragment         = isset( $this->fragment_ids[ $rule_id ] );
-		$is_select_statement = 'selectStatement' === $rule_name;
+		$is_select_statement = $rule_id === $this->select_statement_rule_id;
 		$branch_matches      = false;
 		$children            = array();
 		foreach ( $candidate_branches as $branch ) {
@@ -160,6 +166,6 @@ class WP_Parser {
 			return $children;
 		}
 
-		return new WP_Parser_Node( $rule_id, $rule_name, $children );
+		return new WP_Parser_Node( $rule_id, $this->rule_names[ $rule_id ], $children );
 	}
 }

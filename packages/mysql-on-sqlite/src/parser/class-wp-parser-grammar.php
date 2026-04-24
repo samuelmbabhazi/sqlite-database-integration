@@ -65,6 +65,13 @@ class WP_Parser_Grammar {
 	 */
 	public $start_rule_id;
 
+	/**
+	 * Cached id of the selectStatement rule, populated lazily on first parse.
+	 *
+	 * @var int|null
+	 */
+	public $select_statement_rule_id;
+
 	public function __construct( array $rules ) {
 		$this->inflate( $rules );
 	}
