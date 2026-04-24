@@ -352,15 +352,26 @@ class WP_Parser_Grammar {
 				$this->nullable_branches[ $rule_id ] = true;
 			}
 			if ( $selector ) {
-				// Store the candidate branch sequences directly so the parser
-				// can foreach over them without an extra $branches[$idx]
-				// indirection on every branch attempt.
+				// Embed the branch symbol sequences directly so the parser can
+				// iterate candidate branches without a $branches[$idx] lookup on
+				// every attempt. Many tokens in a rule share the same branch-id
+				// list, so deduplicate by signature and let copy-on-write share
+				// one sequences array across them. This dedup matters: unshared,
+				// the table would be ~35 MiB on the MySQL grammar; shared, it is
+				// a few MiB, built once per process (not per query).
+				$by_signature = array();
 				foreach ( $selector as $tid => $idx_list ) {
-					$seqs = array();
-					foreach ( $idx_list as $idx ) {
-						$seqs[] = $branches[ $idx ];
+					$sig = implode( ',', $idx_list );
+					if ( isset( $by_signature[ $sig ] ) ) {
+						$selector[ $tid ] = $by_signature[ $sig ];
+					} else {
+						$seqs = array();
+						foreach ( $idx_list as $idx ) {
+							$seqs[] = $branches[ $idx ];
+						}
+						$by_signature[ $sig ] = $seqs;
+						$selector[ $tid ]     = $seqs;
 					}
-					$selector[ $tid ] = $seqs;
 				}
 				$this->branches_for_token[ $rule_id ] = $selector;
 			}
