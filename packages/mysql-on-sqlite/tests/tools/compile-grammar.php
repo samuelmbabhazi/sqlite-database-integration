@@ -247,8 +247,12 @@ $emit_method = function ( $rid ) use ( $grammar, $htid, $select_rid, $into_symbo
 	} else {
 		$code .= "\t\tswitch (\$tid) {\n";
 		foreach ( $groups as $g ) {
-			foreach ( $g['tids'] as $tid ) {
-				$code .= "\t\t\tcase $tid:\n";
+			// Pack case labels onto as few lines as practical (~10 per
+			// line); single-label cases on their own line for readability.
+			$tids   = $g['tids'];
+			$chunks = array_chunk( $tids, 10 );
+			foreach ( $chunks as $chunk ) {
+				$code .= "\t\t\t" . implode( ' ', array_map( fn( $t ) => "case $t:", $chunk ) ) . "\n";
 			}
 			$code .= emit_group_body( $g['branches'], $grammar, $rid, $rule_name, $is_fragment, $is_select, $into_symbol, $htid, $inline_fragments, $method_name, $flatten, $emit_symbol, true, $g['tids'] );
 		}
