@@ -28,7 +28,7 @@ class WP_Parser_Grammar {
 	 */
 	public $rules;
 	public $rule_names;
-	public $fragment_ids;
+	public $fragment_ids = array();
 
 	/**
 	 * Per-rule branch selector keyed by the next token id.
@@ -38,11 +38,8 @@ class WP_Parser_Grammar {
 	 * current token has the given id. Nullable branches appear in every entry.
 	 *
 	 * If an entry does not exist for the current token, `$nullable_branches`
-	 * is consulted. If both are empty, the rule cannot match and the parser
-	 * returns immediately.
-	 *
-	 * Rules whose FIRST set could not be computed do not appear in the map;
-	 * for those the parser falls back to trying every branch.
+	 * is consulted. If neither has an entry for this rule, the rule cannot
+	 * match and the parser returns immediately.
 	 *
 	 * @var array<int,array<int,int[]>>
 	 */
@@ -111,7 +108,106 @@ class WP_Parser_Grammar {
 			$this->rules[ $rule_id ] = $branches;
 		}
 
+		$this->inline_single_branch_fragments();
 		$this->build_branch_selectors();
+	}
+
+	/**
+	 * Inline single-branch fragment rules into their call sites.
+	 *
+	 * The grammar contains many single-branch fragment rules that exist only
+	 * to factor shared sub-sequences out of larger productions. At runtime
+	 * the parser would descend into each such fragment via a recursive call
+	 * just to walk the same symbol sequence and splice the results back into
+	 * the parent. Expanding them in-place at build time eliminates that call
+	 * chain without changing the resulting AST because fragment children are
+	 * already flattened into the parent node.
+	 *
+	 * Fragments with two or more alternatives (e.g., `%EOF_zero_or_one`) are
+	 * left intact because they represent real choices that must be evaluated
+	 * against the current token.
+	 */
+	private function inline_single_branch_fragments() {
+		$rules        = $this->rules;
+		$fragment_ids = $this->fragment_ids;
+		$low_nt       = $this->lowest_non_terminal_id;
+
+		// Precompute the set of single-branch fragments that are candidates
+		// for inlining.
+		$inlinable = array();
+		foreach ( $fragment_ids as $rule_id => $_ ) {
+			if ( isset( $rules[ $rule_id ] ) && 1 === count( $rules[ $rule_id ] ) ) {
+				$inlinable[ $rule_id ] = true;
+			}
+		}
+
+		// Depth-first expansion memoized per rule, with cycle detection.
+		$expanded = array();
+		$visiting = array();
+		$expand_branch = function ( array $branch ) use ( &$expand_branch, &$expanded, &$visiting, $rules, $low_nt, $inlinable ) {
+			$out = array();
+			foreach ( $branch as $sym ) {
+				if ( $sym < $low_nt ) {
+					$out[] = $sym;
+					continue;
+				}
+				if ( ! isset( $inlinable[ $sym ] ) ) {
+					$out[] = $sym;
+					continue;
+				}
+				if ( isset( $visiting[ $sym ] ) ) {
+					// Cycle: leave the reference in place.
+					$out[] = $sym;
+					continue;
+				}
+				if ( ! isset( $expanded[ $sym ] ) ) {
+					$visiting[ $sym ]    = true;
+					$expanded[ $sym ]    = $expand_branch( $rules[ $sym ][0] );
+					unset( $visiting[ $sym ] );
+				}
+				foreach ( $expanded[ $sym ] as $s ) {
+					$out[] = $s;
+				}
+			}
+			return $out;
+		};
+
+		// Rewrite every rule's branches with fragments inlined.
+		foreach ( $this->rules as $rule_id => $branches ) {
+			$new_branches = array();
+			foreach ( $branches as $branch ) {
+				$new_branches[] = $expand_branch( $branch );
+			}
+			$this->rules[ $rule_id ] = $new_branches;
+		}
+	}
+
+	/**
+	 * Remove explicit `EMPTY_RULE_ID` markers from branches.
+	 *
+	 * The epsilon marker is a zero-width, always-matching symbol used in the
+	 * grammar to express optional productions. At parse time it would still
+	 * be walked and "continued" over for no effect, so stripping it ahead of
+	 * time removes a per-symbol branch in the hot loop.
+	 *
+	 * A pure-epsilon branch (`[EMPTY_RULE_ID]`) becomes an empty branch (`[]`)
+	 * which the parser already handles: the inner symbol loop does nothing and
+	 * the rule returns a successful empty match.
+	 */
+	private function strip_epsilon_markers() {
+		foreach ( $this->rules as $rule_id => $branches ) {
+			foreach ( $branches as $i => $branch ) {
+				if ( in_array( self::EMPTY_RULE_ID, $branch, true ) ) {
+					$stripped = array();
+					foreach ( $branch as $symbol ) {
+						if ( self::EMPTY_RULE_ID !== $symbol ) {
+							$stripped[] = $symbol;
+						}
+					}
+					$this->rules[ $rule_id ][ $i ] = $stripped;
+				}
+			}
+		}
 	}
 
 	/**

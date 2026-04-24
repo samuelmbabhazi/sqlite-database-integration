@@ -28,53 +28,35 @@ class WP_Parser {
 		return false === $ast ? null : $ast;
 	}
 
+	/**
+	 * Parse a single non-terminal rule.
+	 *
+	 * This function is only called for non-terminal rule ids. Terminals are
+	 * matched inline inside the branch loop below to avoid a function-call
+	 * round trip per consumed token.
+	 */
 	private function parse_recursive( $rule_id ) {
-		$grammar             = $this->grammar;
-		$highest_terminal_id = $grammar->highest_terminal_id;
-
-		if ( $rule_id <= $highest_terminal_id ) {
-			if ( $this->position >= $this->token_count ) {
-				return false;
-			}
-
-			if ( WP_Parser_Grammar::EMPTY_RULE_ID === $rule_id ) {
-				return true;
-			}
-
-			if ( $this->tokens[ $this->position ]->id === $rule_id ) {
-				$token = $this->tokens[ $this->position ];
-				++$this->position;
-				return $token;
-			}
-			return false;
-		}
-
-		$branches = $grammar->rules[ $rule_id ];
-		if ( ! $branches ) {
-			return false;
-		}
-
+		$grammar     = $this->grammar;
 		$tokens      = $this->tokens;
 		$token_count = $this->token_count;
 		$position    = $this->position;
 
 		// Narrow the set of branches worth trying using the precomputed FIRST
-		// sets. When no entry exists for the current token, fall back to the
-		// rule's nullable branches (if any); if both are empty the rule cannot
-		// match here.
-		$branch_selector = $grammar->branches_for_token[ $rule_id ] ?? null;
-		if ( null !== $branch_selector ) {
-			$tid = $position < $token_count ? $tokens[ $position ]->id : WP_Parser_Grammar::EMPTY_RULE_ID;
-			if ( isset( $branch_selector[ $tid ] ) ) {
-				$candidate_branches = $branch_selector[ $tid ];
-			} elseif ( isset( $grammar->nullable_branches[ $rule_id ] ) ) {
-				$candidate_branches = $grammar->nullable_branches[ $rule_id ];
-			} else {
-				return false;
-			}
+		// sets. When no entry exists for the current token but the rule is
+		// nullable, all candidate branches would match empty, so we return
+		// immediately without entering any branch.
+		$branch_selector = $grammar->branches_for_token[ $rule_id ];
+		$tid             = $position < $token_count ? $tokens[ $position ]->id : WP_Parser_Grammar::EMPTY_RULE_ID;
+		if ( isset( $branch_selector[ $tid ] ) ) {
+			$candidate_branches = $branch_selector[ $tid ];
+		} elseif ( isset( $grammar->nullable_branches[ $rule_id ] ) ) {
+			return true;
 		} else {
-			$candidate_branches = array_keys( $branches );
+			return false;
 		}
+
+		$highest_terminal_id = $grammar->highest_terminal_id;
+		$branches            = $grammar->rules[ $rule_id ];
 
 		$rule_name           = $grammar->rule_names[ $rule_id ];
 		$fragment_ids        = $grammar->fragment_ids;
