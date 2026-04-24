@@ -25,8 +25,28 @@ class WP_Parser {
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
 		$this->grammar             = $grammar;
-		$this->tokens              = $tokens;
 		$this->token_count         = count( $tokens );
+		// Append an end-of-input sentinel token whose id is EMPTY_RULE_ID
+		// (0). The hot path can then read $tokens[$pos]->id unconditionally
+		// when $pos is the current cursor, because the sentinel naturally
+		// fails to match any real grammar terminal while feeding the
+		// nullable-fallback branch of the selector check.
+		//
+		// Invariants the hot path relies on:
+		// - The sentinel id (0) cannot match any grammar terminal.
+		//   strip_epsilon_markers() removes id 0 from every branch at
+		//   grammar build time, so no $subrule_id in the inner loop ever
+		//   equals 0 and ++$this->position can never advance past the
+		//   sentinel.
+		// - The sentinel must never be appended to a node's children. It
+		//   is only inspected via $tokens[$pos]->id; tokens are pushed
+		//   into $children only on terminal-id equality, which the
+		//   sentinel cannot satisfy.
+		// - WP_MySQL_Parser::next_query() bounds at $position < $token_count
+		//   (set above, before the append), so the sentinel sits at index
+		//   $token_count and is never fed into a parse round.
+		$tokens[]                  = new WP_Parser_Token( WP_Parser_Grammar::EMPTY_RULE_ID, 0, 0, '' );
+		$this->tokens              = $tokens;
 		$this->position            = 0;
 		$this->rules               = $grammar->rules;
 		$this->rule_names          = $grammar->rule_names;
@@ -51,15 +71,14 @@ class WP_Parser {
 	 * round trip per consumed token.
 	 */
 	private function parse_recursive( $rule_id ) {
-		$tokens      = $this->tokens;
-		$token_count = $this->token_count;
-		$position    = $this->position;
+		$tokens   = $this->tokens;
+		$position = $this->position;
 
 		// Narrow the set of branches worth trying using the precomputed FIRST
 		// sets. When no entry exists for the current token but the rule is
 		// nullable, all candidate branches would match empty, so we return
 		// immediately without entering any branch.
-		$tid = $position < $token_count ? $tokens[ $position ]->id : WP_Parser_Grammar::EMPTY_RULE_ID;
+		$tid = $tokens[ $position ]->id;
 		if ( isset( $this->branches_for_token[ $rule_id ][ $tid ] ) ) {
 			$candidate_branches = $this->branches_for_token[ $rule_id ][ $tid ];
 		} elseif ( isset( $this->nullable_branches[ $rule_id ] ) ) {
@@ -70,9 +89,8 @@ class WP_Parser {
 
 		$highest_terminal_id = $this->highest_terminal_id;
 		$branches            = $this->rules[ $rule_id ];
-		$fragment_ids        = $this->fragment_ids;
 		$rule_name           = $this->rule_names[ $rule_id ];
-		$is_fragment         = isset( $fragment_ids[ $rule_id ] );
+		$is_fragment         = isset( $this->fragment_ids[ $rule_id ] );
 		$is_select_statement = 'selectStatement' === $rule_name;
 		$branch_matches      = false;
 		$children            = array();
@@ -83,10 +101,10 @@ class WP_Parser {
 			$branch_matches = true;
 			foreach ( $branch as $subrule_id ) {
 				if ( $subrule_id <= $highest_terminal_id ) {
-					if (
-						$this->position < $token_count
-						&& $tokens[ $this->position ]->id === $subrule_id
-					) {
+					// The sentinel at $tokens[$token_count] has id 0 so it
+					// cannot match any real terminal, making the range check
+					// unnecessary here.
+					if ( $tokens[ $this->position ]->id === $subrule_id ) {
 						$children[] = $tokens[ $this->position ];
 						++$this->position;
 						continue;
@@ -125,7 +143,6 @@ class WP_Parser {
 			if (
 				$branch_matches
 				&& $is_select_statement
-				&& $this->position < $token_count
 				&& WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $this->position ]->id
 			) {
 				$branch_matches = false;
