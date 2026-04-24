@@ -34,27 +34,40 @@ class WP_Parser_Grammar {
 	 * Per-rule branch selector keyed by the next token id.
 	 *
 	 * When set, `$branches_for_token[$rule_id][$token_id]` is the ordered list
-	 * of branch indexes in `$rules[$rule_id]` that can possibly match when the
-	 * current token has the given id. Nullable branches appear in every entry.
+	 * of candidate branch symbol sequences (drawn from `$rules[$rule_id]`)
+	 * that can possibly match when the current token has the given id.
+	 * Nullable branches appear in every entry.
 	 *
 	 * If an entry does not exist for the current token, `$nullable_branches`
 	 * is consulted. If neither has an entry for this rule, the rule cannot
 	 * match and the parser returns immediately.
 	 *
-	 * @var array<int,array<int,int[]>>
+	 * @var array<int,array<int,int[][]>>
 	 */
 	public $branches_for_token = array();
 
 	/**
-	 * Per-rule list of nullable branch indexes.
+	 * Per-rule marker indicating the rule has at least one nullable branch.
 	 *
-	 * @var array<int,int[]>
+	 * @var array<int,true>
 	 */
 	public $nullable_branches = array();
 
 	public $lowest_non_terminal_id;
 	public $highest_terminal_id;
 	public $native_grammar;
+
+	/**
+	 * Memoized rule-id lookups, keyed by rule name.
+	 *
+	 * `get_rule_id()` is a linear `array_search` over `$rule_names` and
+	 * costs a few microseconds per call on the MySQL grammar. The parser
+	 * looks up its start rule and the `selectStatement` rule on a hot path,
+	 * so the results are memoized via `get_or_cache_rule_id()`.
+	 *
+	 * @var array<string,int|false>
+	 */
+	private $cached_rule_ids = array();
 
 	public function __construct( array $rules ) {
 		$this->inflate( $rules );
@@ -66,6 +79,25 @@ class WP_Parser_Grammar {
 
 	public function get_rule_id( $rule_name ) {
 		return array_search( $rule_name, $this->rule_names, true );
+	}
+
+	/**
+	 * Return the rule id for a given rule name, memoizing the result.
+	 *
+	 * Equivalent to `get_rule_id()` but caches the lookup so repeated
+	 * queries for the same rule name (typically the start rule and a few
+	 * grammar-specific rules consulted on the parser hot path) avoid
+	 * the linear scan over `$rule_names`. Returns `false` for unknown
+	 * rule names, mirroring `get_rule_id()`.
+	 *
+	 * @param  string    $rule_name
+	 * @return int|false
+	 */
+	public function get_or_cache_rule_id( $rule_name ) {
+		if ( ! array_key_exists( $rule_name, $this->cached_rule_ids ) ) {
+			$this->cached_rule_ids[ $rule_name ] = $this->get_rule_id( $rule_name );
+		}
+		return $this->cached_rule_ids[ $rule_name ];
 	}
 
 	/**
@@ -316,10 +348,20 @@ class WP_Parser_Grammar {
 				foreach ( $selector as $tid => $idx_list ) {
 					$merged[ $tid ] = self::merge_sorted( $idx_list, $nullable_branch_ids );
 				}
-				$selector                             = $merged;
-				$this->nullable_branches[ $rule_id ]  = $nullable_branch_ids;
+				$selector                            = $merged;
+				$this->nullable_branches[ $rule_id ] = true;
 			}
 			if ( $selector ) {
+				// Store the candidate branch sequences directly so the parser
+				// can foreach over them without an extra $branches[$idx]
+				// indirection on every branch attempt.
+				foreach ( $selector as $tid => $idx_list ) {
+					$seqs = array();
+					foreach ( $idx_list as $idx ) {
+						$seqs[] = $branches[ $idx ];
+					}
+					$selector[ $tid ] = $seqs;
+				}
 				$this->branches_for_token[ $rule_id ] = $selector;
 			}
 		}

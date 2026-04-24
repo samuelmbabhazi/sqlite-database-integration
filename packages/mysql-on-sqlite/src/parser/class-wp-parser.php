@@ -58,8 +58,7 @@ class WP_Parser {
 
 	public function parse() {
 		// @TODO: Make the starting rule lookup non-grammar-specific.
-		$query_rule_id = $this->grammar->get_rule_id( 'query' );
-		$ast           = $this->parse_recursive( $query_rule_id );
+		$ast = $this->parse_recursive( $this->grammar->get_or_cache_rule_id( 'query' ) );
 		return false === $ast ? null : $ast;
 	}
 
@@ -88,14 +87,12 @@ class WP_Parser {
 		}
 
 		$highest_terminal_id = $this->highest_terminal_id;
-		$branches            = $this->rules[ $rule_id ];
 		$rule_name           = $this->rule_names[ $rule_id ];
 		$is_fragment         = isset( $this->fragment_ids[ $rule_id ] );
 		$is_select_statement = 'selectStatement' === $rule_name;
 		$branch_matches      = false;
 		$children            = array();
-		foreach ( $candidate_branches as $idx ) {
-			$branch         = $branches[ $idx ];
+		foreach ( $candidate_branches as $branch ) {
 			$this->position = $position;
 			$children       = array();
 			$branch_matches = true;
