@@ -27,6 +27,30 @@ class WP_Parser_Node {
 	}
 
 	/**
+	 * Replace all children with the given array.
+	 *
+	 * This is used by the parser to attach a batch of children built up in a
+	 * local array while trying branches, without allocating a node per attempt.
+	 *
+	 * @param array<WP_Parser_Node|WP_Parser_Token> $children The new children.
+	 */
+	public function set_children( array $children ): void {
+		$this->children = $children;
+	}
+
+	/**
+	 * Return the children array by reference for efficient fragment inlining.
+	 *
+	 * Returning a reference lets the parser iterate children without copying
+	 * the array. The returned reference must not be mutated by callers.
+	 *
+	 * @return array<WP_Parser_Node|WP_Parser_Token>
+	 */
+	public function &get_children_ref(): array {
+		return $this->children;
+	}
+
+	/**
 	 * Flatten the matched rule fragments as if their children were direct
 	 * descendants of the current rule.
 	 *

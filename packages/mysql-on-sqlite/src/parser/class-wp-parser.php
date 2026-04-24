@@ -11,12 +11,14 @@
 class WP_Parser {
 	protected $grammar;
 	protected $tokens;
+	protected $token_count;
 	protected $position;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
-		$this->grammar  = $grammar;
-		$this->tokens   = $tokens;
-		$this->position = 0;
+		$this->grammar     = $grammar;
+		$this->tokens      = $tokens;
+		$this->token_count = count( $tokens );
+		$this->position    = 0;
 	}
 
 	public function parse() {
@@ -27,9 +29,11 @@ class WP_Parser {
 	}
 
 	private function parse_recursive( $rule_id ) {
-		$is_terminal = $rule_id <= $this->grammar->highest_terminal_id;
-		if ( $is_terminal ) {
-			if ( $this->position >= count( $this->tokens ) ) {
+		$grammar             = $this->grammar;
+		$highest_terminal_id = $grammar->highest_terminal_id;
+
+		if ( $rule_id <= $highest_terminal_id ) {
+			if ( $this->position >= $this->token_count ) {
 				return false;
 			}
 
@@ -38,41 +42,67 @@ class WP_Parser {
 			}
 
 			if ( $this->tokens[ $this->position ]->id === $rule_id ) {
+				$token = $this->tokens[ $this->position ];
 				++$this->position;
-				return $this->tokens[ $this->position - 1 ];
+				return $token;
 			}
 			return false;
 		}
 
-		$branches = $this->grammar->rules[ $rule_id ];
-		if ( ! count( $branches ) ) {
+		$branches = $grammar->rules[ $rule_id ];
+		if ( ! $branches ) {
 			return false;
 		}
 
 		// Bale out from processing the current branch if none of its rules can
 		// possibly match the current token.
-		if ( isset( $this->grammar->lookahead_is_match_possible[ $rule_id ] ) ) {
+		$rule_lookahead = $grammar->lookahead_is_match_possible[ $rule_id ] ?? null;
+		if ( null !== $rule_lookahead ) {
 			$token_id = $this->tokens[ $this->position ]->id;
 			if (
-				! isset( $this->grammar->lookahead_is_match_possible[ $rule_id ][ $token_id ] ) &&
-				! isset( $this->grammar->lookahead_is_match_possible[ $rule_id ][ WP_Parser_Grammar::EMPTY_RULE_ID ] )
+				! isset( $rule_lookahead[ $token_id ] ) &&
+				! isset( $rule_lookahead[ WP_Parser_Grammar::EMPTY_RULE_ID ] )
 			) {
 				return false;
 			}
 		}
 
-		$rule_name         = $this->grammar->rule_names[ $rule_id ];
+		$rule_name         = $grammar->rule_names[ $rule_id ];
+		$fragment_ids      = $grammar->fragment_ids;
+		$rules             = $grammar->rules;
+		$tokens            = $this->tokens;
+		$token_count       = $this->token_count;
 		$starting_position = $this->position;
+		$branch_matches    = false;
 		foreach ( $branches as $branch ) {
 			$this->position = $starting_position;
-			$node           = new WP_Parser_Node( $rule_id, $rule_name );
+			$children       = array();
 			$branch_matches = true;
 			foreach ( $branch as $subrule_id ) {
+				// Inline terminal matching to avoid a recursive call per token.
+				if ( $subrule_id <= $highest_terminal_id ) {
+					if ( WP_Parser_Grammar::EMPTY_RULE_ID === $subrule_id ) {
+						// Epsilon rule: matches without consuming input.
+						continue;
+					}
+					if (
+						$this->position < $token_count
+						&& $tokens[ $this->position ]->id === $subrule_id
+					) {
+						$children[]       = $tokens[ $this->position ];
+						++$this->position;
+						continue;
+					}
+					$branch_matches = false;
+					break;
+				}
+
 				$subnode = $this->parse_recursive( $subrule_id );
 				if ( false === $subnode ) {
 					$branch_matches = false;
 					break;
-				} elseif ( true === $subnode ) {
+				}
+				if ( true === $subnode ) {
 					/*
 					 * The subrule was matched without actually matching a token.
 					 * This means a special empty "ε" (epsilon) rule was matched.
@@ -80,16 +110,15 @@ class WP_Parser {
 					 * It is used to represent optional grammar productions.
 					 */
 					continue;
-				} elseif ( is_array( $subnode ) && 0 === count( $subnode ) ) {
-					continue;
 				}
-				if ( is_array( $subnode ) && ! count( $subnode ) ) {
-					continue;
-				}
-				if ( isset( $this->grammar->fragment_ids[ $subrule_id ] ) ) {
-					$node->merge_fragment( $subnode );
+				if ( isset( $fragment_ids[ $subrule_id ] ) ) {
+					// Fragments: inline their children directly to avoid building
+					// a throwaway WP_Parser_Node that would be merged afterwards.
+					foreach ( $subnode->get_children_ref() as $c ) {
+						$children[] = $c;
+					}
 				} else {
-					$node->append_child( $subnode );
+					$children[] = $subnode;
 				}
 			}
 
@@ -100,12 +129,16 @@ class WP_Parser {
 			//        for right-associative rules, which could solve this.
 			//        See: https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/MySQLParser.g4#L994
 			//        See: https://github.com/antlr/antlr4/issues/488
-			$la = $this->tokens[ $this->position ] ?? null;
-			if ( $la && 'selectStatement' === $rule_name && WP_MySQL_Lexer::INTO_SYMBOL === $la->id ) {
+			if (
+				$branch_matches
+				&& 'selectStatement' === $rule_name
+				&& $this->position < $token_count
+				&& WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $this->position ]->id
+			) {
 				$branch_matches = false;
 			}
 
-			if ( true === $branch_matches ) {
+			if ( $branch_matches ) {
 				break;
 			}
 		}
@@ -115,10 +148,12 @@ class WP_Parser {
 			return false;
 		}
 
-		if ( ! $node->has_child() ) {
+		if ( ! $children ) {
 			return true;
 		}
 
+		$node = new WP_Parser_Node( $rule_id, $rule_name );
+		$node->set_children( $children );
 		return $node;
 	}
 }
