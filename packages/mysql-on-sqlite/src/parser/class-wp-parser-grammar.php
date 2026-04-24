@@ -109,6 +109,7 @@ class WP_Parser_Grammar {
 		}
 
 		$this->inline_single_branch_fragments();
+		$this->strip_epsilon_markers();
 		$this->build_branch_selectors();
 	}
 

@@ -15,27 +15,16 @@ class WP_Parser_Node {
 	 */
 	public $rule_id;
 	public $rule_name;
-	protected $children = array();
+	protected $children;
 
-	public function __construct( $rule_id, $rule_name ) {
+	public function __construct( $rule_id, $rule_name, array $children = array() ) {
 		$this->rule_id   = $rule_id;
 		$this->rule_name = $rule_name;
+		$this->children  = $children;
 	}
 
 	public function append_child( $node ) {
 		$this->children[] = $node;
-	}
-
-	/**
-	 * Replace all children with the given array.
-	 *
-	 * This is used by the parser to attach a batch of children built up in a
-	 * local array while trying branches, without allocating a node per attempt.
-	 *
-	 * @param array<WP_Parser_Node|WP_Parser_Token> $children The new children.
-	 */
-	public function set_children( array $children ): void {
-		$this->children = $children;
 	}
 
 	/**
