@@ -58,6 +58,13 @@ class WP_Parser_Grammar {
 	public $lowest_non_terminal_id;
 	public $highest_terminal_id;
 
+	/**
+	 * Cached id of the grammar's start rule, populated lazily on first parse.
+	 *
+	 * @var int|null
+	 */
+	public $start_rule_id;
+
 	public function __construct( array $rules ) {
 		$this->inflate( $rules );
 	}
@@ -319,10 +326,20 @@ class WP_Parser_Grammar {
 				foreach ( $selector as $tid => $idx_list ) {
 					$merged[ $tid ] = self::merge_sorted( $idx_list, $nullable_branch_ids );
 				}
-				$selector                             = $merged;
-				$this->nullable_branches[ $rule_id ]  = $nullable_branch_ids;
+				$selector                            = $merged;
+				$this->nullable_branches[ $rule_id ] = true;
 			}
 			if ( $selector ) {
+				// Store the candidate branch sequences directly so the parser
+				// can foreach over them without an extra $branches[$idx]
+				// indirection on every branch attempt.
+				foreach ( $selector as $tid => $idx_list ) {
+					$seqs = array();
+					foreach ( $idx_list as $idx ) {
+						$seqs[] = $branches[ $idx ];
+					}
+					$selector[ $tid ] = $seqs;
+				}
 				$this->branches_for_token[ $rule_id ] = $selector;
 			}
 		}
