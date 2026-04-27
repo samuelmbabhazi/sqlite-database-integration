@@ -524,6 +524,35 @@ jobs:
           open(path, 'w').write(src)
           print('patched Turso error-message normalisation')
 
+          # 4. Turso forbids writes to sqlite_sequence with "may not be modified".
+          #    The driver tries to DELETE from it when truncating a table; extend
+          #    the existing "no such table" swallow to also accept this error.
+          old = (
+              "\t\t} catch ( PDOException $e ) {\n"
+              "\t\t\tif ( str_contains( $e->getMessage(), 'no such table' ) ) {\n"
+              "\t\t\t\t// The table might not exist if no sequences are used in the DB.\n"
+              "\t\t\t} else {\n"
+              "\t\t\t\tthrow $e;\n"
+              "\t\t\t}\n"
+              "\t\t}"
+          )
+          new = (
+              "\t\t} catch ( PDOException $e ) {\n"
+              "\t\t\tif (\n"
+              "\t\t\t\tstr_contains( $e->getMessage(), 'no such table' )\n"
+              "\t\t\t\t|| str_contains( $e->getMessage(), 'may not be modified' ) // Turso\n"
+              "\t\t\t) {\n"
+              "\t\t\t\t// Table missing, or write forbidden (Turso). Ignore.\n"
+              "\t\t\t} else {\n"
+              "\t\t\t\tthrow $e;\n"
+              "\t\t\t}\n"
+              "\t\t}"
+          )
+          assert old in src, 'sqlite_sequence catch not found'
+          src = src.replace(old, new, 1)
+          open(path, 'w').write(src)
+          print('patched sqlite_sequence catch')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
