@@ -12,6 +12,14 @@ class WP_Parser {
 	protected $grammar;
 	protected $tokens;
 	protected $position;
+	private $rules;
+	private $rule_names;
+	private $fragment_ids;
+	private $branch_candidates;
+	private $highest_terminal_id;
+	private $select_statement_rule_id;
+	private $token_count;
+	private $failed_matches;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
 		$this->grammar  = $grammar;
@@ -20,6 +28,15 @@ class WP_Parser {
 	}
 
 	public function parse() {
+		$this->rules                       = $this->grammar->rules;
+		$this->rule_names                  = $this->grammar->rule_names;
+		$this->fragment_ids                = $this->grammar->fragment_ids;
+		$this->branch_candidates           = $this->grammar->branch_candidates;
+		$this->highest_terminal_id         = $this->grammar->highest_terminal_id;
+		$this->select_statement_rule_id    = $this->grammar->get_rule_id( 'selectStatement' );
+		$this->token_count                 = count( $this->tokens );
+		$this->failed_matches              = array();
+
 		// @TODO: Make the starting rule lookup non-grammar-specific.
 		$query_rule_id = $this->grammar->get_rule_id( 'query' );
 		$ast           = $this->parse_recursive( $query_rule_id );
@@ -27,9 +44,9 @@ class WP_Parser {
 	}
 
 	private function parse_recursive( $rule_id ) {
-		$is_terminal = $rule_id <= $this->grammar->highest_terminal_id;
+		$is_terminal = $rule_id <= $this->highest_terminal_id;
 		if ( $is_terminal ) {
-			if ( $this->position >= count( $this->tokens ) ) {
+			if ( $this->position >= $this->token_count ) {
 				return false;
 			}
 
@@ -38,32 +55,36 @@ class WP_Parser {
 			}
 
 			if ( $this->tokens[ $this->position ]->id === $rule_id ) {
-				++$this->position;
-				return $this->tokens[ $this->position - 1 ];
+				return $this->tokens[ $this->position++ ];
 			}
 			return false;
 		}
 
-		$branches = $this->grammar->rules[ $rule_id ];
-		if ( ! count( $branches ) ) {
-			return false;
-		}
-
-		// Bale out from processing the current branch if none of its rules can
-		// possibly match the current token.
-		if ( isset( $this->grammar->lookahead_is_match_possible[ $rule_id ] ) ) {
-			$token_id = $this->tokens[ $this->position ]->id;
-			if (
-				! isset( $this->grammar->lookahead_is_match_possible[ $rule_id ][ $token_id ] ) &&
-				! isset( $this->grammar->lookahead_is_match_possible[ $rule_id ][ WP_Parser_Grammar::EMPTY_RULE_ID ] )
-			) {
-				return false;
-			}
-		}
-
-		$rule_name         = $this->grammar->rule_names[ $rule_id ];
 		$starting_position = $this->position;
-		foreach ( $branches as $branch ) {
+		if ( isset( $this->failed_matches[ $starting_position ][ $rule_id ] ) ) {
+			return false;
+		}
+
+		$branches          = $this->rules[ $rule_id ];
+
+		$token_id = $this->position < $this->token_count
+			? $this->tokens[ $this->position ]->id
+			: null;
+		$rule_name          = $this->rule_names[ $rule_id ];
+		$branch_candidates  = $this->branch_candidates[ $rule_id ];
+		$branch_indexes     = null !== $token_id && isset( $branch_candidates[ $token_id ] )
+			? $branch_candidates[ $token_id ]
+			: ( $branch_candidates[ WP_Parser_Grammar::EMPTY_RULE_ID ] ?? array() );
+
+		if ( ! count( $branch_indexes ) ) {
+			$this->failed_matches[ $starting_position ][ $rule_id ] = true;
+			return false;
+		}
+
+		$branch_matches     = false;
+		$node               = null;
+		foreach ( $branch_indexes as $branch_index ) {
+			$branch         = $branches[ $branch_index ];
 			$this->position = $starting_position;
 			$node           = new WP_Parser_Node( $rule_id, $rule_name );
 			$branch_matches = true;
@@ -80,13 +101,8 @@ class WP_Parser {
 					 * It is used to represent optional grammar productions.
 					 */
 					continue;
-				} elseif ( is_array( $subnode ) && 0 === count( $subnode ) ) {
-					continue;
 				}
-				if ( is_array( $subnode ) && ! count( $subnode ) ) {
-					continue;
-				}
-				if ( isset( $this->grammar->fragment_ids[ $subrule_id ] ) ) {
+				if ( isset( $this->fragment_ids[ $subrule_id ] ) ) {
 					$node->merge_fragment( $subnode );
 				} else {
 					$node->append_child( $subnode );
@@ -101,7 +117,11 @@ class WP_Parser {
 			//        See: https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/MySQLParser.g4#L994
 			//        See: https://github.com/antlr/antlr4/issues/488
 			$la = $this->tokens[ $this->position ] ?? null;
-			if ( $la && 'selectStatement' === $rule_name && WP_MySQL_Lexer::INTO_SYMBOL === $la->id ) {
+			if (
+				$la
+				&& $rule_id === $this->select_statement_rule_id
+				&& WP_MySQL_Lexer::INTO_SYMBOL === $la->id
+			) {
 				$branch_matches = false;
 			}
 
@@ -112,10 +132,11 @@ class WP_Parser {
 
 		if ( ! $branch_matches ) {
 			$this->position = $starting_position;
+			$this->failed_matches[ $starting_position ][ $rule_id ] = true;
 			return false;
 		}
 
-		if ( ! $node->has_child() ) {
+		if ( null === $node || ! $node->has_child() ) {
 			return true;
 		}
 
