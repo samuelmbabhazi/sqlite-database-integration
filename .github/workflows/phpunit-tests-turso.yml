@@ -44,6 +44,15 @@ jobs:
         run: |
           git clone --filter=blob:none https://github.com/tursodatabase/turso.git
           git -C turso checkout '${{ steps.turso.outputs.sha }}'
+
+      # Each Turso fix is a self-contained Python script under
+      # .github/turso-patches/. apply.sh runs them in lexicographic
+      # order from the Turso source root. See that directory's
+      # README.md for the rationale and how to add or retire a fix.
+      - name: Patch Turso to not abort on recoverable conditions
+        working-directory: turso
+        run: ../.github/turso-patches/apply.sh
+
       - name: Build turso_sqlite3 shared library
         working-directory: turso
         run: cargo build --release -p turso_sqlite3
