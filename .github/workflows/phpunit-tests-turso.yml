@@ -601,6 +601,29 @@ jobs:
           open(path, 'w').write(src)
           print('patched reconstructor default-value paren stripping')
 
+          # 7. Turso's PRAGMA table_xinfo returns signed numeric literals with
+          #    a space between sign and digits ("- 1.23", "+ 1.23") — real
+          #    SQLite returns "-1.23". Our is_numeric() check rejects the
+          #    spaced form; collapse the gap so the literal is recognised.
+          src = open(path).read()
+          old = (
+              "\t\t// Numeric literals. E.g.: 123, 1.23, -1.23, 1e3, 1.2e-3\n"
+              "\t\tif ( is_numeric( $no_underscore_default_value ) ) {\n"
+              "\t\t\treturn $no_underscore_default_value;\n"
+              "\t\t}\n"
+          )
+          new = (
+              "\t\t// Numeric literals. E.g.: 123, 1.23, -1.23, 1e3, 1.2e-3\n"
+              "\t\t$normalised_numeric = preg_replace( '/^([+-])\\s+/', '$1', $no_underscore_default_value );\n"
+              "\t\tif ( is_numeric( $normalised_numeric ) ) {\n"
+              "\t\t\treturn $normalised_numeric;\n"
+              "\t\t}\n"
+          )
+          assert old in src, 'generate_column_default numeric block not found'
+          src = src.replace(old, new, 1)
+          open(path, 'w').write(src)
+          print('patched reconstructor signed-numeric spacing')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
