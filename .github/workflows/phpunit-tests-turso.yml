@@ -755,6 +755,22 @@ jobs:
           open(path, 'w').write(src)
           print('patched DEFAULT_GENERATED simple-identifier unwrap + now() special case')
 
+          # 11. Update Translation_Tests::testHexadecimalLiterals to match
+          #     the hex-literal alias force patch (which needs to stay so
+          #     Turso doesn't mangle x'417a' into 17a' at runtime).
+          path = 'tests/WP_SQLite_Driver_Translation_Tests.php'
+          src = open(path).read()
+          for old_q, new_q in [
+              ("\"SELECT x'417a'\",\n\t\t\t\"SELECT x'417a'\"",
+               "\"SELECT x'417a' AS `x'417a'`\",\n\t\t\t\"SELECT x'417a'\""),
+              ("\"SELECT X'417a'\",\n\t\t\t\"SELECT X'417a'\"",
+               "\"SELECT X'417a' AS `X'417a'`\",\n\t\t\t\"SELECT X'417a'\""),
+          ]:
+              assert old_q in src, f'hex literal expectation not found: {old_q!r}'
+              src = src.replace(old_q, new_q, 1)
+          open(path, 'w').write(src)
+          print('patched Translation_Tests testHexadecimalLiterals expectations')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
