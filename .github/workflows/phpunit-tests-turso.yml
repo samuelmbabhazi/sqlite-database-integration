@@ -477,6 +477,53 @@ jobs:
           open(path, 'w').write(src)
           print('patched PRAGMA foreign_key_check')
 
+          # 3. Turso prefixes constraint errors with "Runtime error: " which
+          #    SQLite doesn't. It also appends " (19)" (the SQLite error code)
+          #    to some messages. Tests compare against the SQLite format, so
+          #    strip Turso's extra decoration when rethrowing.
+          old = "\t\t\tthrow $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );"
+          new = (
+              "\t\t\t$msg = $e->getMessage();\n"
+              "\t\t\t// Normalise Turso-specific decoration to SQLite format.\n"
+              "\t\t\t$msg = str_replace( 'Runtime error: ', '', $msg );\n"
+              "\t\t\t$msg = preg_replace( '/ \\(19\\)$/', '', $msg );\n"
+              "\t\t\t// UNIQUE constraint failed: t.(a, b) -> t.a, t.b\n"
+              "\t\t\t$msg = preg_replace_callback(\n"
+              "\t\t\t\t'/(\\w+)\\.\\(([^)]+)\\)/',\n"
+              "\t\t\t\tfunction ( $m ) {\n"
+              "\t\t\t\t\t$cols = array_map( 'trim', explode( ',', $m[2] ) );\n"
+              "\t\t\t\t\treturn implode( ', ', array_map( fn( $c ) => $m[1] . '.' . $c, $cols ) );\n"
+              "\t\t\t\t},\n"
+              "\t\t\t\t$msg\n"
+              "\t\t\t);\n"
+              "\t\t\t// Turso lowercases column names in UNIQUE-constraint errors;\n"
+              "\t\t\t// restore original casing from information_schema.\n"
+              "\t\t\t$msg = preg_replace_callback(\n"
+              "\t\t\t\t'/(\\w+)\\.(\\w+)/',\n"
+              "\t\t\t\tfunction ( $m ) {\n"
+              "\t\t\t\t\ttry {\n"
+              "\t\t\t\t\t\t$cols_table = $this->information_schema_builder->get_table_name( false, 'columns' );\n"
+              "\t\t\t\t\t\t$canonical = $this->execute_sqlite_query(\n"
+              "\t\t\t\t\t\t\tsprintf(\n"
+              "\t\t\t\t\t\t\t\t'SELECT column_name FROM %s WHERE table_name = ? AND lower(column_name) = ?',\n"
+              "\t\t\t\t\t\t\t\t$this->quote_sqlite_identifier( $cols_table )\n"
+              "\t\t\t\t\t\t\t),\n"
+              "\t\t\t\t\t\t\tarray( $m[1], strtolower( $m[2] ) )\n"
+              "\t\t\t\t\t\t)->fetchColumn();\n"
+              "\t\t\t\t\t\treturn $m[1] . '.' . ( $canonical !== false ? $canonical : $m[2] );\n"
+              "\t\t\t\t\t} catch ( \\Throwable $_ ) {\n"
+              "\t\t\t\t\t\treturn $m[0];\n"
+              "\t\t\t\t\t}\n"
+              "\t\t\t\t},\n"
+              "\t\t\t\t$msg\n"
+              "\t\t\t);\n"
+              "\t\t\tthrow $this->new_driver_exception( $msg, $e->getCode(), $e );"
+          )
+          assert old in src, 'rethrow block not found'
+          src = src.replace(old, new, 1)
+          open(path, 'w').write(src)
+          print('patched Turso error-message normalisation')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
