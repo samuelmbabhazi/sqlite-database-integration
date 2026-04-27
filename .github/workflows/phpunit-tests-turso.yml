@@ -362,6 +362,19 @@ jobs:
           ignore-cache: "yes"
           composer-options: "--optimize-autoloader"
 
+      - name: Install gdb
+        run: sudo apt-get install -y --no-install-recommends gdb
+
+      # These patches to the driver work around Turso behaviours that the SQL
+      # layer in this repo currently assumes. Each is a localised rewrite so
+      # the driver still produces correct behaviour when run against Turso;
+      # they are not behaviour changes for real SQLite.
+      - name: Patch driver for Turso compatibility
+        working-directory: packages/mysql-on-sqlite
+        run: |
+          python3 - <<'PY'
+          PY
+
       - name: Run PHPUnit tests against Turso DB
         env:
           LD_PRELOAD: ${{ steps.preload.outputs.value }}
