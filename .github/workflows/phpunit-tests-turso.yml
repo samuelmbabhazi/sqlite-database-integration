@@ -966,6 +966,77 @@ jobs:
           open(path, 'w').write(src)
           print('patched AUTO_INCREMENT correlated-subquery -> JOIN form (SHOW TABLE STATUS only)')
 
+          # 14. The YEAR type cast in cast_value_for_saving uses a nested
+          #     subquery to alias the integer cast as `value`:
+          #
+          #         (SELECT CASE WHEN value IS NULL THEN NULL ... END
+          #          FROM (SELECT CAST(<column-ref> AS INTEGER) AS value))
+          #
+          #     where <column-ref> is `column1`, `column17`, etc. — a
+          #     reference into the outer FROM (VALUES (...)) of the
+          #     enclosing INSERT-SELECT. Turso fails to resolve the
+          #     two-level-correlated reference and reports
+          #     "Parse error: no such column: columnN", which breaks 6
+          #     tests (testNonStrictModeTypeCasting,
+          #     testColumnInfoForDateAndTimeDataTypes, the four
+          #     testCastValues* — all of which insert into a YEAR column
+          #     via INSERT...VALUES). Single-level correlated references
+          #     (probed in step 17/probe) and the flat CASE forms used
+          #     by date/time/datetime/timestamp work fine.
+          #
+          #     Flatten the YEAR cast to inline the `CAST(... AS INTEGER)`
+          #     at every WHEN, removing the inner derived FROM. CAST is
+          #     idempotent so this is semantically identical and avoids
+          #     the two-level binding.
+          path = 'src/sqlite/class-wp-pdo-mysql-on-sqlite.php'
+          src = open(path).read()
+          old_year = (
+              "\t\t\t\t\treturn sprintf(\n"
+              "\t\t\t\t\t\t\"(\n"
+              "\t\t\t\t\t\t\tSELECT CASE\n"
+              "\t\t\t\t\t\t\t\tWHEN value IS NULL THEN NULL\n"
+              "\t\t\t\t\t\t\t\tWHEN value = 0 THEN '0000'\n"
+              "\t\t\t\t\t\t\t\tWHEN value BETWEEN 1901 AND 2155 THEN value\n"
+              "\t\t\t\t\t\t\t\tWHEN value BETWEEN 1 AND 69 THEN 2000 + value\n"
+              "\t\t\t\t\t\t\t\tWHEN value BETWEEN 70 AND 99 THEN 1900 + value\n"
+              "\t\t\t\t\t\t\t\tELSE %s\n"
+              "\t\t\t\t\t\t\tEND\n"
+              "\t\t\t\t\t\t\tFROM (SELECT CAST(%s AS INTEGER) AS value)\n"
+              "\t\t\t\t\t\t)\",\n"
+              "\t\t\t\t\t\t$is_strict_mode\n"
+              "\t\t\t\t\t\t\t? sprintf( \"THROW('Out of range value: ''' || %s || '''')\", $translated_value )\n"
+              "\t\t\t\t\t\t\t: \"'0000'\",\n"
+              "\t\t\t\t\t\t$translated_value\n"
+              "\t\t\t\t\t);\n"
+          )
+          new_year = (
+              "\t\t\t\t\treturn sprintf(\n"
+              "\t\t\t\t\t\t\"CASE\n"
+              "\t\t\t\t\t\t\tWHEN CAST(%s AS INTEGER) IS NULL THEN NULL\n"
+              "\t\t\t\t\t\t\tWHEN CAST(%s AS INTEGER) = 0 THEN '0000'\n"
+              "\t\t\t\t\t\t\tWHEN CAST(%s AS INTEGER) BETWEEN 1901 AND 2155 THEN CAST(%s AS INTEGER)\n"
+              "\t\t\t\t\t\t\tWHEN CAST(%s AS INTEGER) BETWEEN 1 AND 69 THEN 2000 + CAST(%s AS INTEGER)\n"
+              "\t\t\t\t\t\t\tWHEN CAST(%s AS INTEGER) BETWEEN 70 AND 99 THEN 1900 + CAST(%s AS INTEGER)\n"
+              "\t\t\t\t\t\t\tELSE %s\n"
+              "\t\t\t\t\t\tEND\",\n"
+              "\t\t\t\t\t\t$translated_value,\n"
+              "\t\t\t\t\t\t$translated_value,\n"
+              "\t\t\t\t\t\t$translated_value,\n"
+              "\t\t\t\t\t\t$translated_value,\n"
+              "\t\t\t\t\t\t$translated_value,\n"
+              "\t\t\t\t\t\t$translated_value,\n"
+              "\t\t\t\t\t\t$translated_value,\n"
+              "\t\t\t\t\t\t$translated_value,\n"
+              "\t\t\t\t\t\t$is_strict_mode\n"
+              "\t\t\t\t\t\t\t? sprintf( \"THROW('Out of range value: ''' || %s || '''')\", $translated_value )\n"
+              "\t\t\t\t\t\t\t: \"'0000'\"\n"
+              "\t\t\t\t\t);\n"
+          )
+          assert old_year in src, 'YEAR cast nested-subquery block not found'
+          src = src.replace(old_year, new_year, 1)
+          open(path, 'w').write(src)
+          print('patched YEAR cast nested-subquery -> flat CASE form')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
