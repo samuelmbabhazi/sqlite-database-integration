@@ -553,6 +553,24 @@ jobs:
           open(path, 'w').write(src)
           print('patched sqlite_sequence catch')
 
+          # 5. wp_die polyfill: real WordPress provides wp_die(); the unit-test
+          # bootstrap doesn't, so tests hit an 'undefined function' error when
+          # a driver error path tries to call it.
+          path = 'tests/bootstrap.php'
+          src = open(path).read()
+          marker = "if ( ! function_exists( 'do_action' ) ) {"
+          inject = (
+              "if ( ! function_exists( 'wp_die' ) ) {\n"
+              "\tfunction wp_die( $message = '', $title = '', $args = array() ) {\n"
+              "\t\tthrow new \\RuntimeException( is_string( $message ) ? $message : 'wp_die' );\n"
+              "\t}\n"
+              "}\n\n"
+          )
+          assert marker in src
+          src = src.replace(marker, inject + marker, 1)
+          open(path, 'w').write(src)
+          print('added wp_die polyfill to bootstrap.php')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
