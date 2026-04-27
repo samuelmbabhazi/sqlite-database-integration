@@ -654,6 +654,47 @@ jobs:
           open(path, 'w').write(src)
           print('patched hex-literal alias force under Turso')
 
+          # 9. CHECK TABLE on a missing table on real SQLite raises from
+          #     `PRAGMA integrity_check(<tbl>)`; on Turso the PRAGMA is a
+          #     no-op for unknown tables, so testCheckTable sees status=OK
+          #     instead of the expected "Table 'missing' doesn't exist"
+          #     error. Check sqlite_master explicitly before the PRAGMA.
+          path = 'src/sqlite/class-wp-pdo-mysql-on-sqlite.php'
+          src = open(path).read()
+          old = (
+              "\t\t\t\t\tcase WP_MySQL_Lexer::CHECK_SYMBOL:\n"
+              "\t\t\t\t\t\t$stmt   = $this->execute_sqlite_query(\n"
+              "\t\t\t\t\t\t\tsprintf( 'PRAGMA integrity_check(%s)', $quoted_table_name )\n"
+              "\t\t\t\t\t\t);\n"
+              "\t\t\t\t\t\t$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );\n"
+              "\t\t\t\t\t\tif ( 'ok' === $errors[0] ) {\n"
+              "\t\t\t\t\t\t\tarray_shift( $errors );\n"
+              "\t\t\t\t\t\t}\n"
+              "\t\t\t\t\t\tbreak;\n"
+          )
+          new = (
+              "\t\t\t\t\tcase WP_MySQL_Lexer::CHECK_SYMBOL:\n"
+              "\t\t\t\t\t\t$exists_stmt = $this->execute_sqlite_query(\n"
+              "\t\t\t\t\t\t\t\"SELECT 1 FROM sqlite_master WHERE type='table' AND name=?\",\n"
+              "\t\t\t\t\t\t\tarray( $table_name )\n"
+              "\t\t\t\t\t\t);\n"
+              "\t\t\t\t\t\tif ( ! $exists_stmt->fetchColumn() ) {\n"
+              "\t\t\t\t\t\t\t$errors = array( \"Table '$table_name' doesn't exist\" );\n"
+              "\t\t\t\t\t\t\tbreak;\n"
+              "\t\t\t\t\t\t}\n"
+              "\t\t\t\t\t\t$stmt   = $this->execute_sqlite_query(\n"
+              "\t\t\t\t\t\t\tsprintf( 'PRAGMA integrity_check(%s)', $quoted_table_name )\n"
+              "\t\t\t\t\t\t);\n"
+              "\t\t\t\t\t\t$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );\n"
+              "\t\t\t\t\t\tif ( 'ok' === $errors[0] ) {\n"
+              "\t\t\t\t\t\t\tarray_shift( $errors );\n"
+              "\t\t\t\t\t\t}\n"
+              "\t\t\t\t\t\tbreak;\n"
+          )
+          assert old in src, 'CHECK TABLE handler not found'
+          open(path, 'w').write(src.replace(old, new, 1))
+          print('patched CHECK TABLE missing-table check')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
