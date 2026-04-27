@@ -8,3 +8,5 @@ composer.lock
 /build
 /wordpress
 /.claude/settings.local.json
+/.adversarial-loop/
+/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/

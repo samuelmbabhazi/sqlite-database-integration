@@ -1,0 +1,1208 @@
+#![cfg_attr(windows, feature(abi_vectorcall))]
+
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use ext_php_rs::convert::{IntoZval, IntoZvalDyn};
+use ext_php_rs::exception::{PhpException, PhpResult};
+use ext_php_rs::flags::DataType;
+use ext_php_rs::prelude::*;
+use ext_php_rs::types::{ArrayKey, ZendCallable, ZendHashTable, Zval};
+use ext_php_rs::zend::ModuleEntry;
+use ext_php_rs::{info_table_end, info_table_row, info_table_start};
+
+mod lexer_constants;
+use lexer_constants as lex;
+use lexer_constants::register_lexer_constants;
+
+const SQL_MODE_HIGH_NOT_PRECEDENCE: i64 = 1;
+const SQL_MODE_PIPES_AS_CONCAT: i64 = 2;
+const SQL_MODE_IGNORE_SPACE: i64 = 4;
+const SQL_MODE_NO_BACKSLASH_ESCAPES: i64 = 8;
+const STACK_RED_ZONE: usize = 128 * 1024;
+const STACK_GROW_SIZE: usize = 8 * 1024 * 1024;
+
+#[derive(Clone)]
+struct BinaryString(Vec<u8>);
+
+impl IntoZval for BinaryString {
+    const TYPE: DataType = DataType::String;
+    const NULLABLE: bool = false;
+
+    fn set_zval(self, zv: &mut Zval, _persistent: bool) -> ext_php_rs::error::Result<()> {
+        zv.set_binary(self.0);
+        Ok(())
+    }
+}
+
+fn php_error(message: impl ToString) -> PhpException {
+    PhpException::default(message.to_string())
+}
+
+fn php_function(name: &str) -> PhpResult<ZendCallable<'_>> {
+    ZendCallable::try_from_name(name).map_err(php_error)
+}
+
+fn sql_modes_mask(sql_modes: &[String]) -> i64 {
+    let mut mask = 0;
+    for sql_mode in sql_modes {
+        match sql_mode.to_ascii_uppercase().as_str() {
+            "HIGH_NOT_PRECEDENCE" => mask |= SQL_MODE_HIGH_NOT_PRECEDENCE,
+            "PIPES_AS_CONCAT" => mask |= SQL_MODE_PIPES_AS_CONCAT,
+            "IGNORE_SPACE" => mask |= SQL_MODE_IGNORE_SPACE,
+            "NO_BACKSLASH_ESCAPES" => mask |= SQL_MODE_NO_BACKSLASH_ESCAPES,
+            _ => {}
+        }
+    }
+    mask
+}
+
+fn zval_to_weak_string_bytes(zv: &Zval) -> PhpResult<Vec<u8>> {
+    if let Some(bytes) = zv.binary::<u8>() {
+        return Ok(bytes);
+    }
+    if zv.is_null() || zv.is_false() {
+        return Ok(Vec::new());
+    }
+    if zv.is_true() {
+        return Ok(b"1".to_vec());
+    }
+    if let Some(value) = zv.long() {
+        return Ok(value.to_string().into_bytes());
+    }
+    if let Some(value) = zv.double() {
+        return Ok(value.to_string().into_bytes());
+    }
+    Err(php_error("Invalid value given for argument `sql`."))
+}
+
+fn byte_in(byte: u8, mask: &[u8]) -> bool {
+    mask.contains(&byte)
+}
+
+fn span_while(bytes: &[u8], mut pos: usize, predicate: impl Fn(u8) -> bool) -> usize {
+    while pos < bytes.len() && predicate(bytes[pos]) {
+        pos += 1;
+    }
+    pos
+}
+
+fn span_until(bytes: &[u8], mut pos: usize, needles: &[u8]) -> usize {
+    while pos < bytes.len() && !needles.contains(&bytes[pos]) {
+        pos += 1;
+    }
+    pos
+}
+
+fn bytes_ascii_upper(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| byte.to_ascii_uppercase() as char)
+        .collect()
+}
+
+fn bytes_ascii_lower(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| byte.to_ascii_lowercase() as char)
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+struct TokenInfo {
+    id: i64,
+    start: usize,
+    end: usize,
+}
+
+#[php_class]
+#[php(name = "WP_MySQL_Native_Lexer", modifier = "register_lexer_constants")]
+pub struct WpMySqlNativeLexer {
+    sql: Vec<u8>,
+    sql_zval: Zval,
+    mysql_version: i64,
+    sql_modes: i64,
+    bytes_already_read: usize,
+    token_starts_at: usize,
+    token_type: Option<i64>,
+    in_mysql_comment: bool,
+}
+
+#[php_impl]
+#[php(change_method_case = "snake_case")]
+impl WpMySqlNativeLexer {
+    pub fn __construct(
+        sql: &Zval,
+        mysql_version: Option<i64>,
+        sql_modes: Option<Vec<String>>,
+    ) -> PhpResult<Self> {
+        let mysql_version = mysql_version.unwrap_or(80038);
+        let sql_modes = sql_modes.unwrap_or_default();
+        let sql = zval_to_weak_string_bytes(sql)?;
+        let sql_zval = BinaryString(sql.clone())
+            .into_zval(false)
+            .map_err(php_error)?;
+
+        Ok(Self {
+            sql,
+            sql_zval,
+            mysql_version,
+            sql_modes: sql_modes_mask(&sql_modes),
+            bytes_already_read: 0,
+            token_starts_at: 0,
+            token_type: None,
+            in_mysql_comment: false,
+        })
+    }
+
+    pub fn next_token(&mut self) -> bool {
+        if self.token_type == Some(lex::EOF)
+            || (self.token_type.is_none() && self.bytes_already_read > 0)
+        {
+            self.token_type = None;
+            return false;
+        }
+
+        loop {
+            self.token_starts_at = self.bytes_already_read;
+            self.token_type = self.read_next_token();
+            if !matches!(
+                self.token_type,
+                Some(
+                    lex::WHITESPACE
+                        | lex::COMMENT
+                        | lex::MYSQL_COMMENT_START
+                        | lex::MYSQL_COMMENT_END
+                )
+            ) {
+                break;
+            }
+        }
+
+        self.token_type.is_some()
+    }
+
+    pub fn get_token(&mut self) -> PhpResult<Zval> {
+        match self.current_token_info() {
+            Some(token) => self.create_token(token),
+            None => Ok(Zval::null()),
+        }
+    }
+
+    pub fn remaining_tokens(&mut self) -> PhpResult<Vec<Zval>> {
+        let mut tokens = Vec::new();
+        while self.next_token() {
+            if let Some(token) = self.current_token_info() {
+                tokens.push(self.create_token(token)?);
+            }
+        }
+        Ok(tokens)
+    }
+
+    pub fn get_mysql_version(&self) -> i64 {
+        self.mysql_version
+    }
+
+    pub fn is_sql_mode_active(&self, mode: i64) -> bool {
+        (self.sql_modes & mode) != 0
+    }
+
+    pub fn get_token_id(token_name: String) -> Option<i64> {
+        lex::token_id(&token_name)
+    }
+
+    pub fn get_token_name(token_id: i64) -> Option<String> {
+        lex::token_name(token_id).map(ToOwned::to_owned)
+    }
+}
+
+impl WpMySqlNativeLexer {
+    fn current_token_info(&self) -> Option<TokenInfo> {
+        self.token_type.map(|id| TokenInfo {
+            id,
+            start: self.token_starts_at,
+            end: self.bytes_already_read,
+        })
+    }
+
+    fn create_token(&self, token: TokenInfo) -> PhpResult<Zval> {
+        let id = token.id;
+        let start = i64::try_from(token.start).map_err(php_error)?;
+        let length = i64::try_from(token.end.saturating_sub(token.start)).map_err(php_error)?;
+        let no_backslash = self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES);
+        php_function("wp_sqlite_mysql_native_new_token")?
+            .try_call(vec![
+                &id as &dyn IntoZvalDyn,
+                &start as &dyn IntoZvalDyn,
+                &length as &dyn IntoZvalDyn,
+                &self.sql_zval as &dyn IntoZvalDyn,
+                &no_backslash as &dyn IntoZvalDyn,
+            ])
+            .map_err(php_error)
+    }
+
+    fn read_next_token(&mut self) -> Option<i64> {
+        let byte = self.byte_at(self.bytes_already_read);
+        let next_byte = self.byte_at(self.bytes_already_read + 1);
+
+        let token = match byte {
+            Some(b'\'' | b'"' | b'`') => self.read_quoted_text(),
+            Some(byte) if byte.is_ascii_digit() => self.read_number(),
+            Some(b'.') => {
+                if next_byte.is_some_and(|byte| byte.is_ascii_digit()) {
+                    self.read_number()
+                } else {
+                    self.bytes_already_read += 1;
+                    Some(lex::DOT_SYMBOL)
+                }
+            }
+            Some(b'=') => {
+                self.bytes_already_read += 1;
+                Some(lex::EQUAL_OPERATOR)
+            }
+            Some(b':') => {
+                self.bytes_already_read += 1;
+                if next_byte == Some(b'=') {
+                    self.bytes_already_read += 1;
+                    Some(lex::ASSIGN_OPERATOR)
+                } else {
+                    Some(lex::COLON_SYMBOL)
+                }
+            }
+            Some(b'<') => self.read_less_than(next_byte),
+            Some(b'>') => self.read_greater_than(next_byte),
+            Some(b'!') => {
+                self.bytes_already_read += 1;
+                if next_byte == Some(b'=') {
+                    self.bytes_already_read += 1;
+                    Some(lex::NOT_EQUAL_OPERATOR)
+                } else {
+                    Some(lex::LOGICAL_NOT_OPERATOR)
+                }
+            }
+            Some(b'+') => {
+                self.bytes_already_read += 1;
+                Some(lex::PLUS_OPERATOR)
+            }
+            Some(b'-') => self.read_minus(next_byte),
+            Some(b'*') => self.read_star(next_byte),
+            Some(b'/') => self.read_slash(next_byte),
+            Some(b'%') => {
+                self.bytes_already_read += 1;
+                Some(lex::MOD_OPERATOR)
+            }
+            Some(b'&') => {
+                self.bytes_already_read += 1;
+                if next_byte == Some(b'&') {
+                    self.bytes_already_read += 1;
+                    Some(lex::LOGICAL_AND_OPERATOR)
+                } else {
+                    Some(lex::BITWISE_AND_OPERATOR)
+                }
+            }
+            Some(b'^') => {
+                self.bytes_already_read += 1;
+                Some(lex::BITWISE_XOR_OPERATOR)
+            }
+            Some(b'|') => {
+                self.bytes_already_read += 1;
+                if next_byte == Some(b'|') {
+                    self.bytes_already_read += 1;
+                    if self.is_sql_mode_active(SQL_MODE_PIPES_AS_CONCAT) {
+                        Some(lex::CONCAT_PIPES_SYMBOL)
+                    } else {
+                        Some(lex::LOGICAL_OR_OPERATOR)
+                    }
+                } else {
+                    Some(lex::BITWISE_OR_OPERATOR)
+                }
+            }
+            Some(b'~') => {
+                self.bytes_already_read += 1;
+                Some(lex::BITWISE_NOT_OPERATOR)
+            }
+            Some(b',') => {
+                self.bytes_already_read += 1;
+                Some(lex::COMMA_SYMBOL)
+            }
+            Some(b';') => {
+                self.bytes_already_read += 1;
+                Some(lex::SEMICOLON_SYMBOL)
+            }
+            Some(b'(') => {
+                self.bytes_already_read += 1;
+                Some(lex::OPEN_PAR_SYMBOL)
+            }
+            Some(b')') => {
+                self.bytes_already_read += 1;
+                Some(lex::CLOSE_PAR_SYMBOL)
+            }
+            Some(b'{') => {
+                self.bytes_already_read += 1;
+                Some(lex::OPEN_CURLY_SYMBOL)
+            }
+            Some(b'}') => {
+                self.bytes_already_read += 1;
+                Some(lex::CLOSE_CURLY_SYMBOL)
+            }
+            Some(b'@') => self.read_at(next_byte),
+            Some(b'?') => {
+                self.bytes_already_read += 1;
+                Some(lex::PARAM_MARKER)
+            }
+            Some(b'\\') => {
+                self.bytes_already_read += 1;
+                if next_byte == Some(b'N') {
+                    self.bytes_already_read += 1;
+                    Some(lex::NULL2_SYMBOL)
+                } else {
+                    None
+                }
+            }
+            Some(b'#') => Some(self.read_line_comment()),
+            Some(byte) if byte_in(byte, lex::WHITESPACE_MASK.as_bytes()) => {
+                self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                    byte_in(byte, lex::WHITESPACE_MASK.as_bytes())
+                });
+                Some(lex::WHITESPACE)
+            }
+            Some(b'x' | b'X' | b'b' | b'B') if next_byte == Some(b'\'') => self.read_number(),
+            Some(b'n' | b'N') if next_byte == Some(b'\'') => {
+                self.bytes_already_read += 1;
+                let token = self.read_quoted_text();
+                if token == Some(lex::SINGLE_QUOTED_TEXT) {
+                    Some(lex::NCHAR_TEXT)
+                } else {
+                    token
+                }
+            }
+            None => Some(lex::EOF),
+            Some(_) => {
+                let started_at = self.bytes_already_read;
+                let mut token = self.read_identifier();
+                if token == Some(lex::IDENTIFIER) {
+                    if started_at > 0 && self.byte_at(started_at - 1) == Some(b'.') {
+                        token = Some(lex::IDENTIFIER);
+                    } else if self.byte_at(started_at) == Some(b'_')
+                        && lex::is_underscore_charset(&bytes_ascii_lower(
+                            &self.sql[self.token_starts_at..self.bytes_already_read],
+                        ))
+                    {
+                        token = Some(lex::UNDERSCORE_CHARSET);
+                    } else {
+                        let identifier =
+                            self.sql[self.token_starts_at..self.bytes_already_read].to_vec();
+                        token = Some(self.determine_identifier_or_keyword_type(&identifier));
+                    }
+                }
+                token
+            }
+        };
+
+        token
+    }
+
+    fn byte_at(&self, pos: usize) -> Option<u8> {
+        self.sql.get(pos).copied()
+    }
+
+    fn read_less_than(&mut self, next_byte: Option<u8>) -> Option<i64> {
+        self.bytes_already_read += 1;
+        if next_byte == Some(b'=') {
+            self.bytes_already_read += 1;
+            if self.byte_at(self.bytes_already_read) == Some(b'>') {
+                self.bytes_already_read += 1;
+                Some(lex::NULL_SAFE_EQUAL_OPERATOR)
+            } else {
+                Some(lex::LESS_OR_EQUAL_OPERATOR)
+            }
+        } else if next_byte == Some(b'>') {
+            self.bytes_already_read += 1;
+            Some(lex::NOT_EQUAL_OPERATOR)
+        } else if next_byte == Some(b'<') {
+            self.bytes_already_read += 1;
+            Some(lex::SHIFT_LEFT_OPERATOR)
+        } else {
+            Some(lex::LESS_THAN_OPERATOR)
+        }
+    }
+
+    fn read_greater_than(&mut self, next_byte: Option<u8>) -> Option<i64> {
+        self.bytes_already_read += 1;
+        if next_byte == Some(b'=') {
+            self.bytes_already_read += 1;
+            Some(lex::GREATER_OR_EQUAL_OPERATOR)
+        } else if next_byte == Some(b'>') {
+            self.bytes_already_read += 1;
+            Some(lex::SHIFT_RIGHT_OPERATOR)
+        } else {
+            Some(lex::GREATER_THAN_OPERATOR)
+        }
+    }
+
+    fn read_minus(&mut self, next_byte: Option<u8>) -> Option<i64> {
+        if next_byte == Some(b'-')
+            && self.bytes_already_read + 2 < self.sql.len()
+            && byte_in(
+                self.sql[self.bytes_already_read + 2],
+                lex::WHITESPACE_MASK.as_bytes(),
+            )
+        {
+            Some(self.read_line_comment())
+        } else if next_byte == Some(b'>') {
+            self.bytes_already_read += 2;
+            if self.byte_at(self.bytes_already_read) == Some(b'>') {
+                self.bytes_already_read += 1;
+                if self.mysql_version >= 50713 {
+                    Some(lex::JSON_UNQUOTED_SEPARATOR_SYMBOL)
+                } else {
+                    None
+                }
+            } else if self.mysql_version >= 50708 {
+                Some(lex::JSON_SEPARATOR_SYMBOL)
+            } else {
+                None
+            }
+        } else {
+            self.bytes_already_read += 1;
+            Some(lex::MINUS_OPERATOR)
+        }
+    }
+
+    fn read_star(&mut self, next_byte: Option<u8>) -> Option<i64> {
+        self.bytes_already_read += 1;
+        if next_byte == Some(b'/') && self.in_mysql_comment {
+            self.bytes_already_read += 1;
+            self.in_mysql_comment = false;
+            Some(lex::MYSQL_COMMENT_END)
+        } else {
+            Some(lex::MULT_OPERATOR)
+        }
+    }
+
+    fn read_slash(&mut self, next_byte: Option<u8>) -> Option<i64> {
+        if next_byte == Some(b'*') {
+            if self.byte_at(self.bytes_already_read + 2) == Some(b'!') {
+                Some(self.read_mysql_comment())
+            } else {
+                self.bytes_already_read += 2;
+                self.read_comment_content();
+                Some(lex::COMMENT)
+            }
+        } else {
+            self.bytes_already_read += 1;
+            Some(lex::DIV_OPERATOR)
+        }
+    }
+
+    fn read_at(&mut self, next_byte: Option<u8>) -> Option<i64> {
+        self.bytes_already_read += 1;
+        if next_byte == Some(b'@') {
+            self.bytes_already_read += 1;
+            return Some(lex::AT_AT_SIGN_SYMBOL);
+        }
+
+        let start = self.bytes_already_read;
+        self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$')
+        });
+        if self.bytes_already_read > start {
+            Some(lex::AT_TEXT_SUFFIX)
+        } else {
+            Some(lex::AT_SIGN_SYMBOL)
+        }
+    }
+
+    fn read_identifier(&mut self) -> Option<i64> {
+        let started_at = self.bytes_already_read;
+        loop {
+            self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
+            });
+
+            let byte_1 = self.byte_at(self.bytes_already_read).unwrap_or(0);
+            if !(0xC2..=0xEF).contains(&byte_1) {
+                break;
+            }
+
+            let byte_2 = self.byte_at(self.bytes_already_read + 1).unwrap_or(0);
+            if byte_1 <= 0xDF && (0x80..=0xBF).contains(&byte_2) {
+                self.bytes_already_read += 2;
+                continue;
+            }
+
+            let byte_3 = self.byte_at(self.bytes_already_read + 2).unwrap_or(0);
+            if byte_1 <= 0xEF
+                && (0x80..=0xBF).contains(&byte_2)
+                && (0x80..=0xBF).contains(&byte_3)
+                && !(byte_1 == 0xED && byte_2 >= 0xA0)
+                && !(byte_1 == 0xE0 && byte_2 < 0xA0)
+            {
+                self.bytes_already_read += 3;
+                continue;
+            }
+
+            break;
+        }
+
+        (self.bytes_already_read > started_at).then_some(lex::IDENTIFIER)
+    }
+
+    fn read_number(&mut self) -> Option<i64> {
+        let byte = self.byte_at(self.bytes_already_read);
+        let next_byte = self.byte_at(self.bytes_already_read + 1);
+        let third_byte = self.byte_at(self.bytes_already_read + 2);
+        let mut token_type;
+
+        if (byte == Some(b'0')
+            && next_byte == Some(b'x')
+            && third_byte.is_some_and(|byte| byte_in(byte, lex::HEX_DIGIT_MASK.as_bytes())))
+            || (matches!(byte, Some(b'x' | b'X')) && next_byte == Some(b'\''))
+        {
+            let is_quoted = next_byte == Some(b'\'');
+            self.bytes_already_read += 2;
+            self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                byte_in(byte, lex::HEX_DIGIT_MASK.as_bytes())
+            });
+            if is_quoted {
+                if self.byte_at(self.bytes_already_read) != Some(b'\'') {
+                    return None;
+                }
+                self.bytes_already_read += 1;
+            }
+            token_type = lex::HEX_NUMBER;
+        } else if (byte == Some(b'0')
+            && next_byte == Some(b'b')
+            && matches!(third_byte, Some(b'0' | b'1')))
+            || (matches!(byte, Some(b'b' | b'B')) && next_byte == Some(b'\''))
+        {
+            let is_quoted = next_byte == Some(b'\'');
+            self.bytes_already_read += 2;
+            self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                matches!(byte, b'0' | b'1')
+            });
+            if is_quoted {
+                if self.byte_at(self.bytes_already_read) != Some(b'\'') {
+                    return None;
+                }
+                self.bytes_already_read += 1;
+            }
+            token_type = lex::BIN_NUMBER;
+        } else {
+            self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                byte.is_ascii_digit()
+            });
+            token_type = lex::INT_NUMBER;
+
+            if self.byte_at(self.bytes_already_read) == Some(b'.') {
+                self.bytes_already_read += 1;
+                token_type = lex::DECIMAL_NUMBER;
+                self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                    byte.is_ascii_digit()
+                });
+            }
+
+            let exponent = self.byte_at(self.bytes_already_read);
+            let next = self.byte_at(self.bytes_already_read + 1);
+            let has_exponent = matches!(exponent, Some(b'e' | b'E'))
+                && (next.is_some_and(|byte| byte.is_ascii_digit())
+                    || (matches!(next, Some(b'+' | b'-'))
+                        && self
+                            .byte_at(self.bytes_already_read + 2)
+                            .is_some_and(|byte| byte.is_ascii_digit())));
+            if has_exponent {
+                self.bytes_already_read += 2;
+                self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                    byte.is_ascii_digit()
+                });
+                token_type = lex::FLOAT_NUMBER;
+            }
+        }
+
+        let token_bytes = &self.sql[self.token_starts_at..self.bytes_already_read];
+        let possible_identifier_prefix = token_type == lex::INT_NUMBER
+            || (token_bytes.first() == Some(&b'0')
+                && matches!(token_bytes.get(1), Some(b'b' | b'x')));
+
+        if possible_identifier_prefix && self.read_identifier() == Some(lex::IDENTIFIER) {
+            token_type = lex::IDENTIFIER;
+        }
+
+        if token_type == lex::INT_NUMBER {
+            let mut bytes = &self.sql[self.token_starts_at..self.bytes_already_read];
+            if bytes.len() < 10 {
+                return Some(lex::INT_NUMBER);
+            }
+            while bytes.first() == Some(&b'0') {
+                bytes = &bytes[1..];
+            }
+            let len = bytes.len();
+            return Some(if len < 10 {
+                lex::INT_NUMBER
+            } else if len == 10 {
+                if bytes > b"2147483647" {
+                    lex::LONG_NUMBER
+                } else {
+                    lex::INT_NUMBER
+                }
+            } else if len < 19 {
+                lex::LONG_NUMBER
+            } else if len == 19 {
+                if bytes > b"9223372036854775807" {
+                    lex::ULONGLONG_NUMBER
+                } else {
+                    lex::LONG_NUMBER
+                }
+            } else if len == 20 {
+                if bytes > b"18446744073709551615" {
+                    lex::DECIMAL_NUMBER
+                } else {
+                    lex::ULONGLONG_NUMBER
+                }
+            } else {
+                lex::DECIMAL_NUMBER
+            });
+        }
+
+        Some(token_type)
+    }
+
+    fn read_quoted_text(&mut self) -> Option<i64> {
+        let quote = self.byte_at(self.bytes_already_read)?;
+        self.bytes_already_read += 1;
+        let no_backslash_escapes = self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES);
+        let mut at = self.bytes_already_read;
+
+        loop {
+            at = span_until(&self.sql, at, &[quote]);
+
+            if !no_backslash_escapes {
+                let mut i = 0usize;
+                while at > i && self.byte_at(at - i - 1) == Some(b'\\') {
+                    i += 1;
+                }
+                if i % 2 == 1 {
+                    at += 1;
+                    if at > self.sql.len() {
+                        return None;
+                    }
+                    continue;
+                }
+            }
+
+            if self.byte_at(at) != Some(quote) {
+                return None;
+            }
+
+            if self.byte_at(at + 1) == Some(quote) {
+                at += 2;
+                continue;
+            }
+            break;
+        }
+
+        self.bytes_already_read = at + 1;
+        Some(match quote {
+            b'`' => lex::BACK_TICK_QUOTED_ID,
+            b'"' => lex::DOUBLE_QUOTED_TEXT,
+            _ => lex::SINGLE_QUOTED_TEXT,
+        })
+    }
+
+    fn read_line_comment(&mut self) -> i64 {
+        self.bytes_already_read = span_until(&self.sql, self.bytes_already_read, b"\r\n");
+        lex::COMMENT
+    }
+
+    fn read_mysql_comment(&mut self) -> i64 {
+        self.bytes_already_read += 3;
+        let digit_start = self.bytes_already_read;
+        let digit_end =
+            span_while(&self.sql, digit_start, |byte| byte.is_ascii_digit()).min(digit_start + 5);
+        let digit_count = digit_end - digit_start;
+        let is_version_comment = digit_count == 5;
+        let version = if is_version_comment {
+            std::str::from_utf8(&self.sql[digit_start..digit_end])
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        if self.mysql_version < version {
+            self.read_comment_content();
+            lex::COMMENT
+        } else {
+            self.bytes_already_read += digit_count;
+            self.in_mysql_comment = true;
+            lex::MYSQL_COMMENT_START
+        }
+    }
+
+    fn read_comment_content(&mut self) {
+        loop {
+            self.bytes_already_read = span_until(&self.sql, self.bytes_already_read, b"*");
+            self.bytes_already_read += 1;
+            match self.byte_at(self.bytes_already_read) {
+                None => break,
+                Some(b'/') => {
+                    self.bytes_already_read += 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn determine_identifier_or_keyword_type(&mut self, value: &[u8]) -> i64 {
+        let upper = bytes_ascii_upper(value);
+        let mut token_type = match lex::keyword_token(&upper) {
+            Some(token_type) => token_type,
+            None => return lex::IDENTIFIER,
+        };
+
+        if let Some(version) = lex::version_rule(token_type) {
+            if self.mysql_version < version || -version >= self.mysql_version {
+                return lex::IDENTIFIER;
+            }
+        }
+
+        if token_type == lex::MAX_STATEMENT_TIME_SYMBOL
+            && !(self.mysql_version >= 50704 && self.mysql_version < 50708)
+        {
+            return lex::IDENTIFIER;
+        }
+        if token_type == lex::NONBLOCKING_SYMBOL
+            && !(self.mysql_version >= 50700 && self.mysql_version < 50706)
+        {
+            return lex::IDENTIFIER;
+        }
+        if token_type == lex::REMOTE_SYMBOL
+            && (self.mysql_version >= 80003 && self.mysql_version < 80014)
+        {
+            return lex::IDENTIFIER;
+        }
+
+        if lex::is_function_token(token_type) {
+            if self.is_sql_mode_active(SQL_MODE_IGNORE_SPACE) {
+                self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                    byte_in(byte, lex::WHITESPACE_MASK.as_bytes())
+                });
+            }
+            if self.byte_at(self.bytes_already_read) != Some(b'(') {
+                return lex::IDENTIFIER;
+            }
+        }
+
+        if token_type == lex::NOT_SYMBOL && self.is_sql_mode_active(SQL_MODE_HIGH_NOT_PRECEDENCE) {
+            token_type = lex::NOT2_SYMBOL;
+        }
+
+        lex::token_synonym(token_type).unwrap_or(token_type)
+    }
+}
+
+#[derive(Clone)]
+struct Grammar {
+    highest_terminal_id: i64,
+    rules: HashMap<i64, Vec<Vec<i64>>>,
+    lookahead: HashMap<i64, HashSet<i64>>,
+    rule_names: HashMap<i64, String>,
+    fragment_ids: HashSet<i64>,
+    query_rule_id: i64,
+}
+
+static GRAMMAR_CACHE: OnceLock<Mutex<HashMap<u32, Arc<Grammar>>>> = OnceLock::new();
+
+enum AstChild {
+    Node(AstNode),
+    Token(usize),
+}
+
+struct AstNode {
+    rule_id: i64,
+    rule_name: String,
+    children: Vec<AstChild>,
+}
+
+enum ParseMatch {
+    No,
+    Empty,
+    Node(AstNode),
+    Token(usize),
+}
+
+#[php_class]
+#[php(name = "WP_MySQL_Native_Parser")]
+pub struct WpMySqlNativeParser {
+    grammar: Arc<Grammar>,
+    tokens: Vec<Zval>,
+    token_ids: Vec<i64>,
+    position: usize,
+    current_ast: Option<Zval>,
+}
+
+#[php_impl]
+#[php(change_method_case = "snake_case")]
+impl WpMySqlNativeParser {
+    pub fn __construct(grammar: &mut Zval, tokens: &mut Zval) -> PhpResult<Self> {
+        let grammar = export_grammar(grammar)?;
+        let (tokens, token_ids) = export_tokens(tokens)?;
+
+        Ok(Self {
+            grammar,
+            tokens,
+            token_ids,
+            position: 0,
+            current_ast: None,
+        })
+    }
+
+    pub fn parse(&mut self) -> PhpResult<Zval> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            match self.parse_recursive(self.grammar.query_rule_id)? {
+                ParseMatch::No => Ok(Zval::null()),
+                ParseMatch::Empty => {
+                    let mut zval = Zval::new();
+                    zval.set_bool(true);
+                    Ok(zval)
+                }
+                ParseMatch::Node(node) => self.create_php_node(&node),
+                ParseMatch::Token(index) => Ok(self.tokens[index].shallow_clone()),
+            }
+        })
+    }
+
+    pub fn next_query(&mut self) -> PhpResult<bool> {
+        if self.position >= self.tokens.len() {
+            self.current_ast = None;
+            return Ok(false);
+        }
+
+        self.current_ast = Some(self.parse()?);
+        Ok(true)
+    }
+
+    pub fn get_query_ast(&mut self) -> PhpResult<Zval> {
+        match self.current_ast.as_ref() {
+            Some(ast) => Ok(ast.shallow_clone()),
+            None => Ok(Zval::null()),
+        }
+    }
+}
+
+impl WpMySqlNativeParser {
+    fn parse_recursive(&mut self, rule_id: i64) -> PhpResult<ParseMatch> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.parse_recursive_inner(rule_id)
+        })
+    }
+
+    fn parse_recursive_inner(&mut self, rule_id: i64) -> PhpResult<ParseMatch> {
+        if rule_id <= self.grammar.highest_terminal_id {
+            if self.position >= self.tokens.len() {
+                return Ok(ParseMatch::No);
+            }
+            if rule_id == 0 {
+                return Ok(ParseMatch::Empty);
+            }
+            if self.token_ids[self.position] == rule_id {
+                let token_index = self.position;
+                self.position += 1;
+                return Ok(ParseMatch::Token(token_index));
+            }
+            return Ok(ParseMatch::No);
+        }
+
+        let Some(branch_count) = self.grammar.rules.get(&rule_id).map(Vec::len) else {
+            return Ok(ParseMatch::No);
+        };
+        if branch_count == 0 {
+            return Ok(ParseMatch::No);
+        }
+
+        if let Some(lookahead) = self.grammar.lookahead.get(&rule_id) {
+            let token_id = self.token_ids.get(self.position).copied().unwrap_or(0);
+            if !lookahead.contains(&token_id) && !lookahead.contains(&0) {
+                return Ok(ParseMatch::No);
+            }
+        }
+
+        let rule_name = self
+            .grammar
+            .rule_names
+            .get(&rule_id)
+            .cloned()
+            .unwrap_or_default();
+        let starting_position = self.position;
+        let mut matched_node = None;
+
+        for branch_index in 0..branch_count {
+            let branch = self.grammar.rules.get(&rule_id).unwrap()[branch_index].clone();
+            self.position = starting_position;
+            let mut children = Vec::new();
+            let mut branch_matches = true;
+
+            for subrule_id in branch {
+                match self.parse_recursive(subrule_id)? {
+                    ParseMatch::No => {
+                        branch_matches = false;
+                        break;
+                    }
+                    ParseMatch::Empty => {}
+                    ParseMatch::Token(token_index) => {
+                        children.push(AstChild::Token(token_index));
+                    }
+                    ParseMatch::Node(subnode) => {
+                        if self.grammar.fragment_ids.contains(&subrule_id) {
+                            children.extend(subnode.children);
+                        } else {
+                            children.push(AstChild::Node(subnode));
+                        }
+                    }
+                }
+            }
+
+            if branch_matches
+                && rule_name == "selectStatement"
+                && self
+                    .token_ids
+                    .get(self.position)
+                    .is_some_and(|token_id| *token_id == lex::INTO_SYMBOL)
+            {
+                branch_matches = false;
+            }
+
+            if branch_matches {
+                matched_node = Some(AstNode {
+                    rule_id,
+                    rule_name: rule_name.clone(),
+                    children,
+                });
+                break;
+            }
+        }
+
+        let Some(node) = matched_node else {
+            self.position = starting_position;
+            return Ok(ParseMatch::No);
+        };
+
+        if node.children.is_empty() {
+            Ok(ParseMatch::Empty)
+        } else {
+            Ok(ParseMatch::Node(node))
+        }
+    }
+
+    fn create_php_node(&self, ast_node: &AstNode) -> PhpResult<Zval> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.create_php_node_inner(ast_node)
+        })
+    }
+
+    fn create_php_node_inner(&self, ast_node: &AstNode) -> PhpResult<Zval> {
+        let node = create_node(ast_node.rule_id, &ast_node.rule_name)?;
+
+        for child in &ast_node.children {
+            let child_zval = match child {
+                AstChild::Node(child_node) => self.create_php_node(child_node)?,
+                AstChild::Token(index) => self.tokens[*index].shallow_clone(),
+            };
+            node.object()
+                .ok_or_else(|| php_error("Parser node must be an object"))?
+                .try_call_method("append_child", vec![&child_zval as &dyn IntoZvalDyn])
+                .map_err(php_error)?;
+        }
+
+        Ok(node)
+    }
+}
+
+fn export_grammar(grammar: &mut Zval) -> PhpResult<Arc<Grammar>> {
+    let grammar_id = grammar.object().map(|object| object.get_id());
+    if let Some(grammar_id) = grammar_id {
+        let cache = GRAMMAR_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Some(cached) = cache
+            .lock()
+            .map_err(|_| php_error("Grammar cache lock poisoned"))?
+            .get(&grammar_id)
+        {
+            return Ok(Arc::clone(cached));
+        }
+    }
+
+    let exported = php_function("wp_sqlite_mysql_native_export_grammar")?
+        .try_call(vec![&*grammar as &dyn IntoZvalDyn])
+        .map_err(php_error)?;
+    let array = exported
+        .array()
+        .ok_or_else(|| php_error("Exported grammar must be an array"))?;
+
+    let highest_terminal_id = array
+        .get("highest_terminal_id")
+        .and_then(Zval::long)
+        .ok_or_else(|| php_error("Missing grammar highest_terminal_id"))?;
+    let rules = parse_rules(
+        array
+            .get("rules")
+            .and_then(Zval::array)
+            .ok_or_else(|| php_error("Missing grammar rules"))?,
+    )?;
+    let lookahead = parse_lookahead(
+        array
+            .get("lookahead_is_match_possible")
+            .and_then(Zval::array)
+            .ok_or_else(|| php_error("Missing grammar lookahead"))?,
+    )?;
+    let rule_names = parse_rule_names(
+        array
+            .get("rule_names")
+            .and_then(Zval::array)
+            .ok_or_else(|| php_error("Missing grammar rule_names"))?,
+    )?;
+    let fragment_ids = parse_id_set(
+        array
+            .get("fragment_ids")
+            .and_then(Zval::array)
+            .ok_or_else(|| php_error("Missing grammar fragment_ids"))?,
+    )?;
+    let query_rule_id = rule_names
+        .iter()
+        .find_map(|(id, name)| (name == "query").then_some(*id))
+        .ok_or_else(|| php_error("Missing query grammar rule"))?;
+
+    let grammar = Arc::new(Grammar {
+        highest_terminal_id,
+        rules,
+        lookahead,
+        rule_names,
+        fragment_ids,
+        query_rule_id,
+    });
+
+    if let Some(grammar_id) = grammar_id {
+        GRAMMAR_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .map_err(|_| php_error("Grammar cache lock poisoned"))?
+            .insert(grammar_id, Arc::clone(&grammar));
+    }
+
+    Ok(grammar)
+}
+
+fn export_tokens(tokens: &mut Zval) -> PhpResult<(Vec<Zval>, Vec<i64>)> {
+    let array = tokens
+        .array()
+        .ok_or_else(|| php_error("Parser tokens must be an array"))?;
+    let mut token_objects = Vec::with_capacity(array.len());
+    let mut token_ids = Vec::with_capacity(array.len());
+
+    for (_, token) in array {
+        let token_object = token
+            .object()
+            .ok_or_else(|| php_error("Parser token must be an object"))?;
+        let id = token_object.get_property::<i64>("id").map_err(php_error)?;
+        token_objects.push(token.shallow_clone());
+        token_ids.push(id);
+    }
+
+    Ok((token_objects, token_ids))
+}
+
+fn parse_rules(array: &ZendHashTable) -> PhpResult<HashMap<i64, Vec<Vec<i64>>>> {
+    let mut rules = HashMap::new();
+    for (rule_key, branches_zval) in array {
+        let rule_id = array_key_to_i64(rule_key)?;
+        let branches_array = branches_zval
+            .array()
+            .ok_or_else(|| php_error("Grammar branches must be arrays"))?;
+        let mut branches = Vec::with_capacity(branches_array.len());
+        for (_, branch_zval) in branches_array {
+            let branch_array = branch_zval
+                .array()
+                .ok_or_else(|| php_error("Grammar branch must be an array"))?;
+            let mut branch = Vec::with_capacity(branch_array.len());
+            for (_, subrule_zval) in branch_array {
+                branch.push(
+                    subrule_zval
+                        .long()
+                        .ok_or_else(|| php_error("Grammar subrule must be an integer"))?,
+                );
+            }
+            branches.push(branch);
+        }
+        rules.insert(rule_id, branches);
+    }
+    Ok(rules)
+}
+
+fn parse_lookahead(array: &ZendHashTable) -> PhpResult<HashMap<i64, HashSet<i64>>> {
+    let mut lookahead = HashMap::new();
+    for (rule_key, lookup_zval) in array {
+        let rule_id = array_key_to_i64(rule_key)?;
+        let lookup_array = lookup_zval
+            .array()
+            .ok_or_else(|| php_error("Grammar lookahead entry must be an array"))?;
+        let mut set = HashSet::with_capacity(lookup_array.len());
+        for (token_key, _) in lookup_array {
+            set.insert(array_key_to_i64(token_key)?);
+        }
+        lookahead.insert(rule_id, set);
+    }
+    Ok(lookahead)
+}
+
+fn parse_rule_names(array: &ZendHashTable) -> PhpResult<HashMap<i64, String>> {
+    let mut names = HashMap::new();
+    for (rule_key, name_zval) in array {
+        names.insert(
+            array_key_to_i64(rule_key)?,
+            name_zval
+                .string()
+                .ok_or_else(|| php_error("Grammar rule name must be a string"))?,
+        );
+    }
+    Ok(names)
+}
+
+fn parse_id_set(array: &ZendHashTable) -> PhpResult<HashSet<i64>> {
+    let mut set = HashSet::with_capacity(array.len());
+    for (key, _) in array {
+        set.insert(array_key_to_i64(key)?);
+    }
+    Ok(set)
+}
+
+fn array_key_to_i64(key: ArrayKey<'_>) -> PhpResult<i64> {
+    match key {
+        ArrayKey::Long(value) => Ok(value),
+        ArrayKey::String(value) => value.parse::<i64>().map_err(php_error),
+        ArrayKey::Str(value) => value.parse::<i64>().map_err(php_error),
+    }
+}
+
+fn create_node(rule_id: i64, rule_name: &str) -> PhpResult<Zval> {
+    php_function("wp_sqlite_mysql_native_new_node")?
+        .try_call(vec![
+            &rule_id as &dyn IntoZvalDyn,
+            &rule_name.to_owned() as &dyn IntoZvalDyn,
+        ])
+        .map_err(php_error)
+}
+
+extern "C" fn php_module_info(_module: *mut ModuleEntry) {
+    info_table_start!();
+    info_table_row!("wp_mysql_parser", "enabled");
+    info_table_end!();
+}
+
+#[php_module]
+pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
+    module
+        .class::<WpMySqlNativeLexer>()
+        .class::<WpMySqlNativeParser>()
+        .info_function(php_module_info)
+}
