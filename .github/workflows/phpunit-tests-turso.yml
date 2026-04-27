@@ -571,6 +571,36 @@ jobs:
           open(path, 'w').write(src)
           print('added wp_die polyfill to bootstrap.php')
 
+          # 6. Turso's PRAGMA table_xinfo preserves outer parens on
+          #    `DEFAULT (expr)` columns (real SQLite strips them). That defeats
+          #    the reconstructor's typed checks and falls through to
+          #    quote_mysql_utf8_string_literal, so SHOW CREATE TABLE emits
+          #    DEFAULT '(CURRENT_TIMESTAMP)' / DEFAULT '(1 + 2)' instead of
+          #    DEFAULT CURRENT_TIMESTAMP / DEFAULT '1 + 2'. Strip outer parens
+          #    at the top of generate_column_default so the typed checks see
+          #    the bare expression.
+          path = 'src/sqlite/class-wp-sqlite-information-schema-reconstructor.php'
+          src = open(path).read()
+          old = (
+              "\tprivate function generate_column_default( string $mysql_type, ?string $default_value ): ?string {\n"
+              "\t\tif ( null === $default_value || '' === $default_value ) {\n"
+              "\t\t\treturn null;\n"
+              "\t\t}\n"
+          )
+          new = (
+              "\tprivate function generate_column_default( string $mysql_type, ?string $default_value ): ?string {\n"
+              "\t\tif ( null === $default_value || '' === $default_value ) {\n"
+              "\t\t\treturn null;\n"
+              "\t\t}\n"
+              "\t\tif ( strlen( $default_value ) >= 2 && '(' === $default_value[0] && ')' === substr( $default_value, -1 ) ) {\n"
+              "\t\t\t$default_value = trim( substr( $default_value, 1, -1 ) );\n"
+              "\t\t}\n"
+          )
+          assert old in src, 'generate_column_default prologue not found'
+          src = src.replace(old, new, 1)
+          open(path, 'w').write(src)
+          print('patched reconstructor default-value paren stripping')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
