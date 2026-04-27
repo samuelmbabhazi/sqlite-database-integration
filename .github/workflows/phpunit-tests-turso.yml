@@ -349,6 +349,275 @@ jobs:
           echo "close: ok\n";
           PHP
 
+      - name: Probe Turso columnN binding in INSERT-SELECT-FROM-VALUES
+        continue-on-error: true
+        env:
+          LD_PRELOAD: ${{ steps.preload.outputs.value }}
+        run: |
+          php <<'PHP'
+          <?php
+          // Probes Turso behaviour for the columnN reference pattern that the
+          // mysql-on-sqlite driver emits for INSERT...VALUES type casting.
+          // Each form is a small variation; we run them in isolation and
+          // print the outcome so we can see exactly which shape Turso rejects.
+          $pdo = new PDO('sqlite::memory:');
+          $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+          $pdo->exec('CREATE TABLE t (v INTEGER)');
+
+          $cases = [
+              'top-level SELECT column1 FROM (VALUES) (1 col)' =>
+                  'SELECT column1 FROM (VALUES (5))',
+              'top-level SELECT CAST(`column1`) FROM (VALUES) WHERE true (1 col)' =>
+                  'SELECT CAST(`column1` AS INTEGER) FROM (VALUES (5)) WHERE true',
+              'INSERT...SELECT CAST(`column1`) FROM (VALUES) WHERE true (1 col)' =>
+                  'INSERT INTO t (v) SELECT CAST(`column1` AS INTEGER) FROM (VALUES (5)) WHERE true',
+              'top-level SELECT column1, column2 FROM (VALUES) (2 cols)' =>
+                  'SELECT column1, column2 FROM (VALUES (5, 6))',
+              'INSERT...SELECT CAST(`column1`), CAST(`column2`) FROM (VALUES) WHERE true (2 cols)' =>
+                  'INSERT INTO t2 (a, b) SELECT CAST(`column1` AS INTEGER), CAST(`column2` AS INTEGER) FROM (VALUES (5, 6)) WHERE true',
+              'INSERT (3 cols)' =>
+                  'INSERT INTO t3 (a, b, c) SELECT CAST(`column1` AS INTEGER), CAST(`column2` AS INTEGER), CAST(`column3` AS INTEGER) FROM (VALUES (5, 6, 7)) WHERE true',
+              'INSERT (5 cols, refer column5)' =>
+                  'INSERT INTO t5 (a, b, c, d, e) SELECT CAST(`column1` AS INTEGER), CAST(`column2` AS INTEGER), CAST(`column3` AS INTEGER), CAST(`column4` AS INTEGER), CAST(`column5` AS INTEGER) FROM (VALUES (1, 2, 3, 4, 5)) WHERE true',
+              'INSERT (3 cols, no backticks)' =>
+                  'INSERT INTO t3 (a, b, c) SELECT CAST(column1 AS INTEGER), CAST(column2 AS INTEGER), CAST(column3 AS INTEGER) FROM (VALUES (5, 6, 7)) WHERE true',
+              'top-level SELECT column1, column2 FROM (SELECT...)' =>
+                  'SELECT column1, column2 FROM (SELECT 5 AS column1, 6 AS column2)',
+              'INSERT (3 cols) FROM (SELECT…AS column1)' =>
+                  'INSERT INTO t3 (a, b, c) SELECT CAST(column1 AS INTEGER), CAST(column2 AS INTEGER), CAST(column3 AS INTEGER) FROM (SELECT 5 AS column1, 6 AS column2, 7 AS column3) WHERE true',
+              'INSERT (3 cols) CTE(VALUES) AS src(c1, c2, c3)' =>
+                  "INSERT INTO t3 (a, b, c) WITH src(column1, column2, column3) AS (VALUES (5, 6, 7)) SELECT CAST(column1 AS INTEGER), CAST(column2 AS INTEGER), CAST(column3 AS INTEGER) FROM src WHERE true",
+          ];
+          $pdo->exec('CREATE TABLE t2 (a INTEGER, b INTEGER)');
+          $pdo->exec('CREATE TABLE t3 (a INTEGER, b INTEGER, c INTEGER)');
+          $pdo->exec('CREATE TABLE t5 (a INTEGER, b INTEGER, c INTEGER, d INTEGER, e INTEGER)');
+          foreach ($cases as $label => $sql) {
+              try {
+                  $stmt = $pdo->query($sql);
+                  if ($stmt && stripos($sql, 'INSERT') === false) {
+                      $stmt->fetchAll();
+                  }
+                  echo "OK   $label\n";
+              } catch (Throwable $e) {
+                  echo "FAIL $label -> " . $e->getMessage() . "\n";
+              }
+              foreach (['t', 't2', 't3', 't5'] as $tbl) {
+                  try { $pdo->exec("DELETE FROM $tbl"); } catch (Throwable $_) {}
+              }
+          }
+
+      - name: Probe Turso TEMP table I/O
+        continue-on-error: true
+        env:
+          LD_PRELOAD: ${{ steps.preload.outputs.value }}
+        run: |
+          php <<'PHP'
+          <?php
+          // Reproduce the testCreateTemporaryTable failure shape directly,
+          // varying schema features one at a time so we can see which
+          // shape Turso fails on.
+          $cases = [
+              'plain temp table create+drop' =>
+                  [
+                      "CREATE TEMPORARY TABLE _t1 (id INTEGER, v TEXT)",
+                      "DROP TABLE _t1",
+                  ],
+              'temp table with PRIMARY KEY AUTOINCREMENT, plain' =>
+                  [
+                      "CREATE TEMPORARY TABLE _t2 (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)",
+                      "DROP TABLE _t2",
+                  ],
+              'temp table with NOT NULL DEFAULT' =>
+                  [
+                      "CREATE TEMPORARY TABLE _t3 (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT NOT NULL DEFAULT '')",
+                      "DROP TABLE _t3",
+                  ],
+              'temp table create + insert + select + drop' =>
+                  [
+                      "CREATE TEMPORARY TABLE _t4 (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)",
+                      "INSERT INTO _t4 (v) VALUES ('a')",
+                      "SELECT * FROM _t4",
+                      "DROP TABLE _t4",
+                  ],
+              'temp table same name as a real table' =>
+                  [
+                      "CREATE TABLE _t5 (id INTEGER, v TEXT)",
+                      "CREATE TEMPORARY TABLE _t5 (id INTEGER, v TEXT)",
+                      "DROP TABLE _t5",
+                      "DROP TABLE _t5",
+                  ],
+          ];
+          foreach ($cases as $label => $stmts) {
+              $pdo = new PDO('sqlite::memory:');
+              $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+              $err = null;
+              foreach ($stmts as $i => $s) {
+                  try { $pdo->exec($s); }
+                  catch (Throwable $e) {
+                      $err = "stmt #$i ($s) -> " . $e->getMessage();
+                      break;
+                  }
+              }
+              echo ($err ? "FAIL " : "OK   ") . $label . ($err ? " -> $err" : "") . "\n";
+              unset($pdo);
+          }
+
+      - name: Probe Turso PDO churn — does state accumulate that breaks later queries?
+        continue-on-error: true
+        env:
+          LD_PRELOAD: ${{ steps.preload.outputs.value }}
+        run: |
+          php <<'PHP'
+          <?php
+          // The 3 failing tests all pass in fresh-PDO probes but fail
+          // mid-suite. This probe simulates the suite's PDO churn:
+          // open N PDOs, run a smattering of operations on each, close.
+          // Then in a final fresh PDO, run the failing-test query shape
+          // and see whether the bug manifests.
+          //
+          // If the bug reproduces past some N, we have a minimal repro
+          // and can bisect what specifically accumulates.
+          function setup_and_run(int $churn_count): array {
+              // Mimic the driver's setUp: register a bunch of UDFs and run
+              // common PRAGMAs, like WP_PDO_MySQL_On_SQLite::__construct does.
+              $udf_names = [
+                  'throw','month','monthnum','year','day','hour','minute','second','week',
+                  'weekday','dayofweek','dayofmonth','unix_timestamp','now','md5','curdate',
+                  'rand','from_unixtime','localtime','localtimestamp','isnull','if','regexp',
+                  'field','log','least','greatest','get_lock','release_lock','ucase','lcase',
+                  'concat','date_add','date_sub','dayname','monthname','quarter','last_day',
+                  'time_to_sec','timestampdiff','date_format','find_in_set','char_length','format',
+              ];
+              for ($i = 0; $i < $churn_count; $i++) {
+                  $pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+                  $p = new $pdo_class('sqlite::memory:');
+                  $p->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+                  $p->setAttribute(PDO::ATTR_TIMEOUT, 30);
+                  $p->setAttribute(PDO::ATTR_STRINGIFY_FETCHES, true);
+                  $p->query('PRAGMA foreign_keys = ON');
+                  foreach ($udf_names as $name) {
+                      if ($p instanceof PDO\SQLite) {
+                          $p->createFunction($name, function (...$a) { return ''; });
+                      } else {
+                          $p->sqliteCreateFunction($name, function (...$a) { return ''; });
+                      }
+                  }
+                  $p->exec('CREATE TABLE t (id INT, v TEXT)');
+                  $p->exec("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+                  $p->query('SELECT * FROM t');
+                  $p->exec('CREATE TEMPORARY TABLE t2 (id INT)');
+                  $p->exec("INSERT INTO t2 VALUES (1)");
+                  unset($p);
+              }
+              // Now in a fresh PDO, run the failing-test shape.
+              $p = new PDO('sqlite::memory:');
+              $p->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+              $p->exec("CREATE TABLE _ist (table_schema TEXT, table_name TEXT)");
+              $p->exec("CREATE TABLE _isc (table_schema TEXT, table_name TEXT, column_name TEXT, extra TEXT)");
+              $p->exec("INSERT INTO _ist VALUES ('main','low'), ('main','high'), ('main','plain')");
+              $p->exec("INSERT INTO _isc VALUES ('main','low','id','auto_increment'), ('main','high','id','auto_increment'), ('main','plain','id','')");
+              $p->exec("CREATE TABLE sqlseq (name TEXT, seq INT)");
+              $p->exec("INSERT INTO sqlseq VALUES ('low',1), ('high',5)");
+              $derived = "(SELECT table_name AS NAME,
+                  (SELECT COALESCE(s.seq + 1, 1) FROM _isc AS c LEFT JOIN sqlseq AS s ON s.name = c.table_name
+                   WHERE c.extra = 'auto_increment' AND c.table_schema = t.table_schema AND c.table_name = t.table_name) AS AI
+                  FROM _ist AS t)";
+              $rows1 = $p->query("SELECT NAME FROM $derived WHERE AI > 3")->fetchAll(PDO::FETCH_COLUMN);
+              // also run a temp-table sequence
+              $temp_ok = true;
+              $temp_err = null;
+              try {
+                  $p->exec('CREATE TEMPORARY TABLE _ttest (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT NOT NULL DEFAULT \'\')');
+                  $p->exec('DROP TABLE _ttest');
+              } catch (Throwable $e) { $temp_ok = false; $temp_err = $e->getMessage(); }
+              return ['filter_rows' => $rows1, 'temp_ok' => $temp_ok, 'temp_err' => $temp_err];
+          }
+          foreach ([0, 1, 5, 20, 50, 100, 200, 500] as $n) {
+              $r = setup_and_run($n);
+              $rows = json_encode($r['filter_rows']);
+              $temp = $r['temp_ok'] ? 'temp OK' : 'temp FAIL: '.$r['temp_err'];
+              echo "churn=$n  filter_rows=$rows  $temp\n";
+          }
+
+      - name: Probe Turso correlated subquery in derived-table SELECT list
+        continue-on-error: true
+        env:
+          LD_PRELOAD: ${{ steps.preload.outputs.value }}
+        run: |
+          php <<'PHP'
+          <?php
+          // Reproduce testInformationSchemaTablesFilterByAutoIncrement's exact
+          // shape — info_schema-style tables and the *exact* translate_table_ref
+          // correlated subquery (LEFT JOIN inside subquery + COALESCE).
+          // Also use Turso's REAL `sqlite_sequence` (a special table) by
+          // creating tables with INTEGER PRIMARY KEY AUTOINCREMENT, which
+          // is what the driver sets up for AUTO_INCREMENT columns.
+          $pdo = new PDO('sqlite::memory:');
+          $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+          // Mirror the driver's information schema layout and seed it.
+          $pdo->exec("CREATE TABLE _ist (table_schema TEXT, table_name TEXT, engine TEXT)");
+          $pdo->exec("CREATE TABLE _isc (table_schema TEXT, table_name TEXT, column_name TEXT, extra TEXT)");
+          $pdo->exec("INSERT INTO _ist VALUES ('main','low','InnoDB'), ('main','high','InnoDB'), ('main','plain','InnoDB')");
+          $pdo->exec("INSERT INTO _isc VALUES ('main','low','id','auto_increment'), ('main','high','id','auto_increment'), ('main','plain','id','')");
+          // Real sqlite_sequence: create AUTOINCREMENT tables and insert.
+          $pdo->exec("CREATE TABLE low (id INTEGER PRIMARY KEY AUTOINCREMENT, n TEXT)");
+          $pdo->exec("CREATE TABLE high (id INTEGER PRIMARY KEY AUTOINCREMENT, n TEXT)");
+          $pdo->exec("INSERT INTO low (n) VALUES ('a')");
+          $pdo->exec("INSERT INTO high (n) VALUES ('a'),('b'),('c'),('d'),('e')");
+          // (Also keep the fake table for comparison — used in the cases below.)
+          $pdo->exec("CREATE TABLE sqlseq (name TEXT, seq INT)");
+          $pdo->exec("INSERT INTO sqlseq VALUES ('low',1), ('high',5)");
+
+          // Driver's actual correlated subquery shape:
+          $corr = "(SELECT COALESCE(s.seq + 1, 1)
+                    FROM _isc AS c
+                    LEFT JOIN sqlseq AS s ON s.name = c.table_name
+                    WHERE c.extra = 'auto_increment'
+                    AND c.table_schema = t.table_schema
+                    AND c.table_name = t.table_name)";
+
+          $derived = "(SELECT table_name AS NAME, $corr AS AI FROM _ist AS t)";
+
+          // Variants using REAL sqlite_sequence (special table populated by AUTOINCREMENT)
+          $real_corr = "(SELECT COALESCE(s.seq + 1, 1)
+                    FROM _isc AS c
+                    LEFT JOIN sqlite_sequence AS s ON s.name = c.table_name
+                    WHERE c.extra = 'auto_increment'
+                    AND c.table_schema = t.table_schema
+                    AND c.table_name = t.table_name)";
+          $real_derived = "(SELECT table_name AS NAME, $real_corr AS AI FROM _ist AS t)";
+
+          $cases = [
+              'fake-seq inline correlated subq value' =>
+                  "SELECT table_name, $corr AS AI FROM _ist AS t",
+              'fake-seq derived-table + WHERE AI > 3 (the bug)' =>
+                  "SELECT NAME FROM $derived WHERE AI > 3",
+              'fake-seq derived-table + WHERE AI IS NULL' =>
+                  "SELECT NAME FROM $derived WHERE AI IS NULL",
+              'fake-seq derived-table + plain SELECT' =>
+                  "SELECT NAME, AI FROM $derived",
+              'real-seq inline correlated subq value' =>
+                  "SELECT table_name, $real_corr AS AI FROM _ist AS t",
+              'real-seq derived-table + WHERE AI > 3 (the bug)' =>
+                  "SELECT NAME FROM $real_derived WHERE AI > 3",
+              'real-seq derived-table + WHERE AI IS NULL' =>
+                  "SELECT NAME FROM $real_derived WHERE AI IS NULL",
+              'real-seq derived-table + plain SELECT' =>
+                  "SELECT NAME, AI FROM $real_derived",
+              // Just dump real sqlite_sequence to confirm it has the right values
+              'real sqlite_sequence dump' =>
+                  "SELECT name, seq FROM sqlite_sequence ORDER BY name",
+          ];
+          foreach ($cases as $label => $sql) {
+              try {
+                  $rows = $pdo->query($sql)->fetchAll(PDO::FETCH_NUM);
+                  $rows_pretty = array_map(fn($r) => '['.implode(',', array_map(fn($v) => $v === null ? 'NULL' : $v, $r)).']', $rows);
+                  echo "ROW  $label  =>  " . implode(' ', $rows_pretty) . "\n";
+              } catch (Throwable $e) {
+                  echo "FAIL $label -> " . $e->getMessage() . "\n";
+              }
+          }
+
       - name: Install Composer dependencies (root)
         uses: ramsey/composer-install@v3
         with:
@@ -1085,6 +1354,153 @@ jobs:
           print('patched testCreateTableWithDefaultExpressions PRAGMA expectations for Turso')
 
           PY
+
+      - name: Probe — capture exact SQL the driver emits in failing tests
+        continue-on-error: true
+        env:
+          LD_PRELOAD: ${{ steps.preload.outputs.value }}
+          # Use Turso's tracing to log every prepared SQL statement.
+          RUST_LOG: 'turso_core::translate=trace,turso_core::vdbe::insn=info'
+        working-directory: packages/mysql-on-sqlite
+        run: |
+          set +e
+          # Add a hard timeout so a hung probe step doesn't block the
+          # whole job; head -2500 keeps log size reasonable.
+          timeout --kill-after=5 60 \
+            php <<'PHP' 2>&1 | head -2500
+          <?php
+          // Boot the driver, run failing test scenarios. With RUST_LOG
+          // including translate=trace, Turso prints each prepared SQL
+          // to stderr (which we route to stdout for `head -800`).
+          require __DIR__ . '/vendor/autoload.php';
+          require __DIR__ . '/tests/bootstrap.php';
+
+          function run_test(string $label, callable $f): void {
+              fwrite(STDERR, "\n=== START $label ===\n");
+              try {
+                  $pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+                  $sqlite = new $pdo_class('sqlite::memory:');
+                  $conn = new WP_SQLite_Connection(['pdo' => $sqlite]);
+                  $engine = new WP_SQLite_Driver($conn, 'wp');
+                  $f($engine, $sqlite);
+                  fwrite(STDERR, "=== OK $label ===\n");
+              } catch (Throwable $e) {
+                  fwrite(STDERR, "=== FAIL $label: " . $e->getMessage() . " ===\n");
+              }
+          }
+
+          run_test('testCreateTemporaryTable (with WP_SQLite_Driver_Tests::setUp prefix)', function ($engine) {
+              // Mirror WP_SQLite_Driver_Tests::setUp() — creates 2 permanent
+              // tables with AUTO_INCREMENT BEFORE the temp table operation.
+              $engine->query("CREATE TABLE _options (
+                  ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+                  option_name TEXT NOT NULL default '',
+                  option_value TEXT NOT NULL default ''
+              )");
+              $engine->query("CREATE TABLE _dates (
+                  ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+                  option_name TEXT NOT NULL default '',
+                  option_value DATETIME NOT NULL
+              )");
+              $engine->query('CREATE TEMPORARY TABLE _tmp_table (
+                  ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+                  option_name TEXT NOT NULL default \'\',
+                  option_value TEXT NOT NULL default \'\'
+              )');
+              $engine->query('DROP TEMPORARY TABLE _tmp_table');
+          });
+
+          run_test('testInformationSchemaTablesFilterByAutoIncrement', function ($engine) {
+              $engine->query('CREATE TABLE low (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)');
+              $engine->query('CREATE TABLE high (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)');
+              $engine->query('CREATE TABLE plain (id INT, name TEXT)');
+              $engine->query("INSERT INTO low (name) VALUES ('a')");
+              $engine->query("INSERT INTO high (name) VALUES ('a'), ('b'), ('c'), ('d'), ('e')");
+              $r = $engine->query('SELECT TABLE_NAME FROM information_schema.tables WHERE `AUTO_INCREMENT` > 3');
+              fwrite(STDERR, "  -> " . count($r) . " row(s): " . json_encode(array_map(fn($o) => $o->TABLE_NAME, $r)) . "\n");
+          });
+
+          run_test('testTemporaryTableHasPriorityOverStandardTable (with WP_SQLite_Driver_Tests::setUp prefix)', function ($engine) {
+              $engine->query("CREATE TABLE _options (
+                  ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+                  option_name TEXT NOT NULL default '',
+                  option_value TEXT NOT NULL default ''
+              )");
+              $engine->query("CREATE TABLE _dates (
+                  ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+                  option_name TEXT NOT NULL default '',
+                  option_value DATETIME NOT NULL
+              )");
+              $engine->query('CREATE TABLE t (a INT, INDEX ia(a))');
+              $engine->query('CREATE TEMPORARY TABLE t (b INT, INDEX ib(b))');
+              $engine->query('SHOW CREATE TABLE t');
+              $engine->query('SHOW COLUMNS FROM t');
+              $engine->query('DESCRIBE t');
+              $engine->query('SHOW INDEXES FROM t');
+              $engine->query('ALTER TABLE t ADD COLUMN c INT');
+              $engine->query('SHOW COLUMNS FROM t');
+          });
+          PHP
+          echo "(probe step: continue-on-error)"
+
+      - name: Probe — testTemporaryTableHasPriority isolated, querying-only filter
+        continue-on-error: true
+        env:
+          LD_PRELOAD: ${{ steps.preload.outputs.value }}
+          # translate=trace gives us "querying <SQL>" lines plus a lot of DEBUG
+          # translate_expr noise. We grep down to just the SQL + errors so the
+          # whole test trace fits in the log even with many statements.
+          RUST_LOG: 'turso_core::translate=trace,turso_core::storage=warn'
+        working-directory: packages/mysql-on-sqlite
+        run: |
+          set +e
+          timeout --kill-after=5 60 \
+            php <<'PHP' 2>&1 \
+            | grep -E '(querying |ERROR|WARN|=== |  -> |short read|page is pinned|page [0-9]+ is)' \
+            | head -800
+          <?php
+          // Same scenario as the SQL-capture probe, but isolated to the failing
+          // test so its trace doesn't get flushed by the upstream truncation.
+          require __DIR__ . '/vendor/autoload.php';
+          require __DIR__ . '/tests/bootstrap.php';
+
+          $pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+          $sqlite = new $pdo_class('sqlite::memory:');
+          $conn = new WP_SQLite_Connection(['pdo' => $sqlite]);
+          $engine = new WP_SQLite_Driver($conn, 'wp');
+
+          $statements = [
+              "CREATE TABLE _options (
+                  ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+                  option_name TEXT NOT NULL default '',
+                  option_value TEXT NOT NULL default ''
+              )",
+              "CREATE TABLE _dates (
+                  ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+                  option_name TEXT NOT NULL default '',
+                  option_value DATETIME NOT NULL
+              )",
+              'CREATE TABLE t (a INT, INDEX ia(a))',
+              'CREATE TEMPORARY TABLE t (b INT, INDEX ib(b))',
+              'SHOW CREATE TABLE t',
+              'SHOW COLUMNS FROM t',
+              'DESCRIBE t',
+              'SHOW INDEXES FROM t',
+              'ALTER TABLE t ADD COLUMN c INT',
+              'SHOW COLUMNS FROM t',
+          ];
+          foreach ($statements as $sql) {
+              $first = strtok($sql, "\n");
+              fwrite(STDERR, "\n=== STMT: $first ===\n");
+              try {
+                  $engine->query($sql);
+                  fwrite(STDERR, "  -> ok\n");
+              } catch (Throwable $e) {
+                  fwrite(STDERR, "=== FAIL $first -> " . $e->getMessage() . " ===\n");
+              }
+          }
+          PHP
+          echo "(probe step: continue-on-error)"
 
       - name: Run PHPUnit tests against Turso DB
         env:
