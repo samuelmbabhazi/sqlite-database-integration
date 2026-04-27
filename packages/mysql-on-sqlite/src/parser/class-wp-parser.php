@@ -127,15 +127,13 @@ class WP_Parser {
 			//        for right-associative rules, which could solve this.
 			//        See: https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/MySQLParser.g4#L994
 			//        See: https://github.com/antlr/antlr4/issues/488
-			$lookahead_id = $this->position < $this->token_count
-				? $this->token_ids[ $this->position ]
-				: null;
-			if (
-				null !== $lookahead_id
-				&& $rule_id === $this->select_statement_rule_id
-				&& WP_MySQL_Lexer::INTO_SYMBOL === $lookahead_id
-			) {
-				$branch_matches = false;
+			if ( $rule_id === $this->select_statement_rule_id ) {
+				$lookahead_id = $this->position < $this->token_count
+					? $this->token_ids[ $this->position ]
+					: null;
+				if ( WP_MySQL_Lexer::INTO_SYMBOL === $lookahead_id ) {
+					$branch_matches = false;
+				}
 			}
 
 			if ( true === $branch_matches ) {
