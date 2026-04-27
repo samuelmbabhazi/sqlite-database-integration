@@ -373,6 +373,97 @@ jobs:
         working-directory: packages/mysql-on-sqlite
         run: |
           python3 - <<'PY'
+          # 1. Turso's UPDATE parser doesn't accept row-value assignment from
+          #    a subquery ("SET (a, b) = (SELECT ...)") — 82 tests fail with
+          #    "2 columns assigned 1 values". Rewrite sync_column_key_info's
+          #    single UPDATE into two correlated subqueries, one per column.
+          path = 'src/sqlite/class-wp-sqlite-information-schema-builder.php'
+          src = open(path).read()
+          old = (
+              "\t\t$this->connection->query(\n"
+              "\t\t\t'\n"
+              "\t\t\t\tUPDATE ' . $this->connection->quote_identifier( $columns_table_name ) . \" AS c\n"
+              "\t\t\t\tSET (column_key, is_nullable) = (\n"
+              "\t\t\t\t\tSELECT\n"
+              "\t\t\t\t\t\tCASE\n"
+              "\t\t\t\t\t\t\tWHEN MAX(s.index_name = 'PRIMARY') THEN 'PRI'\n"
+              "\t\t\t\t\t\t\tWHEN MAX(s.non_unique = 0 AND s.seq_in_index = 1) THEN 'UNI'\n"
+              "\t\t\t\t\t\t\tWHEN MAX(s.seq_in_index = 1) THEN 'MUL'\n"
+              "\t\t\t\t\t\t\tELSE ''\n"
+              "\t\t\t\t\t\tEND,\n"
+              "\t\t\t\t\t\tCASE\n"
+              "\t\t\t\t\t\t\tWHEN MAX(s.index_name = 'PRIMARY') THEN 'NO'\n"
+              "\t\t\t\t\t\t\tELSE c.is_nullable\n"
+              "\t\t\t\t\t\tEND\n"
+              "\t\t\t\t\tFROM \" . $this->connection->quote_identifier( $statistics_table_name ) . ' AS s\n"
+              "\t\t\t\t\tWHERE s.table_schema = c.table_schema\n"
+              "\t\t\t\t\tAND s.table_name = c.table_name\n"
+              "\t\t\t\t\tAND s.column_name = c.column_name\n"
+              "\t\t\t\t)\n"
+              "\t\t\t    WHERE c.table_schema = ?\n"
+              "\t\t\t    AND c.table_name = ?\n"
+              "\t\t\t',\n"
+              "\t\t\tarray( self::SAVED_DATABASE_NAME, $table_name )\n"
+              "\t\t);"
+          )
+          assert old in src, 'sync_column_key_info UPDATE not found'
+          # The aggregate-without-GROUP-BY form combined with a bare
+          # correlated column (`ELSE c.is_nullable`) in the CASE relies on
+          # SQLite's "bare column alongside aggregate" extension. Turso does
+          # not implement that the same way and corrupts is_nullable in both
+          # directions. Rewrite with EXISTS subqueries — pure boolean form
+          # that Turso handles correctly.
+          new = "\n".join([
+              "\t\t$columns_table    = $this->connection->quote_identifier( $columns_table_name );",
+              "\t\t$statistics_table = $this->connection->quote_identifier( $statistics_table_name );",
+              "\t\t$this->connection->query(",
+              "\t\t\t\"",
+              "\t\t\t\tUPDATE $columns_table AS c",
+              "\t\t\t\tSET column_key = CASE",
+              "\t\t\t\t\tWHEN EXISTS (",
+              "\t\t\t\t\t\tSELECT 1 FROM $statistics_table AS s",
+              "\t\t\t\t\t\tWHERE s.table_schema = c.table_schema",
+              "\t\t\t\t\t\t  AND s.table_name   = c.table_name",
+              "\t\t\t\t\t\t  AND s.column_name  = c.column_name",
+              "\t\t\t\t\t\t  AND s.index_name   = 'PRIMARY'",
+              "\t\t\t\t\t) THEN 'PRI'",
+              "\t\t\t\t\tWHEN EXISTS (",
+              "\t\t\t\t\t\tSELECT 1 FROM $statistics_table AS s",
+              "\t\t\t\t\t\tWHERE s.table_schema = c.table_schema",
+              "\t\t\t\t\t\t  AND s.table_name   = c.table_name",
+              "\t\t\t\t\t\t  AND s.column_name  = c.column_name",
+              "\t\t\t\t\t\t  AND s.non_unique   = 0",
+              "\t\t\t\t\t\t  AND s.seq_in_index = 1",
+              "\t\t\t\t\t) THEN 'UNI'",
+              "\t\t\t\t\tWHEN EXISTS (",
+              "\t\t\t\t\t\tSELECT 1 FROM $statistics_table AS s",
+              "\t\t\t\t\t\tWHERE s.table_schema = c.table_schema",
+              "\t\t\t\t\t\t  AND s.table_name   = c.table_name",
+              "\t\t\t\t\t\t  AND s.column_name  = c.column_name",
+              "\t\t\t\t\t\t  AND s.seq_in_index = 1",
+              "\t\t\t\t\t) THEN 'MUL'",
+              "\t\t\t\t\tELSE ''",
+              "\t\t\t\tEND,",
+              "\t\t\t\tis_nullable = CASE",
+              "\t\t\t\t\tWHEN EXISTS (",
+              "\t\t\t\t\t\tSELECT 1 FROM $statistics_table AS s",
+              "\t\t\t\t\t\tWHERE s.table_schema = c.table_schema",
+              "\t\t\t\t\t\t  AND s.table_name   = c.table_name",
+              "\t\t\t\t\t\t  AND s.column_name  = c.column_name",
+              "\t\t\t\t\t\t  AND s.index_name   = 'PRIMARY'",
+              "\t\t\t\t\t) THEN 'NO'",
+              "\t\t\t\t\tELSE c.is_nullable",
+              "\t\t\t\tEND",
+              "\t\t\t\tWHERE c.table_schema = ?",
+              "\t\t\t\tAND c.table_name = ?",
+              "\t\t\t\",",
+              "\t\t\tarray( self::SAVED_DATABASE_NAME, $table_name )",
+              "\t\t);",
+          ])
+          src = src.replace(old, new, 1)
+          open(path, 'w').write(src)
+          print('patched sync_column_key_info UPDATE (EXISTS form)')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
