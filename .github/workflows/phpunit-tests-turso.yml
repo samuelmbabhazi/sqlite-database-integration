@@ -771,6 +771,67 @@ jobs:
           open(path, 'w').write(src)
           print('patched Translation_Tests testHexadecimalLiterals expectations')
 
+          # 12. 6 Translation_Tests assert on the exact SQL emitted by
+          #     sync_column_key_info. Our EXISTS rewrite (needed because
+          #     Turso doesn't implement SQLite's "bare column alongside
+          #     aggregate" extension) changes the emitted string, so the
+          #     assertions fail even though behavior is correct. Update the
+          #     expected strings in the test file to match the EXISTS form.
+          import re
+          path = 'tests/WP_SQLite_Driver_Translation_Tests.php'
+          src = open(path).read()
+          old_pattern = re.compile(
+              r"UPDATE `_wp_sqlite_mysql_information_schema_columns` AS c "
+              r"SET \(column_key, is_nullable\) = \( SELECT "
+              r"CASE WHEN MAX\(s\.index_name = 'PRIMARY'\) THEN 'PRI' "
+              r"WHEN MAX\(s\.non_unique = 0 AND s\.seq_in_index = 1\) THEN 'UNI' "
+              r"WHEN MAX\(s\.seq_in_index = 1\) THEN 'MUL' ELSE '' END, "
+              r"CASE WHEN MAX\(s\.index_name = 'PRIMARY'\) THEN 'NO' "
+              r"ELSE c\.is_nullable END "
+              r"FROM `_wp_sqlite_mysql_information_schema_statistics` AS s "
+              r"WHERE s\.table_schema = c\.table_schema "
+              r"AND s\.table_name = c\.table_name "
+              r"AND s\.column_name = c\.column_name \) "
+              r"WHERE c\.table_schema = 'sqlite_database' "
+              r"AND c\.table_name = '(?P<tbl>[^']+)'"
+          )
+          def build_new(m):
+              tbl = m.group('tbl')
+              return (
+                  "UPDATE `_wp_sqlite_mysql_information_schema_columns` AS c "
+                  "SET column_key = CASE "
+                  "WHEN EXISTS ( SELECT 1 FROM `_wp_sqlite_mysql_information_schema_statistics` AS s "
+                  "WHERE s.table_schema = c.table_schema "
+                  "AND s.table_name = c.table_name "
+                  "AND s.column_name = c.column_name "
+                  "AND s.index_name = 'PRIMARY' ) THEN 'PRI' "
+                  "WHEN EXISTS ( SELECT 1 FROM `_wp_sqlite_mysql_information_schema_statistics` AS s "
+                  "WHERE s.table_schema = c.table_schema "
+                  "AND s.table_name = c.table_name "
+                  "AND s.column_name = c.column_name "
+                  "AND s.non_unique = 0 "
+                  "AND s.seq_in_index = 1 ) THEN 'UNI' "
+                  "WHEN EXISTS ( SELECT 1 FROM `_wp_sqlite_mysql_information_schema_statistics` AS s "
+                  "WHERE s.table_schema = c.table_schema "
+                  "AND s.table_name = c.table_name "
+                  "AND s.column_name = c.column_name "
+                  "AND s.seq_in_index = 1 ) THEN 'MUL' "
+                  "ELSE '' END, "
+                  "is_nullable = CASE "
+                  "WHEN EXISTS ( SELECT 1 FROM `_wp_sqlite_mysql_information_schema_statistics` AS s "
+                  "WHERE s.table_schema = c.table_schema "
+                  "AND s.table_name = c.table_name "
+                  "AND s.column_name = c.column_name "
+                  "AND s.index_name = 'PRIMARY' ) THEN 'NO' "
+                  "ELSE c.is_nullable END "
+                  f"WHERE c.table_schema = 'sqlite_database' "
+                  f"AND c.table_name = '{tbl}'"
+              )
+          new_src, n = old_pattern.subn(build_new, src)
+          assert n > 0, 'no Translation_Tests UPDATE expectations matched'
+          open(path, 'w').write(new_src)
+          print(f'patched {n} Translation_Tests UPDATE expectations to EXISTS form')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
