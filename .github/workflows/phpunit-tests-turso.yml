@@ -832,6 +832,140 @@ jobs:
           open(path, 'w').write(new_src)
           print(f'patched {n} Translation_Tests UPDATE expectations to EXISTS form')
 
+          # 13. Turso evaluates correlated scalar subqueries in derived-table
+          #     SELECT lists incorrectly: the outer alias binding is not
+          #     refreshed per row, so a WHERE filter on the aliased column
+          #     mismatches and the prior outer row's value leaks into the
+          #     next row. The driver computes AUTO_INCREMENT for
+          #     information_schema.tables / SHOW TABLE STATUS via such a
+          #     correlated subquery, breaking 4 metadata tests. Replace it
+          #     with an equivalent JOIN form (LEFT JOIN against a derived
+          #     table marking auto_increment rows + sqlite_sequence) and a
+          #     CASE expression at the projection.
+          path = 'src/sqlite/class-wp-pdo-mysql-on-sqlite.php'
+          src = open(path).read()
+
+          # 17a. SHOW TABLE STATUS path.
+          old_a = (
+              "\t\t// Compose a subquery to compute auto-increment values.\n"
+              "\t\t$has_sequence_table = (bool) $this->execute_sqlite_query(\n"
+              "\t\t\t\"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'\"\n"
+              "\t\t)->fetchColumn();\n"
+              "\n"
+              "\t\t$auto_increment_subquery = sprintf(\n"
+              "\t\t\t\"(\n"
+              "\t\t\t\tSELECT COALESCE(s.seq + 1, 1)\n"
+              "\t\t\t\tFROM %s AS c\n"
+              "\t\t\t\t%s\n"
+              "\t\t\t\tWHERE c.extra = 'auto_increment'\n"
+              "\t\t\t\tAND c.table_schema = t.table_schema\n"
+              "\t\t\t\tAND c.table_name = t.table_name\n"
+              "\t\t\t)\",\n"
+              "\t\t\t$this->quote_sqlite_identifier( $columns_table ),\n"
+              "\t\t\t$has_sequence_table\n"
+              "\t\t\t\t? 'LEFT JOIN main.sqlite_sequence AS s ON s.name = c.table_name'\n"
+              "\t\t\t\t: 'LEFT JOIN (SELECT 0 AS seq) AS s'\n"
+              "\t\t);\n"
+              "\n"
+              "\t\t$query  = sprintf(\n"
+              "\t\t\t'SELECT * FROM (\n"
+              "\t\t\t\tSELECT\n"
+              "\t\t\t\t\ttable_name AS `Name`,\n"
+              "\t\t\t\t\tengine AS `Engine`,\n"
+              "\t\t\t\t\tversion AS `Version`,\n"
+              "\t\t\t\t\trow_format AS `Row_format`,\n"
+              "\t\t\t\t\ttable_rows AS `Rows`,\n"
+              "\t\t\t\t\tavg_row_length AS `Avg_row_length`,\n"
+              "\t\t\t\t\tdata_length AS `Data_length`,\n"
+              "\t\t\t\t\tmax_data_length AS `Max_data_length`,\n"
+              "\t\t\t\t\tindex_length AS `Index_length`,\n"
+              "\t\t\t\t\tdata_free AS `Data_free`,\n"
+              "\t\t\t\t\t%s AS `Auto_increment`,\n"
+              "\t\t\t\t\tcreate_time AS `Create_time`,\n"
+              "\t\t\t\t\tupdate_time AS `Update_time`,\n"
+              "\t\t\t\t\tcheck_time AS `Check_time`,\n"
+              "\t\t\t\t\ttable_collation AS `Collation`,\n"
+              "\t\t\t\t\tchecksum AS `Checksum`,\n"
+              "\t\t\t\t\tcreate_options AS `Create_options`,\n"
+              "\t\t\t\t\ttable_comment AS `Comment`\n"
+              "\t\t\t\tFROM %s AS t\n"
+              "\t\t\t\tWHERE table_schema = ?\n"
+              "\t\t\t)\n"
+              "\t\t\tWHERE 1 %s\n"
+              "\t\t\tORDER BY `Name`',\n"
+              "\t\t\t$auto_increment_subquery,\n"
+              "\t\t\t$this->quote_sqlite_identifier( $tables_table ),\n"
+              "\t\t\t$condition ?? ''\n"
+              "\t\t);\n"
+          )
+          new_a = (
+              "\t\t// JOIN-based AUTO_INCREMENT computation (Turso mis-evaluates\n"
+              "\t\t// correlated scalar subqueries in derived-table SELECT lists).\n"
+              "\t\t$has_sequence_table = (bool) $this->execute_sqlite_query(\n"
+              "\t\t\t\"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'\"\n"
+              "\t\t)->fetchColumn();\n"
+              "\n"
+              "\t\t$auto_increment_join = sprintf(\n"
+              "\t\t\t\" LEFT JOIN (\n"
+              "\t\t\t\tSELECT table_schema AS ai_schema, table_name AS ai_name, 1 AS has_ai\n"
+              "\t\t\t\tFROM %s\n"
+              "\t\t\t\tWHERE extra = 'auto_increment'\n"
+              "\t\t\t\tGROUP BY table_schema, table_name\n"
+              "\t\t\t) AS ai ON ai.ai_schema = t.table_schema AND ai.ai_name = t.table_name\",\n"
+              "\t\t\t$this->quote_sqlite_identifier( $columns_table )\n"
+              "\t\t);\n"
+              "\t\tif ( $has_sequence_table ) {\n"
+              "\t\t\t$auto_increment_join .= ' LEFT JOIN main.sqlite_sequence AS s ON s.name = t.table_name';\n"
+              "\t\t\t$auto_increment_expr  = 'CASE WHEN ai.has_ai = 1 THEN COALESCE(s.seq + 1, 1) ELSE NULL END';\n"
+              "\t\t} else {\n"
+              "\t\t\t$auto_increment_expr = 'CASE WHEN ai.has_ai = 1 THEN 1 ELSE NULL END';\n"
+              "\t\t}\n"
+              "\n"
+              "\t\t$query  = sprintf(\n"
+              "\t\t\t'SELECT * FROM (\n"
+              "\t\t\t\tSELECT\n"
+              "\t\t\t\t\ttable_name AS `Name`,\n"
+              "\t\t\t\t\tengine AS `Engine`,\n"
+              "\t\t\t\t\tversion AS `Version`,\n"
+              "\t\t\t\t\trow_format AS `Row_format`,\n"
+              "\t\t\t\t\ttable_rows AS `Rows`,\n"
+              "\t\t\t\t\tavg_row_length AS `Avg_row_length`,\n"
+              "\t\t\t\t\tdata_length AS `Data_length`,\n"
+              "\t\t\t\t\tmax_data_length AS `Max_data_length`,\n"
+              "\t\t\t\t\tindex_length AS `Index_length`,\n"
+              "\t\t\t\t\tdata_free AS `Data_free`,\n"
+              "\t\t\t\t\t%s AS `Auto_increment`,\n"
+              "\t\t\t\t\tcreate_time AS `Create_time`,\n"
+              "\t\t\t\t\tupdate_time AS `Update_time`,\n"
+              "\t\t\t\t\tcheck_time AS `Check_time`,\n"
+              "\t\t\t\t\ttable_collation AS `Collation`,\n"
+              "\t\t\t\t\tchecksum AS `Checksum`,\n"
+              "\t\t\t\t\tcreate_options AS `Create_options`,\n"
+              "\t\t\t\t\ttable_comment AS `Comment`\n"
+              "\t\t\t\tFROM %s AS t%s\n"
+              "\t\t\t\tWHERE table_schema = ?\n"
+              "\t\t\t)\n"
+              "\t\t\tWHERE 1 %s\n"
+              "\t\t\tORDER BY `Name`',\n"
+              "\t\t\t$auto_increment_expr,\n"
+              "\t\t\t$this->quote_sqlite_identifier( $tables_table ),\n"
+              "\t\t\t$auto_increment_join,\n"
+              "\t\t\t$condition ?? ''\n"
+              "\t\t);\n"
+          )
+          assert old_a in src, 'SHOW TABLE STATUS auto_increment block not found'
+          src = src.replace(old_a, new_a, 1)
+
+          # NOTE: The matching translate_table_ref information_schema.tables
+          # path also has the buggy correlated subquery, but rewriting it to
+          # the JOIN form triggers a Turso SIGSEGV in testReconstructTable
+          # (the path is hypersensitive to information_schema.tables shape
+          # changes). Keep the correlated form there and accept the loss of
+          # testInformationSchemaTablesFilterByAutoIncrement until the Turso
+          # pager fragility is fixed upstream.
+          open(path, 'w').write(src)
+          print('patched AUTO_INCREMENT correlated-subquery -> JOIN form (SHOW TABLE STATUS only)')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
