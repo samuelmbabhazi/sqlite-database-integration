@@ -464,6 +464,19 @@ jobs:
           open(path, 'w').write(src)
           print('patched sync_column_key_info UPDATE (EXISTS form)')
 
+          # 2. Turso doesn't implement `PRAGMA foreign_key_check`. The driver
+          #    runs it after every ALTER TABLE to validate foreign keys; its
+          #    failure breaks ~34 tests. Skip it under Turso by wrapping in
+          #    a try/catch that swallows the "Not a valid pragma name" error.
+          path = 'src/sqlite/class-wp-pdo-mysql-on-sqlite.php'
+          src = open(path).read()
+          old = "\t\t\t$this->execute_sqlite_query( 'PRAGMA foreign_key_check' );"
+          new = "\t\t\ttry { $this->execute_sqlite_query( 'PRAGMA foreign_key_check' ); } catch ( \\PDOException $e ) { /* Turso: not implemented */ }"
+          assert old in src, 'PRAGMA foreign_key_check not found'
+          src = src.replace(old, new, 1)
+          open(path, 'w').write(src)
+          print('patched PRAGMA foreign_key_check')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
