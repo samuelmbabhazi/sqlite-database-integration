@@ -84,12 +84,8 @@ class WP_Parser {
 
 		$branch_matches     = false;
 		$node               = null;
-		$branch_index_count = null === $single_branch_index ? count( $branch_indexes ) : 1;
-		for ( $branch_index_offset = 0; $branch_index_offset < $branch_index_count; $branch_index_offset++ ) {
-			$branch_index   = null === $single_branch_index
-				? $branch_indexes[ $branch_index_offset ]
-				: $single_branch_index;
-			$branch         = $branches[ $branch_index ];
+		if ( null !== $single_branch_index ) {
+			$branch         = $branches[ $single_branch_index ];
 			$this->position = $starting_position;
 			$node           = new WP_Parser_Node( $rule_id, $rule_name );
 			$branch_matches = true;
@@ -129,9 +125,52 @@ class WP_Parser {
 					$branch_matches = false;
 				}
 			}
+		} else {
+			foreach ( $branch_indexes as $branch_index ) {
+				$branch         = $branches[ $branch_index ];
+				$this->position = $starting_position;
+				$node           = new WP_Parser_Node( $rule_id, $rule_name );
+				$branch_matches = true;
+				foreach ( $branch as $subrule_id ) {
+					$subnode = $this->parse_recursive( $subrule_id );
+					if ( false === $subnode ) {
+						$branch_matches = false;
+						break;
+					} elseif ( true === $subnode ) {
+						/*
+						 * The subrule was matched without actually matching a token.
+						 * This means a special empty "ε" (epsilon) rule was matched.
+						 * An "ε" rule in a grammar matches an empty input of 0 bytes.
+						 * It is used to represent optional grammar productions.
+						 */
+						continue;
+					}
+					if ( isset( $this->fragment_ids[ $subrule_id ] ) ) {
+						$node->merge_fragment( $subnode );
+					} else {
+						$node->append_child( $subnode );
+					}
+				}
 
-			if ( true === $branch_matches ) {
-				break;
+				// Negative lookahead for INTO after a valid SELECT statement.
+				// If we match a SELECT statement, but there is an INTO keyword after it,
+				// we're in the wrong branch and need to leave matching to a later rule.
+				// @TODO: Extract this to the "WP_MySQL_Parser" class, or add support
+				//        for right-associative rules, which could solve this.
+				//        See: https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/MySQLParser.g4#L994
+				//        See: https://github.com/antlr/antlr4/issues/488
+				if ( $rule_id === $this->select_statement_rule_id ) {
+					$lookahead_id = $this->position < $this->token_count
+						? $this->token_ids[ $this->position ]
+						: null;
+					if ( WP_MySQL_Lexer::INTO_SYMBOL === $lookahead_id ) {
+						$branch_matches = false;
+					}
+				}
+
+				if ( true === $branch_matches ) {
+					break;
+				}
 			}
 		}
 
