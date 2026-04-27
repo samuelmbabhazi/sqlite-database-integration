@@ -624,6 +624,36 @@ jobs:
           open(path, 'w').write(src)
           print('patched reconstructor signed-numeric spacing')
 
+          # 8. Turso mangles implicit column names for hex literals like
+          #    x'417a' (drops the "x'" prefix). Force an explicit alias for
+          #    hex-literal SELECT items so the column name matches the source
+          #    text, as MySQL/SQLite produce.
+          path = 'src/sqlite/class-wp-pdo-mysql-on-sqlite.php'
+          src = open(path).read()
+          old = (
+              "\t\t$raw_alias = substr( $this->last_mysql_query, $node->get_start(), $node->get_length() );\n"
+              "\t\t$alias     = $this->quote_sqlite_identifier( $raw_alias );\n"
+              "\t\tif ( $alias === $item || $raw_alias === $item ) {\n"
+              "\t\t\t// For the simple case of selecting only columns (\"SELECT id FROM t\"),\n"
+              "\t\t\t// let's avoid unnecessary aliases (\"SELECT `id` AS `id` FROM t\").\n"
+              "\t\t\treturn $item;\n"
+              "\t\t}\n"
+          )
+          new = (
+              "\t\t$raw_alias = substr( $this->last_mysql_query, $node->get_start(), $node->get_length() );\n"
+              "\t\t$alias     = $this->quote_sqlite_identifier( $raw_alias );\n"
+              "\t\t$is_hex_literal = ( 0 === strncasecmp( $item, \"x'\", 2 ) );\n"
+              "\t\tif ( ! $is_hex_literal && ( $alias === $item || $raw_alias === $item ) ) {\n"
+              "\t\t\t// For the simple case of selecting only columns (\"SELECT id FROM t\"),\n"
+              "\t\t\t// let's avoid unnecessary aliases (\"SELECT `id` AS `id` FROM t\").\n"
+              "\t\t\treturn $item;\n"
+              "\t\t}\n"
+          )
+          assert old in src, 'translate_select_item block not found'
+          src = src.replace(old, new, 1)
+          open(path, 'w').write(src)
+          print('patched hex-literal alias force under Turso')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
