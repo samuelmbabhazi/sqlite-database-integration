@@ -695,6 +695,66 @@ jobs:
           open(path, 'w').write(src.replace(old, new, 1))
           print('patched CHECK TABLE missing-table check')
 
+          # 10. DEFAULT_GENERATED path wraps the translated expression in parens
+          #     unconditionally: `DEFAULT (<expr>)`. Real SQLite strips the outer
+          #     parens on round-trip through PRAGMA; Turso keeps them. For simple
+          #     identifiers (e.g. CURRENT_TIMESTAMP), SQLite accepts the unwrapped
+          #     form too, so emit without parens there.
+          path = 'src/sqlite/class-wp-pdo-mysql-on-sqlite.php'
+          src = open(path).read()
+          old = (
+              "\t\t\t\t} elseif ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {\n"
+              "\t\t\t\t\t// Handle DEFAULT values with expressions (DEFAULT_GENERATED).\n"
+              "\t\t\t\t\t// Translate the default clause from MySQL to SQLite.\n"
+              "\t\t\t\t\t$ast            = $this->create_parser( 'SELECT ' . $column['COLUMN_DEFAULT'] )->parse();\n"
+              "\t\t\t\t\t$expr           = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();\n"
+              "\t\t\t\t\t$default_clause = $this->translate( $expr );\n"
+              "\t\t\t\t\t$query         .= sprintf( ' DEFAULT (%s)', $default_clause );\n"
+              "\t\t\t\t}"
+          )
+          new = (
+              "\t\t\t\t} elseif ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {\n"
+              "\t\t\t\t\t$ast            = $this->create_parser( 'SELECT ' . $column['COLUMN_DEFAULT'] )->parse();\n"
+              "\t\t\t\t\t$expr           = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();\n"
+              "\t\t\t\t\t$default_clause = trim( $this->translate( $expr ) );\n"
+              "\t\t\t\t\t$dc_upper       = strtoupper( $default_clause );\n"
+              "\t\t\t\t\t$is_keyword     = in_array( $dc_upper, array( 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME' ), true );\n"
+              "\t\t\t\t\tif ( $is_keyword || preg_match( '/^[A-Za-z_][A-Za-z_0-9]*$/', $default_clause ) ) {\n"
+              "\t\t\t\t\t\t// Simple identifier or known keyword: emit without parens\n"
+              "\t\t\t\t\t\t// so Turso's PRAGMA round-trip matches SQLite.\n"
+              "\t\t\t\t\t\t$query .= ' DEFAULT ' . $default_clause;\n"
+              "\t\t\t\t\t} else {\n"
+              "\t\t\t\t\t\t$query .= sprintf( ' DEFAULT (%s)', $default_clause );\n"
+              "\t\t\t\t\t}\n"
+              "\t\t\t\t}"
+          )
+          assert old in src, 'DEFAULT_GENERATED block not found'
+          src = src.replace(old, new, 1)
+
+          # Also extend the existing CURRENT_TIMESTAMP literal special-case to
+          # match "now()" (MySQL alias) so the DEFAULT_GENERATED branch isn't
+          # taken at all for that input. Real SQLite normalizes this; this
+          # makes our SQLite emission match.
+          old_ct = (
+              "\t\t\t\tif (\n"
+              "\t\t\t\t\t'CURRENT_TIMESTAMP' === $column['COLUMN_DEFAULT']\n"
+              "\t\t\t\t\t&& ( 'timestamp' === $column['DATA_TYPE'] || 'datetime' === $column['DATA_TYPE'] )\n"
+              "\t\t\t\t) {\n"
+              "\t\t\t\t\t$query .= ' DEFAULT CURRENT_TIMESTAMP';\n"
+          )
+          new_ct = (
+              "\t\t\t\tif (\n"
+              "\t\t\t\t\tin_array( strtolower( $column['COLUMN_DEFAULT'] ), array( 'current_timestamp', 'now()' ), true )\n"
+              "\t\t\t\t\t&& ( 'timestamp' === $column['DATA_TYPE'] || 'datetime' === $column['DATA_TYPE'] )\n"
+              "\t\t\t\t) {\n"
+              "\t\t\t\t\t$query .= ' DEFAULT CURRENT_TIMESTAMP';\n"
+          )
+          assert old_ct in src, 'CURRENT_TIMESTAMP literal special case not found'
+          src = src.replace(old_ct, new_ct, 1)
+
+          open(path, 'w').write(src)
+          print('patched DEFAULT_GENERATED simple-identifier unwrap + now() special case')
+
           PY
 
       - name: Run PHPUnit tests against Turso DB
