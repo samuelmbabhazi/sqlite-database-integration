@@ -29,11 +29,11 @@ class WP_Parser_Grammar {
 	public $rules;
 	public $rule_names;
 	public $fragment_ids;
-	public $lookahead_is_match_possible = array();
 	public $branch_candidates           = array();
 	public $lowest_non_terminal_id;
 	public $highest_terminal_id;
 	private $rule_ids_by_name = array();
+	private static $lookahead_table_cache = array();
 
 	public function __construct( array $rules ) {
 		$this->inflate( $rules );
@@ -88,13 +88,41 @@ class WP_Parser_Grammar {
 			$this->rules[ $rule_id ] = $branches;
 		}
 
-		$this->compute_lookahead_tables();
+		$lookahead_cache_key = $this->get_lookahead_cache_key( $grammar );
+		if ( isset( self::$lookahead_table_cache[ $lookahead_cache_key ] ) ) {
+			$this->branch_candidates = self::$lookahead_table_cache[ $lookahead_cache_key ];
+		} else {
+			$this->branch_candidates = $this->compute_branch_candidates();
+			self::$lookahead_table_cache[ $lookahead_cache_key ] = $this->branch_candidates;
+		}
 	}
 
 	/**
-	 * Compute FIRST-set lookahead tables for rules and individual branches.
+	 * Get a stable cache key for the compressed grammar.
 	 */
-	private function compute_lookahead_tables(): void {
+	private function get_lookahead_cache_key( array $grammar ): string {
+		$hash = hash_init( 'md5' );
+
+		hash_update( $hash, (string) $grammar['rules_offset'] );
+
+		foreach ( $grammar['rules_names'] as $rule_name ) {
+			hash_update( $hash, "\0n" . $rule_name );
+		}
+
+		foreach ( $grammar['grammar'] as $branches ) {
+			hash_update( $hash, "\0r" );
+			foreach ( $branches as $branch ) {
+				hash_update( $hash, "\0b" . implode( ',', $branch ) );
+			}
+		}
+
+		return hash_final( $hash );
+	}
+
+	/**
+	 * Compute FIRST-set branch candidates.
+	 */
+	private function compute_branch_candidates(): array {
 		$first_sets = array();
 		foreach ( $this->rules as $rule_id => $_branches ) {
 			$first_sets[ $rule_id ] = array();
@@ -115,32 +143,36 @@ class WP_Parser_Grammar {
 			}
 		} while ( $changed );
 
-		$this->lookahead_is_match_possible = $first_sets;
-
+		$branch_candidates = array();
 		foreach ( $this->rules as $rule_id => $branches ) {
-			$this->branch_candidates[ $rule_id ] = array();
+			$branch_candidates[ $rule_id ] = array();
 			foreach ( $branches as $branch_index => $branch ) {
 				$branch_first = $this->get_branch_first_set(
 					$branch,
 					$first_sets
 				);
 				foreach ( $branch_first as $token_id => $_ ) {
-					$this->branch_candidates[ $rule_id ][ $token_id ][] = $branch_index;
+					$branch_candidates[ $rule_id ][ $token_id ][] = $branch_index;
 				}
 			}
-			if ( isset( $this->branch_candidates[ $rule_id ][ self::EMPTY_RULE_ID ] ) ) {
-				$empty_branches = $this->branch_candidates[ $rule_id ][ self::EMPTY_RULE_ID ];
-				foreach ( $this->branch_candidates[ $rule_id ] as $token_id => $branch_indexes ) {
+			if ( isset( $branch_candidates[ $rule_id ][ self::EMPTY_RULE_ID ] ) ) {
+				$empty_branches = $branch_candidates[ $rule_id ][ self::EMPTY_RULE_ID ];
+				foreach ( $branch_candidates[ $rule_id ] as $token_id => $branch_indexes ) {
 					if ( self::EMPTY_RULE_ID === $token_id ) {
 						continue;
 					}
-					$this->branch_candidates[ $rule_id ][ $token_id ] = $this->merge_branch_indexes(
+					$branch_candidates[ $rule_id ][ $token_id ] = $this->merge_branch_indexes(
 						$branch_indexes,
 						$empty_branches
 					);
 				}
 			}
+			foreach ( $branch_candidates[ $rule_id ] as $token_id => $branch_indexes ) {
+				$branch_candidates[ $rule_id ][ $token_id ] = $this->compact_branch_indexes( $branch_indexes );
+			}
 		}
+
+		return $branch_candidates;
 	}
 
 	/**
@@ -185,6 +217,19 @@ class WP_Parser_Grammar {
 		}
 
 		return $branch_first;
+	}
+
+	/**
+	 * Compact branch indexes when there is only one candidate.
+	 *
+	 * @param int[] $branch_indexes Branch indexes to pack.
+	 * @return int|int[] Branch index, or branch indexes when there are multiple candidates.
+	 */
+	private function compact_branch_indexes( array $branch_indexes ) {
+		if ( 1 === count( $branch_indexes ) ) {
+			return $branch_indexes[0];
+		}
+		return $branch_indexes;
 	}
 
 	/**

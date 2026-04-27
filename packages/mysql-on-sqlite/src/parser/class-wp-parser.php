@@ -12,6 +12,7 @@ class WP_Parser {
 	protected $grammar;
 	protected $tokens;
 	protected $position;
+	private $token_ids;
 	private $rules;
 	private $rule_names;
 	private $fragment_ids;
@@ -35,6 +36,10 @@ class WP_Parser {
 		$this->highest_terminal_id         = $this->grammar->highest_terminal_id;
 		$this->select_statement_rule_id    = $this->grammar->get_rule_id( 'selectStatement' );
 		$this->token_count                 = count( $this->tokens );
+		$this->token_ids                   = array();
+		foreach ( $this->tokens as $token ) {
+			$this->token_ids[] = $token->id;
+		}
 		$this->failed_matches              = array();
 
 		// @TODO: Make the starting rule lookup non-grammar-specific.
@@ -54,7 +59,7 @@ class WP_Parser {
 				return true;
 			}
 
-			if ( $this->tokens[ $this->position ]->id === $rule_id ) {
+			if ( $this->token_ids[ $this->position ] === $rule_id ) {
 				return $this->tokens[ $this->position++ ];
 			}
 			return false;
@@ -68,7 +73,7 @@ class WP_Parser {
 		$branches          = $this->rules[ $rule_id ];
 
 		$token_id = $this->position < $this->token_count
-			? $this->tokens[ $this->position ]->id
+			? $this->token_ids[ $this->position ]
 			: null;
 		$rule_name          = $this->rule_names[ $rule_id ];
 		$branch_candidates  = $this->branch_candidates[ $rule_id ];
@@ -76,14 +81,20 @@ class WP_Parser {
 			? $branch_candidates[ $token_id ]
 			: ( $branch_candidates[ WP_Parser_Grammar::EMPTY_RULE_ID ] ?? array() );
 
-		if ( ! count( $branch_indexes ) ) {
+		$single_branch_index = is_int( $branch_indexes ) ? $branch_indexes : null;
+
+		if ( null === $single_branch_index && ! count( $branch_indexes ) ) {
 			$this->failed_matches[ $starting_position ][ $rule_id ] = true;
 			return false;
 		}
 
 		$branch_matches     = false;
 		$node               = null;
-		foreach ( $branch_indexes as $branch_index ) {
+		$branch_index_count = null === $single_branch_index ? count( $branch_indexes ) : 1;
+		for ( $branch_index_offset = 0; $branch_index_offset < $branch_index_count; $branch_index_offset++ ) {
+			$branch_index   = null === $single_branch_index
+				? $branch_indexes[ $branch_index_offset ]
+				: $single_branch_index;
 			$branch         = $branches[ $branch_index ];
 			$this->position = $starting_position;
 			$node           = new WP_Parser_Node( $rule_id, $rule_name );
@@ -116,11 +127,13 @@ class WP_Parser {
 			//        for right-associative rules, which could solve this.
 			//        See: https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/MySQLParser.g4#L994
 			//        See: https://github.com/antlr/antlr4/issues/488
-			$la = $this->tokens[ $this->position ] ?? null;
+			$lookahead_id = $this->position < $this->token_count
+				? $this->token_ids[ $this->position ]
+				: null;
 			if (
-				$la
+				null !== $lookahead_id
 				&& $rule_id === $this->select_statement_rule_id
-				&& WP_MySQL_Lexer::INTO_SYMBOL === $la->id
+				&& WP_MySQL_Lexer::INTO_SYMBOL === $lookahead_id
 			) {
 				$branch_matches = false;
 			}
