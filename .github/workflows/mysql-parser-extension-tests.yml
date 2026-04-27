@@ -1,0 +1,69 @@
+name: MySQL Parser Extension Tests
+
+on:
+  push:
+    paths:
+      - '.github/workflows/mysql-parser-extension-tests.yml'
+      - 'packages/mysql-on-sqlite/**'
+  pull_request:
+    paths:
+      - '.github/workflows/mysql-parser-extension-tests.yml'
+      - 'packages/mysql-on-sqlite/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extension-tests:
+    name: PHP 8.2 / Rust extension / ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: phpunit-polyfills
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+          echo "PHP_CONFIG=$(command -v php-config)" >> "$GITHUB_ENV"
+          LIBCLANG_SO="$(find /usr/lib -name 'libclang.so*' | head -n 1)"
+          echo "LIBCLANG_PATH=$(dirname "$LIBCLANG_SO")" >> "$GITHUB_ENV"
+
+      - name: Install Composer dependencies (root)
+        uses: ramsey/composer-install@v3
+        with:
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+        working-directory: packages/mysql-on-sqlite/ext/wp-mysql-parser
+
+      - name: Build parser extension
+        run: cargo build
+        working-directory: packages/mysql-on-sqlite/ext/wp-mysql-parser
+
+      - name: Run PHPUnit tests with parser extension
+        run: php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
+        working-directory: packages/mysql-on-sqlite
