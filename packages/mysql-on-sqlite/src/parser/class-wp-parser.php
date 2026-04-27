@@ -20,7 +20,6 @@ class WP_Parser {
 	private $highest_terminal_id;
 	private $select_statement_rule_id;
 	private $token_count;
-	private $failed_matches;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
 		$this->grammar  = $grammar;
@@ -40,7 +39,6 @@ class WP_Parser {
 		foreach ( $this->tokens as $token ) {
 			$this->token_ids[] = $token->id;
 		}
-		$this->failed_matches              = array();
 
 		// @TODO: Make the starting rule lookup non-grammar-specific.
 		$query_rule_id = $this->grammar->get_rule_id( 'query' );
@@ -66,9 +64,6 @@ class WP_Parser {
 		}
 
 		$starting_position = $this->position;
-		if ( isset( $this->failed_matches[ $starting_position ][ $rule_id ] ) ) {
-			return false;
-		}
 
 		$branches          = $this->rules[ $rule_id ];
 
@@ -84,7 +79,6 @@ class WP_Parser {
 		$single_branch_index = is_int( $branch_indexes ) ? $branch_indexes : null;
 
 		if ( null === $single_branch_index && ! count( $branch_indexes ) ) {
-			$this->failed_matches[ $starting_position ][ $rule_id ] = true;
 			return false;
 		}
 
@@ -143,7 +137,6 @@ class WP_Parser {
 
 		if ( ! $branch_matches ) {
 			$this->position = $starting_position;
-			$this->failed_matches[ $starting_position ][ $rule_id ] = true;
 			return false;
 		}
 
