@@ -1,0 +1,428 @@
+name: PHPUnit Tests (Turso DB)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# The test suite is run against Turso DB (https://github.com/tursodatabase/turso),
+# a Rust reimplementation of SQLite. Turso is still in beta and its SQLite C API
+# is only partially implemented; failing tests are expected and the job is purely
+# informational. It tracks compatibility progress over time.
+jobs:
+  test:
+    name: PHP 8.5 / Turso DB (latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Pinned to a specific main commit rather than a release tag. The latest
+      # stable release (v0.5.3) lacks TEMP-table / sqlite_temp_master support
+      # (added in PR #6323), which this driver relies on heavily. Bump this
+      # SHA to pull in newer Turso fixes.
+      - name: Set Turso commit to build
+        id: turso
+        run: echo "sha=5e371c28a840b12bf2fdca1726453e1094f56b2a" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Turso build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            turso/target
+          key: turso-${{ runner.os }}-${{ steps.turso.outputs.sha }}-${{ hashFiles('.github/workflows/phpunit-tests-turso.yml') }}
+
+      - name: Clone Turso source
+        run: |
+          git clone --filter=blob:none https://github.com/tursodatabase/turso.git
+          git -C turso checkout '${{ steps.turso.outputs.sha }}'
+      - name: Build turso_sqlite3 shared library
+        working-directory: turso
+        run: cargo build --release -p turso_sqlite3
+
+      - name: Verify Turso shared library exposes SQLite3 C API
+        id: turso-lib
+        run: |
+          LIB="$GITHUB_WORKSPACE/turso/target/release/libturso_sqlite3.so"
+          test -f "$LIB"
+          echo "Library: $LIB"
+          echo "path=$LIB" >> "$GITHUB_OUTPUT"
+          echo '--- Sample of exported sqlite3_* symbols ---'
+          nm -D --defined-only "$LIB" | awk '$3 ~ /^sqlite3_/ {print $3}' | sort | head -20
+
+      # Turso only exports the _v2 variants of several functions, but PHP's
+      # pdo_sqlite calls the older names (sqlite3_create_function, sqlite3_prepare,
+      # etc.). Without an override, those symbols fall through to the system
+      # libsqlite3 at runtime, which then operates on a Turso-allocated handle
+      # and segfaults. This shim provides the missing names as thin wrappers
+      # that delegate to the _v2 variants; LD_PRELOAD'd before Turso, it makes
+      # pdo_sqlite see a complete sqlite3 C API backed entirely by Turso.
+      - name: Build pdo_sqlite compatibility shim
+        id: shim
+        run: |
+          cat > /tmp/turso-compat-shim.c <<'C'
+          #include <stdio.h>
+          #include <stdarg.h>
+          #include <stdlib.h>
+          #include <string.h>
+
+          typedef struct sqlite3 sqlite3;
+          typedef struct sqlite3_stmt sqlite3_stmt;
+          typedef struct sqlite3_value sqlite3_value;
+          typedef struct sqlite3_context sqlite3_context;
+
+          extern int sqlite3_create_function_v2(
+              sqlite3 *db, const char *name, int n_arg, int enc, void *app,
+              void (*x_func)(sqlite3_context*, int, sqlite3_value**),
+              void (*x_step)(sqlite3_context*, int, sqlite3_value**),
+              void (*x_final)(sqlite3_context*),
+              void (*x_destroy)(void*));
+
+          int sqlite3_create_function(
+              sqlite3 *db, const char *name, int n_arg, int enc, void *app,
+              void (*x_func)(sqlite3_context*, int, sqlite3_value**),
+              void (*x_step)(sqlite3_context*, int, sqlite3_value**),
+              void (*x_final)(sqlite3_context*))
+          {
+              return sqlite3_create_function_v2(db, name, n_arg, enc, app,
+                                                x_func, x_step, x_final, 0);
+          }
+
+          extern int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int nbytes,
+              sqlite3_stmt **out_stmt, const char **tail);
+
+          int sqlite3_prepare(sqlite3 *db, const char *sql, int nbytes,
+              sqlite3_stmt **out_stmt, const char **tail)
+          {
+              return sqlite3_prepare_v2(db, sql, nbytes, out_stmt, tail);
+          }
+
+          extern int sqlite3_create_collation_v2(sqlite3 *db, const char *name,
+              int enc, void *ctx,
+              int (*cmp)(void*, int, const void*, int, const void*),
+              void (*destroy)(void*));
+
+          int sqlite3_create_collation(sqlite3 *db, const char *name, int enc,
+              void *ctx,
+              int (*cmp)(void*, int, const void*, int, const void*))
+          {
+              return sqlite3_create_collation_v2(db, name, enc, ctx, cmp, 0);
+          }
+
+          // SQLite's own formatting API. Turso doesn't export it. A naive
+          // libc-only wrapper breaks because SQLite defines extra conversion
+          // specifiers (%q, %Q, %w) that libc vsnprintf doesn't understand —
+          // in particular, pdo_sqlite's quote() uses sqlite3_mprintf("'%q'",s),
+          // so without %q support every quoted value becomes garbled. This
+          // implementation parses the format itself, handles the SQLite
+          // extensions explicitly, and delegates standard specifiers to libc.
+          struct buf { char *p; size_t len, cap; };
+
+          static int buf_append(struct buf *b, const char *s, size_t n) {
+              if (b->len + n + 1 > b->cap) {
+                  size_t new_cap = b->cap ? b->cap * 2 : 64;
+                  while (new_cap < b->len + n + 1) new_cap *= 2;
+                  char *np = (char *)realloc(b->p, new_cap);
+                  if (!np) return -1;
+                  b->p = np;
+                  b->cap = new_cap;
+              }
+              memcpy(b->p + b->len, s, n);
+              b->len += n;
+              b->p[b->len] = '\0';
+              return 0;
+          }
+
+          static int buf_append_c(struct buf *b, char c) { return buf_append(b, &c, 1); }
+
+          static int buf_append_quoted(struct buf *b, const char *s, char q) {
+              for (; *s; s++) {
+                  if (*s == q && buf_append_c(b, q) < 0) return -1;
+                  if (buf_append_c(b, *s) < 0) return -1;
+              }
+              return 0;
+          }
+
+          // Build a result string by parsing fmt and consuming ap as needed.
+          static char *vmprintf_impl(const char *fmt, va_list ap) {
+              struct buf b = {0};
+
+              while (*fmt) {
+                  if (*fmt != '%') {
+                      if (buf_append_c(&b, *fmt++) < 0) { free(b.p); return NULL; }
+                      continue;
+                  }
+                  const char *spec_start = fmt;
+                  fmt++;
+                  // Flags, width, precision, length — collected for libc fallback.
+                  while (*fmt && strchr("-+ #0'", *fmt)) fmt++;
+                  while (*fmt == '*') { va_arg(ap, int); fmt++; }
+                  while (*fmt && *fmt >= '0' && *fmt <= '9') fmt++;
+                  if (*fmt == '.') {
+                      fmt++;
+                      if (*fmt == '*') { va_arg(ap, int); fmt++; }
+                      while (*fmt && *fmt >= '0' && *fmt <= '9') fmt++;
+                  }
+                  int is_long = 0, is_long_long = 0;
+                  while (*fmt && strchr("hljztL", *fmt)) {
+                      if (*fmt == 'l') { if (is_long) is_long_long = 1; else is_long = 1; }
+                      if (*fmt == 'j' || *fmt == 'z') is_long_long = 1;
+                      fmt++;
+                  }
+                  char conv = *fmt;
+                  if (!conv) break;
+                  fmt++;
+
+                  if (conv == 'q' || conv == 'Q' || conv == 'w') {
+                      const char *arg = va_arg(ap, const char *);
+                      if (conv == 'Q' && !arg) {
+                          if (buf_append(&b, "NULL", 4) < 0) { free(b.p); return NULL; }
+                      } else {
+                          char qchar = (conv == 'w') ? '"' : '\'';
+                          if (conv == 'Q' && buf_append_c(&b, qchar) < 0) { free(b.p); return NULL; }
+                          if (arg && buf_append_quoted(&b, arg, qchar) < 0) { free(b.p); return NULL; }
+                          if (conv == 'Q' && buf_append_c(&b, qchar) < 0) { free(b.p); return NULL; }
+                      }
+                      continue;
+                  }
+
+                  // Standard conversion — rebuild the spec and call libc snprintf
+                  // for the single specifier, then append the result.
+                  size_t speclen = (size_t)(fmt - spec_start);
+                  char spec[64];
+                  if (speclen + 1 > sizeof spec) speclen = sizeof spec - 1;
+                  memcpy(spec, spec_start, speclen);
+                  spec[speclen] = '\0';
+
+                  char tmp[128];
+                  char *out = tmp;
+                  int n = 0;
+                  if (conv == 's' || conv == 'z') {
+                      const char *a = va_arg(ap, const char *);
+                      n = snprintf(tmp, sizeof tmp, spec, a ? a : "(null)");
+                      if (n >= (int)sizeof tmp) {
+                          out = (char *)malloc((size_t)n + 1);
+                          if (!out) { free(b.p); return NULL; }
+                          snprintf(out, (size_t)n + 1, spec, a ? a : "(null)");
+                      }
+                      if (conv == 'z' && a) free((void *)a);
+                  } else if (conv == 'c') {
+                      int a = va_arg(ap, int);
+                      n = snprintf(tmp, sizeof tmp, spec, a);
+                  } else if (conv == 'd' || conv == 'i' || conv == 'u' || conv == 'x' ||
+                             conv == 'X' || conv == 'o') {
+                      if (is_long_long) {
+                          long long a = va_arg(ap, long long);
+                          n = snprintf(tmp, sizeof tmp, spec, a);
+                      } else if (is_long) {
+                          long a = va_arg(ap, long);
+                          n = snprintf(tmp, sizeof tmp, spec, a);
+                      } else {
+                          int a = va_arg(ap, int);
+                          n = snprintf(tmp, sizeof tmp, spec, a);
+                      }
+                  } else if (conv == 'e' || conv == 'E' || conv == 'f' || conv == 'F' ||
+                             conv == 'g' || conv == 'G') {
+                      double a = va_arg(ap, double);
+                      n = snprintf(tmp, sizeof tmp, spec, a);
+                  } else if (conv == 'p') {
+                      void *a = va_arg(ap, void *);
+                      n = snprintf(tmp, sizeof tmp, spec, a);
+                  } else if (conv == '%') {
+                      tmp[0] = '%'; tmp[1] = '\0'; n = 1;
+                  } else {
+                      // Unknown specifier — pass through literally.
+                      memcpy(tmp, spec_start, speclen);
+                      tmp[speclen] = '\0';
+                      n = (int)speclen;
+                  }
+
+                  if (n > 0 && buf_append(&b, out, (size_t)n) < 0) {
+                      if (out != tmp) free(out);
+                      free(b.p);
+                      return NULL;
+                  }
+                  if (out != tmp) free(out);
+              }
+              if (!b.p) {
+                  b.p = (char *)malloc(1);
+                  if (b.p) b.p[0] = '\0';
+              }
+              return b.p;
+          }
+
+          char *sqlite3_vmprintf(const char *fmt, va_list ap) {
+              return vmprintf_impl(fmt, ap);
+          }
+
+          char *sqlite3_mprintf(const char *fmt, ...) {
+              va_list ap;
+              va_start(ap, fmt);
+              char *s = vmprintf_impl(fmt, ap);
+              va_end(ap);
+              return s;
+          }
+
+          char *sqlite3_vsnprintf(int n, char *dst, const char *fmt, va_list ap) {
+              if (!dst || n <= 0) return dst;
+              char *s = vmprintf_impl(fmt, ap);
+              if (!s) { dst[0] = '\0'; return dst; }
+              size_t copy = strlen(s);
+              if (copy > (size_t)(n - 1)) copy = (size_t)(n - 1);
+              memcpy(dst, s, copy);
+              dst[copy] = '\0';
+              free(s);
+              return dst;
+          }
+
+          char *sqlite3_snprintf(int n, char *dst, const char *fmt, ...) {
+              va_list ap;
+              va_start(ap, fmt);
+              sqlite3_vsnprintf(n, dst, fmt, ap);
+              va_end(ap);
+              return dst;
+          }
+          C
+
+          SHIM=/tmp/libturso-compat-shim.so
+          gcc -shared -fPIC -Wall -O2 -o "$SHIM" /tmp/turso-compat-shim.c
+          echo "Shim library: $SHIM"
+          nm -D --defined-only "$SHIM" | awk '$3 ~ /^sqlite3_/ {print $3}'
+          echo "path=$SHIM" >> "$GITHUB_OUTPUT"
+
+      - name: Combine LD_PRELOAD paths
+        id: preload
+        run: echo "value=${{ steps.shim.outputs.path }}:${{ steps.turso-lib.outputs.path }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          tools: phpunit-polyfills
+
+      - name: Smoke-test pdo_sqlite against Turso
+        continue-on-error: true
+        env:
+          LD_PRELOAD: ${{ steps.preload.outputs.value }}
+        run: |
+          php <<'PHP'
+          <?php
+          echo "version: ", (new PDO('sqlite::memory:'))->query('SELECT sqlite_version()')->fetch()[0], "\n";
+
+          $pdo = new PDO('sqlite::memory:');
+          $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+          $pdo->exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
+          echo "create table: ok\n";
+
+          $pdo->exec("INSERT INTO t (v) VALUES ('hello')");
+          echo "insert exec: ok\n";
+
+          $stmt = $pdo->prepare('INSERT INTO t (v) VALUES (?)');
+          $stmt->execute(['world']);
+          echo "insert prepared: ok\n";
+
+          $rows = $pdo->query('SELECT id, v FROM t ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+          echo "select: ", json_encode($rows), "\n";
+
+          $stmt = $pdo->prepare('SELECT v FROM t WHERE id = ?');
+          $stmt->execute([1]);
+          echo "select prepared: ", $stmt->fetchColumn(), "\n";
+
+          unset($stmt, $pdo);
+          echo "close: ok\n";
+          PHP
+
+      - name: Install Composer dependencies (root)
+        uses: ramsey/composer-install@v3
+        with:
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Run PHPUnit tests against Turso DB
+        env:
+          LD_PRELOAD: ${{ steps.preload.outputs.value }}
+        working-directory: packages/mysql-on-sqlite
+        # PHPUnit's own run completes in ~2 minutes, but PHP then hangs inside
+        # zend_gc_collect_cycles → pdo_sqlite → Turso's sqlite3_finalize, which
+        # deadlocks on the sqlite3Inner mutex during process shutdown. We can't
+        # trust the process's exit status, so we derive pass/fail from a JUnit
+        # XML file written incrementally during the run: if the file records
+        # any <error> or <failure>, the step fails.
+        run: |
+          set +e
+          # Only the two CSV-driven server-suite tests remain skipped —
+          # they tokenise/parse a 5.7 MB fixture in a single loop and run
+          # well over 10 min under LD_PRELOAD (not a Turso issue).
+          skip_regex='^(?!WP_MySQL_Server_Suite_).+'
+          # Keep --debug: per-test logging forces I/O flushes that prevent
+          # Turso from accumulating state which crashes PHPUnit mid-run
+          # (without --debug, the run aborts around 84% complete).
+          timeout --kill-after=10 600 \
+              php ./vendor/bin/phpunit -c ./phpunit.xml.dist \
+                  --debug \
+                  --filter "$skip_regex" \
+                  --log-junit /tmp/phpunit-turso.xml \
+                  | tee /tmp/phpunit-turso.stdout
+          ec=${PIPESTATUS[0]}
+          # If JUnit was flushed, prefer it. Otherwise (Turso's shutdown
+          # SIGSEGV in sqlite3_finalize can race PHPUnit's logger flush),
+          # fall back to parsing PHPUnit's stdout summary.
+          python3 <<'PY'
+          import os, re, sys
+          junit = '/tmp/phpunit-turso.xml'
+          if os.path.getsize(junit) > 0:
+              import xml.etree.ElementTree as ET
+              cases = list(ET.parse(junit).iter('testcase'))
+              errors = sum(1 for c in cases if c.find('error') is not None)
+              failures = sum(1 for c in cases if c.find('failure') is not None)
+              skipped = sum(1 for c in cases if c.find('skipped') is not None)
+              assertions = sum(int(c.get('assertions', 0) or 0) for c in cases)
+              total = len(cases)
+              source = 'junit'
+              # Surface skipped/incomplete test names so we know what's left.
+              skipped_cases = [c for c in cases if c.find('skipped') is not None]
+              if skipped_cases:
+                  print('::group::Skipped/incomplete tests')
+                  for c in skipped_cases:
+                      cls = c.get('classname', '?')
+                      name = c.get('name', '?')
+                      msg = (c.find('skipped').get('message') or '').strip()
+                      print(f'  - {cls}::{name} -- {msg}')
+                  print('::endgroup::')
+          else:
+              # PHPUnit summary line: "Tests: N, Assertions: A, Errors: E, Failures: F, Skipped: S, Incomplete: I."
+              text = open('/tmp/phpunit-turso.stdout').read()
+              m = re.search(r'Tests:\s*(\d+)(?:,\s*Assertions:\s*(\d+))?'
+                            r'(?:,\s*Errors:\s*(\d+))?(?:,\s*Failures:\s*(\d+))?'
+                            r'(?:,\s*Skipped:\s*(\d+))?(?:,\s*Incomplete:\s*(\d+))?',
+                            text)
+              if not m:
+                  print('::error::Neither JUnit nor PHPUnit summary parseable.')
+                  sys.exit(1)
+              total      = int(m.group(1))
+              assertions = int(m.group(2) or 0)
+              errors     = int(m.group(3) or 0)
+              failures   = int(m.group(4) or 0)
+              skipped    = int(m.group(5) or 0)
+              source     = 'stdout'
+          passing = total - errors - failures - skipped
+          print(f"::notice::Turso DB: {passing}/{total} passing "
+                f"(errors={errors}, failures={failures}, skipped={skipped}, "
+                f"assertions={assertions}, source={source})")
+          sys.exit(1 if errors or failures else 0)
+          PY
