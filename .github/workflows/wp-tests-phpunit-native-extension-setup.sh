@@ -26,21 +26,25 @@ const service = process.argv[3];
 const volume = process.argv[4];
 const lines = fs.readFileSync( file, 'utf8' ).split( '\n' );
 
-if ( lines.some( line => line.trim() === volume.trim() ) ) {
-	process.exit( 0 );
-}
-
 const serviceIndex = lines.findIndex( line => line === `  ${ service }:` );
 if ( serviceIndex === -1 ) {
 	throw new Error( `Service ${ service } not found in ${ file }.` );
 }
 
-let volumesIndex = -1;
+let serviceEnd = lines.length;
 for ( let i = serviceIndex + 1; i < lines.length; i++ ) {
 	if ( /^  [A-Za-z0-9_-]+:/.test( lines[i] ) ) {
+		serviceEnd = i;
 		break;
 	}
+}
 
+if ( lines.slice( serviceIndex, serviceEnd ).some( line => line.trim() === volume.trim() ) ) {
+	process.exit( 0 );
+}
+
+let volumesIndex = -1;
+for ( let i = serviceIndex + 1; i < serviceEnd; i++ ) {
 	if ( lines[i].trim() === 'volumes:' ) {
 		volumesIndex = i;
 		break;
@@ -52,7 +56,7 @@ if ( volumesIndex === -1 ) {
 }
 
 let insertAt = volumesIndex + 1;
-while ( insertAt < lines.length && /^\s{6}- /.test( lines[insertAt] ) ) {
+while ( insertAt < serviceEnd && /^\s{6}- /.test( lines[insertAt] ) ) {
 	insertAt++;
 }
 
