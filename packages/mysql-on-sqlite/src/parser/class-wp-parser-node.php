@@ -33,7 +33,7 @@ class WP_Parser_Node {
 	 * @return bool True if this node has any child nodes or tokens, false otherwise.
 	 */
 	public function has_child(): bool {
-		return count( $this->children ) > 0;
+		return ! empty( $this->children );
 	}
 
 	/**
