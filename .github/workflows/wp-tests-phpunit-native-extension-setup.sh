@@ -111,23 +111,29 @@ add_volume_to_service cli "$EXTENSION_RUNTIME_VOLUME"
 add_volume_to_service php "$EXTENSION_INI_VOLUME"
 add_volume_to_service cli "$EXTENSION_INI_VOLUME"
 
-node tools/local-env/scripts/docker.js run --rm php php -m | grep -qx 'wp_mysql_parser'
-node tools/local-env/scripts/docker.js run --rm php php -r '
-require "/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database/load.php";
-$lexer = new WP_MySQL_Lexer( "SELECT 1" );
-if ( ! method_exists( $lexer, "native_token_stream" ) ) {
+cat > "$WP_DIR/native-verify-extension.php" <<'EOF'
+<?php
+require '/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database/load.php';
+
+$lexer = new WP_MySQL_Lexer( 'SELECT 1' );
+if ( ! method_exists( $lexer, 'native_token_stream' ) ) {
 	fwrite( STDERR, "Native token stream is not available in the WordPress PHP test container.\n" );
 	exit( 1 );
 }
-$driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=wp;" );
-$parser = $driver->create_parser( "SELECT 1" );
+
+$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+$parser = $driver->create_parser( 'SELECT 1' );
 $parser->next_query();
 $ast = $parser->get_query_ast();
-$property = ( new ReflectionClass( $ast ) )->getProperty( "native_ast" );
+$property = ( new ReflectionClass( $ast ) )->getProperty( 'native_ast' );
 $property->setAccessible( true );
 $native_ast = $property->getValue( $ast );
-if ( ! is_object( $native_ast ) || "WP_MySQL_Native_Ast" !== get_class( $native_ast ) ) {
+
+if ( ! is_object( $native_ast ) || 'WP_MySQL_Native_Ast' !== get_class( $native_ast ) ) {
 	fwrite( STDERR, "WordPress PHP test container did not select the native-backed AST.\n" );
 	exit( 1 );
 }
-'
+EOF
+
+node tools/local-env/scripts/docker.js run --rm php php -m | grep -qx 'wp_mysql_parser'
+node tools/local-env/scripts/docker.js run --rm php php /var/www/native-verify-extension.php
