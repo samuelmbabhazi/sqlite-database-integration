@@ -258,6 +258,115 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * Test that unclosed quoted strings with trailing backslashes do not
+	 * cause out-of-bounds string access in read_quoted_text().
+	 *
+	 * The backslash-counting loop walks backward from the position returned
+	 * by strcspn(). When the closing quote is missing, strcspn() returns
+	 * the remaining string length. If the last byte is a backslash, the
+	 * loop treats the absent quote as escaped and advances past the end
+	 * of the string. On the next iteration, the loop accesses an invalid
+	 * string offset, triggering "Uninitialized string offset" warnings.
+	 *
+	 * @dataProvider data_unclosed_strings_with_backslashes
+	 */
+	public function test_unclosed_string_with_trailing_backslash( string $sql ): void {
+		set_error_handler(
+			function ( $severity, $message, $file, $line ) {
+				throw new \ErrorException( $message, 0, $severity, $file, $line );
+			},
+			E_WARNING | E_NOTICE
+		);
+
+		try {
+			$lexer = new WP_MySQL_Lexer( $sql );
+			while ( $lexer->next_token() ) {
+				// Consume all tokens.
+			}
+		} finally {
+			restore_error_handler();
+		}
+
+		// If we reach here without an ErrorException, no OOB access occurred.
+		$this->assertNull( $lexer->get_token() );
+	}
+
+	public function data_unclosed_strings_with_backslashes(): array {
+		return array(
+			'single-quoted trailing backslash' => array( "SELECT '\\" ),
+			'double-quoted trailing backslash' => array( 'SELECT "\\' ),
+			'even trailing backslashes'        => array( "SELECT '\\\\" ),
+			'odd trailing backslashes'         => array( "SELECT '\\\\\\" ),
+			'backslash-only single-quoted'     => array( "'\\" ),
+			'backslash-only double-quoted'     => array( '"\\' ),
+		);
+	}
+
+	/**
+	 * Regression: valid strings with escapes must still tokenize correctly.
+	 *
+	 * @dataProvider data_valid_escaped_strings
+	 */
+	public function test_valid_escaped_string( string $sql, int $expected_token_id ): void {
+		$lexer = new WP_MySQL_Lexer( $sql );
+		$this->assertTrue( $lexer->next_token() );
+		$this->assertSame( $expected_token_id, $lexer->get_token()->id );
+	}
+
+	public function data_valid_escaped_strings(): array {
+		return array(
+			'escaped single quote'       => array( "'it\\'s'", WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
+			'trailing escaped backslash' => array( "'path\\\\'", WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
+			'doubled single quote'       => array( "'it''s'", WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
+			'empty single-quoted string' => array( "''", WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
+			'escaped double quote'       => array( '"col\\"name"', WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT ),
+			'backtick identifier'        => array( '`my_column`', WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ),
+		);
+	}
+
+	/**
+	 * Test that a chunk boundary splitting a quoted string with a trailing
+	 * backslash does not cause an out-of-bounds string access.
+	 *
+	 * This simulates streaming SQL processing where a buffer boundary falls
+	 * inside a string literal right after a backslash escape character.
+	 */
+	public function test_chunk_boundary_inside_escaped_string(): void {
+		set_error_handler(
+			function ( $severity, $message, $file, $line ) {
+				throw new \ErrorException( $message, 0, $severity, $file, $line );
+			},
+			E_WARNING | E_NOTICE
+		);
+
+		try {
+			// Build a SQL string where a backslash falls at the chunk boundary.
+			// The string content before the boundary is padded to place the
+			// backslash at exactly position $chunk_size - 1.
+			$chunk_size = 8192;
+
+			// "SELECT '" = 8 bytes, so we need chunk_size - 8 - 1 bytes of
+			// padding before the trailing backslash to place '\' at the last
+			// byte of the chunk.
+			$padding = str_repeat( 'A', $chunk_size - 8 - 1 );
+			$sql     = "SELECT '" . $padding . '\\';
+
+			// The chunk is exactly $chunk_size bytes. The last byte is '\'.
+			// The lexer should handle this as an unclosed string without OOB.
+			$this->assertSame( $chunk_size, strlen( $sql ) );
+
+			$lexer = new WP_MySQL_Lexer( $sql );
+			while ( $lexer->next_token() ) {
+				// Consume all tokens.
+			}
+		} finally {
+			restore_error_handler();
+		}
+
+		$this->assertNull( $lexer->get_token() );
+	}
+
 	private function get_token_names( array $token_types ): array {
 		return array_map(
 			function ( $token_type ) {
