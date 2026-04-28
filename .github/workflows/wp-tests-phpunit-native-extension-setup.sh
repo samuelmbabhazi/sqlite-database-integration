@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+WP_DIR="$ROOT_DIR/wordpress"
+COMPOSE_OVERRIDE="$WP_DIR/docker-compose.override.yml"
+RUNTIME_DIR="$ROOT_DIR/tmp-native-extension"
+EXTENSION_SOURCE_VOLUME="      - ../packages/mysql-on-sqlite/ext/wp-mysql-parser:/var/native-parser-extension-src"
+EXTENSION_RUNTIME_VOLUME="      - ../tmp-native-extension:/var/native-parser-extension:ro"
+EXTENSION_INI_VOLUME="      - ../tmp-native-extension/wp-mysql-parser.ini:/usr/local/etc/php/conf.d/wp-mysql-parser.ini:ro"
+
+if [ ! -f "$COMPOSE_OVERRIDE" ]; then
+	echo "Missing $COMPOSE_OVERRIDE. Run composer run wp-setup first." >&2
+	exit 1
+fi
+
+add_volume_to_service() {
+	local service="$1"
+	local volume="$2"
+
+	node - "$COMPOSE_OVERRIDE" "$service" "$volume" <<'NODE'
+const fs = require( 'fs' );
+
+const file = process.argv[2];
+const service = process.argv[3];
+const volume = process.argv[4];
+const lines = fs.readFileSync( file, 'utf8' ).split( '\n' );
+
+if ( lines.some( line => line.trim() === volume.trim() ) ) {
+	process.exit( 0 );
+}
+
+const serviceIndex = lines.findIndex( line => line === `  ${ service }:` );
+if ( serviceIndex === -1 ) {
+	throw new Error( `Service ${ service } not found in ${ file }.` );
+}
+
+let volumesIndex = -1;
+for ( let i = serviceIndex + 1; i < lines.length; i++ ) {
+	if ( /^  [A-Za-z0-9_-]+:/.test( lines[i] ) ) {
+		break;
+	}
+
+	if ( lines[i].trim() === 'volumes:' ) {
+		volumesIndex = i;
+		break;
+	}
+}
+
+if ( volumesIndex === -1 ) {
+	throw new Error( `Service ${ service } has no volumes list in ${ file }.` );
+}
+
+let insertAt = volumesIndex + 1;
+while ( insertAt < lines.length && /^\s{6}- /.test( lines[insertAt] ) ) {
+	insertAt++;
+}
+
+lines.splice( insertAt, 0, volume );
+fs.writeFileSync( file, lines.join( '\n' ) );
+NODE
+}
+
+add_volume_to_service php "$EXTENSION_SOURCE_VOLUME"
+add_volume_to_service cli "$EXTENSION_SOURCE_VOLUME"
+
+cat > "$WP_DIR/native-build-extension.sh" <<'EOF'
+#!/bin/sh
+set -eu
+
+apt-get update
+apt-get install -y --no-install-recommends ca-certificates curl build-essential clang libclang-dev pkg-config
+
+if [ ! -x "$HOME/.cargo/bin/cargo" ]; then
+	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+fi
+
+. "$HOME/.cargo/env"
+
+PHP_CONFIG="$(command -v php-config)"
+export PHP_CONFIG
+
+LIBCLANG_SO="$(find /usr/lib /usr/local/lib -name 'libclang.so*' 2>/dev/null | head -n 1)"
+if [ -z "$LIBCLANG_SO" ]; then
+	echo "Unable to locate libclang.so after installing libclang-dev." >&2
+	exit 1
+fi
+
+LIBCLANG_PATH="$(dirname "$LIBCLANG_SO")"
+export LIBCLANG_PATH
+
+cd /var/native-parser-extension-src
+cargo build
+EOF
+
+chmod +x "$WP_DIR/native-build-extension.sh"
+
+cd "$WP_DIR"
+node tools/local-env/scripts/docker.js run --rm php sh /var/www/native-build-extension.sh
+
+mkdir -p "$RUNTIME_DIR"
+cp "$ROOT_DIR/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" "$RUNTIME_DIR/libwp_mysql_parser.so"
+printf '%s\n' 'extension=/var/native-parser-extension/libwp_mysql_parser.so' > "$RUNTIME_DIR/wp-mysql-parser.ini"
+
+add_volume_to_service php "$EXTENSION_RUNTIME_VOLUME"
+add_volume_to_service cli "$EXTENSION_RUNTIME_VOLUME"
+add_volume_to_service php "$EXTENSION_INI_VOLUME"
+add_volume_to_service cli "$EXTENSION_INI_VOLUME"
+
+node tools/local-env/scripts/docker.js run --rm php php -m | grep -qx 'wp_mysql_parser'
+node tools/local-env/scripts/docker.js run --rm php php -r '
+require "/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database/load.php";
+$lexer = new WP_MySQL_Lexer( "SELECT 1" );
+if ( ! method_exists( $lexer, "native_token_stream" ) ) {
+	fwrite( STDERR, "Native token stream is not available in the WordPress PHP test container.\n" );
+	exit( 1 );
+}
+$driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=wp;" );
+$parser = $driver->create_parser( "SELECT 1" );
+$parser->next_query();
+$ast = $parser->get_query_ast();
+$property = ( new ReflectionClass( $ast ) )->getProperty( "native_ast" );
+$property->setAccessible( true );
+$native_ast = $property->getValue( $ast );
+if ( ! is_object( $native_ast ) || "WP_MySQL_Native_Ast" !== get_class( $native_ast ) ) {
+	fwrite( STDERR, "WordPress PHP test container did not select the native-backed AST.\n" );
+	exit( 1 );
+}
+'
