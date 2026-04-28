@@ -5,10 +5,12 @@ on:
     paths:
       - '.github/workflows/mysql-parser-extension-tests.yml'
       - 'packages/mysql-on-sqlite/**'
+      - 'tmp-test-native/**'
   pull_request:
     paths:
       - '.github/workflows/mysql-parser-extension-tests.yml'
       - 'packages/mysql-on-sqlite/**'
+      - 'tmp-test-native/**'
   workflow_dispatch:
 
 concurrency:
@@ -67,3 +69,76 @@ jobs:
       - name: Run PHPUnit tests with parser extension
         run: php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
         working-directory: packages/mysql-on-sqlite
+
+  sqlite-driver-extension-tests:
+    name: PHP 8.2 / SQLite driver / Rust extension / ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: phpunit-polyfills
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+          echo "PHP_CONFIG=$(command -v php-config)" >> "$GITHUB_ENV"
+          LIBCLANG_SO="$(find /usr/lib -name 'libclang.so*' | head -n 1)"
+          echo "LIBCLANG_PATH=$(dirname "$LIBCLANG_SO")" >> "$GITHUB_ENV"
+
+      - name: Install Composer dependencies (root)
+        uses: ramsey/composer-install@v3
+        with:
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Build parser extension
+        run: cargo build
+        working-directory: packages/mysql-on-sqlite/ext/wp-mysql-parser
+
+      - name: Verify SQLite driver selects the native parser path
+        run: |
+          php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
+          require "packages/mysql-on-sqlite/src/load.php";
+          $lexer = new WP_MySQL_Lexer( "SELECT 1" );
+          if ( ! method_exists( $lexer, "native_token_stream" ) ) {
+              fwrite( STDERR, "Native token stream is not available.\n" );
+              exit( 1 );
+          }
+          $driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=wp;" );
+          $parser = $driver->create_parser( "SELECT 1" );
+          $parser->next_query();
+          $ast = $parser->get_query_ast();
+          $property = ( new ReflectionClass( $ast ) )->getProperty( "native_ast" );
+          $property->setAccessible( true );
+          $native_ast = $property->getValue( $ast );
+          if ( ! is_object( $native_ast ) || "WP_MySQL_Native_Ast" !== get_class( $native_ast ) ) {
+              fwrite( STDERR, "SQLite driver did not return a native-backed AST.\n" );
+              exit( 1 );
+          }
+          '
+
+      - name: Run PHPUnit tests with SQLite driver using parser extension
+        run: php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
+        working-directory: packages/mysql-on-sqlite
+
+      - name: Run native SQLite facade smoke workload
+        run: php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" tmp-test-native/run-sqlite-facade-smoke.php

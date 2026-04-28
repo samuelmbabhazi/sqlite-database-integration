@@ -15,14 +15,14 @@ function smoke_fail( string $message ): void {
 
 function create_driver(): WP_PDO_MySQL_On_SQLite {
 	$db = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
-	$db->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
-	$db->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+	$db->setAttribute( constant( 'PDO::ATTR_ERRMODE' ), constant( 'PDO::ERRMODE_EXCEPTION' ) );
+	$db->setAttribute( constant( 'PDO::ATTR_STRINGIFY_FETCHES' ), true );
 	return $db;
 }
 
 function seed_database( WP_PDO_MySQL_On_SQLite $db ): void {
 	$db->query(
-		'CREATE TABLE `' . TEST_TABLE . "` (
+		'CREATE TABLE `' . TEST_TABLE . '` (
 			`id` bigint unsigned NOT NULL AUTO_INCREMENT,
 			`tenant_id` int NOT NULL,
 			`label` varchar(191) NOT NULL,
@@ -31,7 +31,7 @@ function seed_database( WP_PDO_MySQL_On_SQLite $db ): void {
 			PRIMARY KEY (`id`),
 			KEY `tenant_score` (`tenant_id`, `score`),
 			KEY `label_score` (`label`, `score`)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
 	);
 
 	for ( $i = 1; $i <= 64; $i++ ) {
@@ -136,18 +136,19 @@ function parse_with_sqlite_driver( WP_PDO_MySQL_On_SQLite $db, string $sql ): in
 
 function execute_with_sqlite_driver( WP_PDO_MySQL_On_SQLite $db, string $sql ): int {
 	$result = $db->query( $sql );
-	if ( ! $result instanceof PDOStatement ) {
+	if ( ! is_object( $result ) || ! method_exists( $result, 'fetchAll' ) ) {
 		return 0;
 	}
 
-	return count( $result->fetchAll( PDO::FETCH_ASSOC ) );
+	return count( $result->fetchAll( constant( 'PDO::FETCH_ASSOC' ) ) );
 }
 
 function run_workload(): void {
 	require_once dirname( __DIR__ ) . '/packages/mysql-on-sqlite/src/load.php';
 
-	$query_count = (int) ( getenv( 'TMP_TEST_NATIVE_QUERY_COUNT' ) ?: DEFAULT_QUERY_COUNT );
-	$db          = create_driver();
+	$query_count_env = getenv( 'TMP_TEST_NATIVE_QUERY_COUNT' );
+	$query_count     = (int) ( false === $query_count_env ? DEFAULT_QUERY_COUNT : $query_count_env );
+	$db              = create_driver();
 	seed_database( $db );
 
 	$start        = microtime( true );
