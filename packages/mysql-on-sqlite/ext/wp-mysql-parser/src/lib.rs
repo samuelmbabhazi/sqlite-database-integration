@@ -1,14 +1,17 @@
 #![cfg_attr(windows, feature(abi_vectorcall))]
 
 use std::collections::{HashMap, HashSet};
+use std::os::raw::c_char;
+use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ext_php_rs::convert::{IntoZval, IntoZvalDyn};
 use ext_php_rs::exception::{PhpException, PhpResult};
+use ext_php_rs::ffi::{zend_class_entry, zend_object, zval};
 use ext_php_rs::flags::DataType;
 use ext_php_rs::prelude::*;
-use ext_php_rs::types::{ArrayKey, ZendCallable, ZendHashTable, Zval};
-use ext_php_rs::zend::ModuleEntry;
+use ext_php_rs::types::{ArrayKey, ZendCallable, ZendHashTable, ZendObject, Zval};
+use ext_php_rs::zend::{ClassEntry, ModuleEntry};
 use ext_php_rs::{info_table_end, info_table_row, info_table_start};
 
 mod lexer_constants;
@@ -21,6 +24,16 @@ const SQL_MODE_IGNORE_SPACE: i64 = 4;
 const SQL_MODE_NO_BACKSLASH_ESCAPES: i64 = 8;
 const STACK_RED_ZONE: usize = 128 * 1024;
 const STACK_GROW_SIZE: usize = 8 * 1024 * 1024;
+
+extern "C" {
+    fn zend_update_property(
+        scope: *mut zend_class_entry,
+        object: *mut zend_object,
+        name: *const c_char,
+        name_length: usize,
+        value: *mut zval,
+    );
+}
 
 #[derive(Clone)]
 struct BinaryString(Vec<u8>);
@@ -41,6 +54,60 @@ fn php_error(message: impl ToString) -> PhpException {
 
 fn php_function(name: &str) -> PhpResult<ZendCallable<'_>> {
     ZendCallable::try_from_name(name).map_err(php_error)
+}
+
+struct PhpClasses {
+    parser_token: &'static ClassEntry,
+    mysql_token: &'static ClassEntry,
+    parser_node: &'static ClassEntry,
+}
+
+// Class entries are process-lifetime Zend metadata. We only read the pointers
+// after lookup, and PHP owns their lifetime.
+unsafe impl Send for PhpClasses {}
+unsafe impl Sync for PhpClasses {}
+
+static PHP_CLASSES: OnceLock<PhpClasses> = OnceLock::new();
+
+fn php_classes() -> PhpResult<&'static PhpClasses> {
+    if let Some(classes) = PHP_CLASSES.get() {
+        return Ok(classes);
+    }
+
+    let classes = PhpClasses {
+        parser_token: ClassEntry::try_find("WP_Parser_Token")
+            .ok_or_else(|| php_error("Missing WP_Parser_Token class"))?,
+        mysql_token: ClassEntry::try_find("WP_MySQL_Token")
+            .ok_or_else(|| php_error("Missing WP_MySQL_Token class"))?,
+        parser_node: ClassEntry::try_find("WP_Parser_Node")
+            .ok_or_else(|| php_error("Missing WP_Parser_Node class"))?,
+    };
+
+    PHP_CLASSES
+        .set(classes)
+        .map_err(|_| php_error("PHP class cache was initialized concurrently"))?;
+    PHP_CLASSES
+        .get()
+        .ok_or_else(|| php_error("PHP class cache initialization failed"))
+}
+
+fn update_object_property(
+    object: &mut ZendObject,
+    scope: &ClassEntry,
+    name: &str,
+    value: impl IntoZval,
+) -> PhpResult<()> {
+    let mut value = value.into_zval(false).map_err(php_error)?;
+    unsafe {
+        zend_update_property(
+            ptr::from_ref(scope).cast_mut(),
+            ptr::from_mut(object),
+            name.as_ptr().cast::<c_char>(),
+            name.len(),
+            ptr::from_mut(&mut value),
+        );
+    }
+    Ok(())
 }
 
 fn sql_modes_mask(sql_modes: &[String]) -> i64 {
@@ -230,15 +297,26 @@ impl WpMySqlNativeLexer {
         let start = i64::try_from(token.start).map_err(php_error)?;
         let length = i64::try_from(token.end.saturating_sub(token.start)).map_err(php_error)?;
         let no_backslash = self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES);
-        php_function("wp_sqlite_mysql_native_new_token")?
-            .try_call(vec![
-                &id as &dyn IntoZvalDyn,
-                &start as &dyn IntoZvalDyn,
-                &length as &dyn IntoZvalDyn,
-                &self.sql_zval as &dyn IntoZvalDyn,
-                &no_backslash as &dyn IntoZvalDyn,
-            ])
-            .map_err(php_error)
+        let classes = php_classes()?;
+        let mut object = classes.mysql_token.new();
+
+        update_object_property(&mut object, classes.parser_token, "id", id)?;
+        update_object_property(&mut object, classes.parser_token, "start", start)?;
+        update_object_property(&mut object, classes.parser_token, "length", length)?;
+        update_object_property(
+            &mut object,
+            classes.parser_token,
+            "input",
+            self.sql_zval.shallow_clone(),
+        )?;
+        update_object_property(
+            &mut object,
+            classes.mysql_token,
+            "sql_mode_no_backslash_escapes_enabled",
+            no_backslash,
+        )?;
+
+        object.into_zval(false).map_err(php_error)
     }
 
     fn read_next_token(&mut self) -> Option<i64> {
@@ -803,14 +881,33 @@ impl WpMySqlNativeLexer {
     }
 }
 
-#[derive(Clone)]
 struct Grammar {
     highest_terminal_id: i64,
-    rules: HashMap<i64, Vec<Vec<i64>>>,
-    lookahead: HashMap<i64, HashSet<i64>>,
-    rule_names: HashMap<i64, String>,
-    fragment_ids: HashSet<i64>,
+    rules: Vec<Option<Rule>>,
     query_rule_id: i64,
+    select_statement_rule_id: Option<i64>,
+}
+
+struct Rule {
+    branches: Vec<Vec<i64>>,
+    lookahead: Option<Vec<i64>>,
+    rule_name: String,
+    is_fragment: bool,
+}
+
+impl Grammar {
+    fn rule(&self, rule_id: i64) -> Option<&Rule> {
+        usize::try_from(rule_id)
+            .ok()
+            .and_then(|index| self.rules.get(index))
+            .and_then(Option::as_ref)
+    }
+
+    fn is_fragment(&self, rule_id: i64) -> bool {
+        self.rule(rule_id)
+            .map(|rule| rule.is_fragment)
+            .unwrap_or(false)
+    }
 }
 
 static GRAMMAR_CACHE: OnceLock<Mutex<HashMap<u32, Arc<Grammar>>>> = OnceLock::new();
@@ -822,7 +919,6 @@ enum AstChild {
 
 struct AstNode {
     rule_id: i64,
-    rule_name: String,
     children: Vec<AstChild>,
 }
 
@@ -840,7 +936,8 @@ pub struct WpMySqlNativeParser {
     tokens: Vec<Zval>,
     token_ids: Vec<i64>,
     position: usize,
-    current_ast: Option<Zval>,
+    current_ast: Option<ParseMatch>,
+    current_php_ast: Option<Zval>,
 }
 
 #[php_impl]
@@ -856,36 +953,41 @@ impl WpMySqlNativeParser {
             token_ids,
             position: 0,
             current_ast: None,
+            current_php_ast: None,
         })
     }
 
     pub fn parse(&mut self) -> PhpResult<Zval> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            match self.parse_recursive(self.grammar.query_rule_id)? {
-                ParseMatch::No => Ok(Zval::null()),
-                ParseMatch::Empty => {
-                    let mut zval = Zval::new();
-                    zval.set_bool(true);
-                    Ok(zval)
-                }
-                ParseMatch::Node(node) => self.create_php_node(&node),
-                ParseMatch::Token(index) => Ok(self.tokens[index].shallow_clone()),
-            }
+            let ast = self.parse_recursive(self.grammar.query_rule_id)?;
+            self.create_php_ast(&ast)
         })
     }
 
     pub fn next_query(&mut self) -> PhpResult<bool> {
         if self.position >= self.tokens.len() {
             self.current_ast = None;
+            self.current_php_ast = None;
             return Ok(false);
         }
 
-        self.current_ast = Some(self.parse()?);
+        self.current_ast = Some(self.parse_recursive(self.grammar.query_rule_id)?);
+        self.current_php_ast = None;
         Ok(true)
     }
 
     pub fn get_query_ast(&mut self) -> PhpResult<Zval> {
-        match self.current_ast.as_ref() {
+        if let Some(ast) = self.current_php_ast.as_ref() {
+            return Ok(ast.shallow_clone());
+        }
+
+        let Some(native_ast) = self.current_ast.as_ref() else {
+            return Ok(Zval::null());
+        };
+
+        let ast = self.create_php_ast(native_ast)?;
+        self.current_php_ast = Some(ast);
+        match self.current_php_ast.as_ref() {
             Some(ast) => Ok(ast.shallow_clone()),
             None => Ok(Zval::null()),
         }
@@ -915,36 +1017,36 @@ impl WpMySqlNativeParser {
             return Ok(ParseMatch::No);
         }
 
-        let Some(branch_count) = self.grammar.rules.get(&rule_id).map(Vec::len) else {
+        let grammar = unsafe {
+            // The parser owns an Arc to immutable grammar data for its full lifetime.
+            // Taking a raw shared reference avoids cloning hot branches just to satisfy
+            // the borrow checker while recursive parsing mutates only `position`.
+            &*Arc::as_ptr(&self.grammar)
+        };
+
+        let Some(rule) = grammar.rule(rule_id) else {
             return Ok(ParseMatch::No);
         };
-        if branch_count == 0 {
+        if rule.branches.is_empty() {
             return Ok(ParseMatch::No);
         }
 
-        if let Some(lookahead) = self.grammar.lookahead.get(&rule_id) {
+        if let Some(lookahead) = rule.lookahead.as_ref() {
             let token_id = self.token_ids.get(self.position).copied().unwrap_or(0);
-            if !lookahead.contains(&token_id) && !lookahead.contains(&0) {
+            if lookahead.binary_search(&token_id).is_err() && lookahead.binary_search(&0).is_err() {
                 return Ok(ParseMatch::No);
             }
         }
 
-        let rule_name = self
-            .grammar
-            .rule_names
-            .get(&rule_id)
-            .cloned()
-            .unwrap_or_default();
         let starting_position = self.position;
         let mut matched_node = None;
 
-        for branch_index in 0..branch_count {
-            let branch = self.grammar.rules.get(&rule_id).unwrap()[branch_index].clone();
+        for branch in &rule.branches {
             self.position = starting_position;
             let mut children = Vec::new();
             let mut branch_matches = true;
 
-            for subrule_id in branch {
+            for &subrule_id in branch {
                 match self.parse_recursive(subrule_id)? {
                     ParseMatch::No => {
                         branch_matches = false;
@@ -955,7 +1057,7 @@ impl WpMySqlNativeParser {
                         children.push(AstChild::Token(token_index));
                     }
                     ParseMatch::Node(subnode) => {
-                        if self.grammar.fragment_ids.contains(&subrule_id) {
+                        if grammar.is_fragment(subrule_id) {
                             children.extend(subnode.children);
                         } else {
                             children.push(AstChild::Node(subnode));
@@ -965,7 +1067,7 @@ impl WpMySqlNativeParser {
             }
 
             if branch_matches
-                && rule_name == "selectStatement"
+                && grammar.select_statement_rule_id == Some(rule_id)
                 && self
                     .token_ids
                     .get(self.position)
@@ -975,11 +1077,7 @@ impl WpMySqlNativeParser {
             }
 
             if branch_matches {
-                matched_node = Some(AstNode {
-                    rule_id,
-                    rule_name: rule_name.clone(),
-                    children,
-                });
+                matched_node = Some(AstNode { rule_id, children });
                 break;
             }
         }
@@ -996,6 +1094,19 @@ impl WpMySqlNativeParser {
         }
     }
 
+    fn create_php_ast(&self, ast: &ParseMatch) -> PhpResult<Zval> {
+        match ast {
+            ParseMatch::No => Ok(Zval::null()),
+            ParseMatch::Empty => {
+                let mut zval = Zval::new();
+                zval.set_bool(true);
+                Ok(zval)
+            }
+            ParseMatch::Node(node) => self.create_php_node(node),
+            ParseMatch::Token(index) => Ok(self.tokens[*index].shallow_clone()),
+        }
+    }
+
     fn create_php_node(&self, ast_node: &AstNode) -> PhpResult<Zval> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
             self.create_php_node_inner(ast_node)
@@ -1003,20 +1114,38 @@ impl WpMySqlNativeParser {
     }
 
     fn create_php_node_inner(&self, ast_node: &AstNode) -> PhpResult<Zval> {
-        let node = create_node(ast_node.rule_id, &ast_node.rule_name)?;
+        let classes = php_classes()?;
+        let mut object = classes.parser_node.new();
+        let rule_name = self
+            .grammar
+            .rule(ast_node.rule_id)
+            .map(|rule| rule.rule_name.as_str())
+            .unwrap_or_default();
+        let mut children = Vec::with_capacity(ast_node.children.len());
 
         for child in &ast_node.children {
             let child_zval = match child {
                 AstChild::Node(child_node) => self.create_php_node(child_node)?,
                 AstChild::Token(index) => self.tokens[*index].shallow_clone(),
             };
-            node.object()
-                .ok_or_else(|| php_error("Parser node must be an object"))?
-                .try_call_method("append_child", vec![&child_zval as &dyn IntoZvalDyn])
-                .map_err(php_error)?;
+            children.push(child_zval);
         }
 
-        Ok(node)
+        update_object_property(
+            &mut object,
+            classes.parser_node,
+            "rule_id",
+            ast_node.rule_id,
+        )?;
+        update_object_property(
+            &mut object,
+            classes.parser_node,
+            "rule_name",
+            rule_name.to_owned(),
+        )?;
+        update_object_property(&mut object, classes.parser_node, "children", children)?;
+
+        object.into_zval(false).map_err(php_error)
     }
 }
 
@@ -1044,42 +1173,49 @@ fn export_grammar(grammar: &mut Zval) -> PhpResult<Arc<Grammar>> {
         .get("highest_terminal_id")
         .and_then(Zval::long)
         .ok_or_else(|| php_error("Missing grammar highest_terminal_id"))?;
-    let rules = parse_rules(
+    let parsed_rules = parse_rules(
         array
             .get("rules")
             .and_then(Zval::array)
             .ok_or_else(|| php_error("Missing grammar rules"))?,
     )?;
-    let lookahead = parse_lookahead(
+    let parsed_lookahead = parse_lookahead(
         array
             .get("lookahead_is_match_possible")
             .and_then(Zval::array)
             .ok_or_else(|| php_error("Missing grammar lookahead"))?,
     )?;
-    let rule_names = parse_rule_names(
+    let parsed_rule_names = parse_rule_names(
         array
             .get("rule_names")
             .and_then(Zval::array)
             .ok_or_else(|| php_error("Missing grammar rule_names"))?,
     )?;
-    let fragment_ids = parse_id_set(
+    let parsed_fragment_ids = parse_id_set(
         array
             .get("fragment_ids")
             .and_then(Zval::array)
             .ok_or_else(|| php_error("Missing grammar fragment_ids"))?,
     )?;
-    let query_rule_id = rule_names
+    let query_rule_id = parsed_rule_names
         .iter()
         .find_map(|(id, name)| (name == "query").then_some(*id))
         .ok_or_else(|| php_error("Missing query grammar rule"))?;
+    let select_statement_rule_id = parsed_rule_names
+        .iter()
+        .find_map(|(id, name)| (name == "selectStatement").then_some(*id));
+    let rules = build_rules(
+        parsed_rules,
+        parsed_lookahead,
+        parsed_rule_names,
+        parsed_fragment_ids,
+    )?;
 
     let grammar = Arc::new(Grammar {
         highest_terminal_id,
         rules,
-        lookahead,
-        rule_names,
-        fragment_ids,
         query_rule_id,
+        select_statement_rule_id,
     });
 
     if let Some(grammar_id) = grammar_id {
@@ -1110,6 +1246,45 @@ fn export_tokens(tokens: &mut Zval) -> PhpResult<(Vec<Zval>, Vec<i64>)> {
     }
 
     Ok((token_objects, token_ids))
+}
+
+fn build_rules(
+    rules: HashMap<i64, Vec<Vec<i64>>>,
+    lookahead: HashMap<i64, HashSet<i64>>,
+    rule_names: HashMap<i64, String>,
+    fragment_ids: HashSet<i64>,
+) -> PhpResult<Vec<Option<Rule>>> {
+    let max_rule_id = rules
+        .keys()
+        .chain(lookahead.keys())
+        .chain(rule_names.keys())
+        .chain(fragment_ids.iter())
+        .copied()
+        .max()
+        .unwrap_or(0);
+    let max_rule_index = usize::try_from(max_rule_id).map_err(php_error)?;
+    let mut dense_rules: Vec<Option<Rule>> = (0..=max_rule_index).map(|_| None).collect();
+
+    for (rule_id, branches) in rules {
+        let index = usize::try_from(rule_id).map_err(php_error)?;
+        let mut lookahead = lookahead.get(&rule_id).map(|set| {
+            let mut values: Vec<i64> = set.iter().copied().collect();
+            values.sort_unstable();
+            values
+        });
+        if let Some(values) = lookahead.as_mut() {
+            values.dedup();
+        }
+
+        dense_rules[index] = Some(Rule {
+            branches,
+            lookahead,
+            rule_name: rule_names.get(&rule_id).cloned().unwrap_or_default(),
+            is_fragment: fragment_ids.contains(&rule_id),
+        });
+    }
+
+    Ok(dense_rules)
 }
 
 fn parse_rules(array: &ZendHashTable) -> PhpResult<HashMap<i64, Vec<Vec<i64>>>> {
@@ -1182,15 +1357,6 @@ fn array_key_to_i64(key: ArrayKey<'_>) -> PhpResult<i64> {
         ArrayKey::String(value) => value.parse::<i64>().map_err(php_error),
         ArrayKey::Str(value) => value.parse::<i64>().map_err(php_error),
     }
-}
-
-fn create_node(rule_id: i64, rule_name: &str) -> PhpResult<Zval> {
-    php_function("wp_sqlite_mysql_native_new_node")?
-        .try_call(vec![
-            &rule_id as &dyn IntoZvalDyn,
-            &rule_name.to_owned() as &dyn IntoZvalDyn,
-        ])
-        .map_err(php_error)
 }
 
 extern "C" fn php_module_info(_module: *mut ModuleEntry) {
