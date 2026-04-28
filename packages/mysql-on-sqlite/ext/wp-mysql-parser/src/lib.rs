@@ -927,10 +927,25 @@ struct Grammar {
 }
 
 struct Rule {
-    branches: Vec<Vec<i64>>,
+    branches: Vec<Branch>,
     lookahead: Option<Vec<i64>>,
     rule_name: String,
     is_fragment: bool,
+}
+
+struct Branch {
+    symbols: Vec<i64>,
+    first_symbol: Option<i64>,
+}
+
+impl Branch {
+    fn new(symbols: Vec<i64>) -> Self {
+        let first_symbol = symbols.first().copied();
+        Self {
+            symbols,
+            first_symbol,
+        }
+    }
 }
 
 impl Grammar {
@@ -945,6 +960,21 @@ impl Grammar {
         self.rule(rule_id)
             .map(|rule| rule.is_fragment)
             .unwrap_or(false)
+    }
+
+    fn can_symbol_start(&self, symbol_id: i64, token_id: i64) -> bool {
+        if symbol_id <= self.highest_terminal_id {
+            return 0 == symbol_id || symbol_id == token_id;
+        }
+
+        let Some(rule) = self.rule(symbol_id) else {
+            return false;
+        };
+        let Some(lookahead) = rule.lookahead.as_ref() else {
+            return true;
+        };
+
+        lookahead.binary_search(&token_id).is_ok() || lookahead.binary_search(&0).is_ok()
     }
 }
 
@@ -1106,14 +1136,22 @@ impl WpMySqlNativeParser {
         }
 
         let starting_position = self.position;
+        let starting_token_id = self.token_ids.get(starting_position).copied().unwrap_or(0);
         let mut matched_node = None;
 
         for branch in &rule.branches {
+            if branch
+                .first_symbol
+                .is_some_and(|symbol_id| !grammar.can_symbol_start(symbol_id, starting_token_id))
+            {
+                continue;
+            }
+
             self.position = starting_position;
             let mut children = Vec::new();
             let mut branch_matches = true;
 
-            for &subrule_id in branch {
+            for &subrule_id in &branch.symbols {
                 match self.parse_recursive_inner(subrule_id)? {
                     ParseMatch::No => {
                         branch_matches = false;
@@ -1360,7 +1398,7 @@ fn build_rules(
         }
 
         dense_rules[index] = Some(Rule {
-            branches,
+            branches: branches.into_iter().map(Branch::new).collect(),
             lookahead,
             rule_name: rule_names.get(&rule_id).cloned().unwrap_or_default(),
             is_fragment: fragment_ids.contains(&rule_id),
