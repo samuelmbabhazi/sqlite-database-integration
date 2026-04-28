@@ -940,32 +940,9 @@ impl Grammar {
             .and_then(|index| self.rules.get(index))
             .and_then(Option::as_ref)
     }
-
-    fn is_fragment(&self, rule_id: i64) -> bool {
-        self.rule(rule_id)
-            .map(|rule| rule.is_fragment)
-            .unwrap_or(false)
-    }
 }
 
 static GRAMMAR_CACHE: OnceLock<Mutex<HashMap<u32, Arc<Grammar>>>> = OnceLock::new();
-
-enum AstChild {
-    Node(AstNode),
-    Token(usize),
-}
-
-struct AstNode {
-    rule_id: i64,
-    children: Vec<AstChild>,
-}
-
-enum ParseMatch {
-    No,
-    Empty,
-    Node(AstNode),
-    Token(usize),
-}
 
 enum ParserTokenSource {
     Php(Vec<Zval>),
@@ -996,16 +973,522 @@ impl ParserTokenSource {
             }
         }
     }
+
+    fn token_info(&self, index: usize) -> PhpResult<TokenInfo> {
+        match self {
+            Self::Php(tokens) => {
+                let token = tokens
+                    .get(index)
+                    .ok_or_else(|| php_error("Parser token index is out of range"))?;
+                let token_object = token
+                    .object()
+                    .ok_or_else(|| php_error("Parser token must be an object"))?;
+                let id = token_object.get_property::<i64>("id").map_err(php_error)?;
+                let start = token_object
+                    .get_property::<i64>("start")
+                    .map_err(php_error)?;
+                let length = token_object
+                    .get_property::<i64>("length")
+                    .map_err(php_error)?;
+                let start = usize::try_from(start).map_err(php_error)?;
+                let length = usize::try_from(length).map_err(php_error)?;
+
+                Ok(TokenInfo {
+                    id,
+                    start,
+                    end: start.saturating_add(length),
+                })
+            }
+            Self::Native { tokens, .. } => tokens
+                .get(index)
+                .copied()
+                .ok_or_else(|| php_error("Parser token index is out of range")),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NativeAstChild {
+    Node(usize),
+    Token(usize),
+}
+
+#[derive(Clone, Copy)]
+enum NativeAstRoot {
+    No,
+    Empty,
+    Node(usize),
+    Token(usize),
+}
+
+enum NativeParseMatch {
+    No,
+    Empty,
+    Node(usize),
+    Token(usize),
+    Fragment(Vec<NativeAstChild>),
+}
+
+struct NativeAstNode {
+    rule_id: i64,
+    children: Vec<NativeAstChild>,
+    first_token: Option<usize>,
+    last_token: Option<usize>,
+}
+
+struct NativeAstArena {
+    grammar: Arc<Grammar>,
+    token_source: Arc<ParserTokenSource>,
+    nodes: Vec<NativeAstNode>,
+    root: NativeAstRoot,
+}
+
+#[php_class]
+#[php(name = "WP_MySQL_Native_Ast")]
+pub struct WpMySqlNativeAst {
+    arena: Arc<NativeAstArena>,
+}
+
+impl NativeAstArena {
+    fn new(grammar: Arc<Grammar>, token_source: Arc<ParserTokenSource>) -> Self {
+        Self {
+            grammar,
+            token_source,
+            nodes: Vec::new(),
+            root: NativeAstRoot::No,
+        }
+    }
+
+    fn push_node(&mut self, rule_id: i64, children: Vec<NativeAstChild>) -> usize {
+        let index = self.nodes.len();
+        let mut first_token = None;
+        let mut last_token = None;
+        for child in &children {
+            match child {
+                NativeAstChild::Node(child_index) => {
+                    if let Some(node) = self.nodes.get(*child_index) {
+                        if first_token.is_none() {
+                            first_token = node.first_token;
+                        }
+                        if node.last_token.is_some() {
+                            last_token = node.last_token;
+                        }
+                    }
+                }
+                NativeAstChild::Token(token_index) => {
+                    if first_token.is_none() {
+                        first_token = Some(*token_index);
+                    }
+                    last_token = Some(*token_index);
+                }
+            }
+        }
+
+        self.nodes.push(NativeAstNode {
+            rule_id,
+            children,
+            first_token,
+            last_token,
+        });
+        index
+    }
+
+    fn create_php_ast(&self, native_ast_zval: &Zval) -> PhpResult<Zval> {
+        match self.root {
+            NativeAstRoot::No => Ok(Zval::null()),
+            NativeAstRoot::Empty => {
+                let mut zval = Zval::new();
+                zval.set_bool(true);
+                Ok(zval)
+            }
+            NativeAstRoot::Node(index) => self.create_php_node(native_ast_zval, index),
+            NativeAstRoot::Token(index) => self.token_source.create_php_token(index),
+        }
+    }
+
+    fn create_php_node(&self, native_ast_zval: &Zval, index: usize) -> PhpResult<Zval> {
+        let node = self.node(index)?;
+        let classes = php_classes()?;
+        let mut object = classes.parser_node.new();
+        let rule_name = self
+            .grammar
+            .rule(node.rule_id)
+            .map(|rule| rule.rule_name.as_str())
+            .unwrap_or_default();
+        let index = i64::try_from(index).map_err(php_error)?;
+
+        update_object_property(&mut object, classes.parser_node, "rule_id", node.rule_id)?;
+        update_object_property(
+            &mut object,
+            classes.parser_node,
+            "rule_name",
+            rule_name.to_owned(),
+        )?;
+        update_object_property(
+            &mut object,
+            classes.parser_node,
+            "native_ast",
+            native_ast_zval.shallow_clone(),
+        )?;
+        update_object_property(&mut object, classes.parser_node, "native_node_index", index)?;
+
+        object.into_zval(false).map_err(php_error)
+    }
+
+    fn node(&self, index: usize) -> PhpResult<&NativeAstNode> {
+        self.nodes
+            .get(index)
+            .ok_or_else(|| php_error("Native AST node index is out of range"))
+    }
+
+    fn child_to_zval(&self, native_ast_zval: &Zval, child: NativeAstChild) -> PhpResult<Zval> {
+        match child {
+            NativeAstChild::Node(index) => self.create_php_node(native_ast_zval, index),
+            NativeAstChild::Token(index) => self.token_source.create_php_token(index),
+        }
+    }
+
+    fn child_node_matches(&self, child: NativeAstChild, rule_name: Option<&str>) -> bool {
+        let NativeAstChild::Node(index) = child else {
+            return false;
+        };
+        let Ok(node) = self.node(index) else {
+            return false;
+        };
+        rule_name.is_none_or(|expected| {
+            self.grammar
+                .rule(node.rule_id)
+                .map(|rule| rule.rule_name == expected)
+                .unwrap_or(false)
+        })
+    }
+
+    fn child_token_matches(&self, child: NativeAstChild, token_id: Option<i64>) -> bool {
+        let NativeAstChild::Token(index) = child else {
+            return false;
+        };
+        token_id.is_none_or(|expected| {
+            self.token_source
+                .token_info(index)
+                .map(|token| token.id == expected)
+                .unwrap_or(false)
+        })
+    }
+
+    fn descendant_stack(&self, index: usize) -> PhpResult<Vec<NativeAstChild>> {
+        let mut stack = self.node(index)?.children.clone();
+        stack.reverse();
+        Ok(stack)
+    }
+}
+
+fn native_ast(native_ast: &Zval) -> PhpResult<&WpMySqlNativeAst> {
+    <&WpMySqlNativeAst as FromZval>::from_zval(native_ast)
+        .ok_or_else(|| php_error("Missing native AST handle"))
+}
+
+fn native_ast_node_index(node_index: i64) -> PhpResult<usize> {
+    usize::try_from(node_index).map_err(php_error)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_has_child(
+    native_ast_zval: &Zval,
+    node_index: i64,
+) -> PhpResult<bool> {
+    let ast = native_ast(native_ast_zval)?;
+    Ok(!ast
+        .arena
+        .node(native_ast_node_index(node_index)?)?
+        .children
+        .is_empty())
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_has_child_node(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    rule_name: Option<String>,
+) -> PhpResult<bool> {
+    let ast = native_ast(native_ast_zval)?;
+    Ok(ast
+        .arena
+        .node(native_ast_node_index(node_index)?)?
+        .children
+        .iter()
+        .copied()
+        .any(|child| ast.arena.child_node_matches(child, rule_name.as_deref())))
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_has_child_token(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    token_id: Option<i64>,
+) -> PhpResult<bool> {
+    let ast = native_ast(native_ast_zval)?;
+    Ok(ast
+        .arena
+        .node(native_ast_node_index(node_index)?)?
+        .children
+        .iter()
+        .copied()
+        .any(|child| ast.arena.child_token_matches(child, token_id)))
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_first_child(
+    native_ast_zval: &Zval,
+    node_index: i64,
+) -> PhpResult<Zval> {
+    let ast = native_ast(native_ast_zval)?;
+    let Some(child) = ast
+        .arena
+        .node(native_ast_node_index(node_index)?)?
+        .children
+        .first()
+        .copied()
+    else {
+        return Ok(Zval::null());
+    };
+    ast.arena.child_to_zval(native_ast_zval, child)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_first_child_node(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    rule_name: Option<String>,
+) -> PhpResult<Zval> {
+    let ast = native_ast(native_ast_zval)?;
+    for child in &ast.arena.node(native_ast_node_index(node_index)?)?.children {
+        if ast.arena.child_node_matches(*child, rule_name.as_deref()) {
+            return ast.arena.child_to_zval(native_ast_zval, *child);
+        }
+    }
+    Ok(Zval::null())
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_first_child_token(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    token_id: Option<i64>,
+) -> PhpResult<Zval> {
+    let ast = native_ast(native_ast_zval)?;
+    for child in &ast.arena.node(native_ast_node_index(node_index)?)?.children {
+        if ast.arena.child_token_matches(*child, token_id) {
+            return ast.arena.child_to_zval(native_ast_zval, *child);
+        }
+    }
+    Ok(Zval::null())
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_first_descendant_node(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    rule_name: Option<String>,
+) -> PhpResult<Zval> {
+    let ast = native_ast(native_ast_zval)?;
+    let mut stack = ast
+        .arena
+        .descendant_stack(native_ast_node_index(node_index)?)?;
+    while let Some(child) = stack.pop() {
+        if ast.arena.child_node_matches(child, rule_name.as_deref()) {
+            return ast.arena.child_to_zval(native_ast_zval, child);
+        }
+        if let NativeAstChild::Node(index) = child {
+            for child in ast.arena.node(index)?.children.iter().rev() {
+                stack.push(*child);
+            }
+        }
+    }
+    Ok(Zval::null())
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_first_descendant_token(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    token_id: Option<i64>,
+) -> PhpResult<Zval> {
+    let ast = native_ast(native_ast_zval)?;
+    let mut stack = ast
+        .arena
+        .descendant_stack(native_ast_node_index(node_index)?)?;
+    while let Some(child) = stack.pop() {
+        if ast.arena.child_token_matches(child, token_id) {
+            return ast.arena.child_to_zval(native_ast_zval, child);
+        }
+        if let NativeAstChild::Node(index) = child {
+            for child in ast.arena.node(index)?.children.iter().rev() {
+                stack.push(*child);
+            }
+        }
+    }
+    Ok(Zval::null())
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_children(
+    native_ast_zval: &Zval,
+    node_index: i64,
+) -> PhpResult<Vec<Zval>> {
+    let ast = native_ast(native_ast_zval)?;
+    ast.arena
+        .node(native_ast_node_index(node_index)?)?
+        .children
+        .iter()
+        .copied()
+        .map(|child| ast.arena.child_to_zval(native_ast_zval, child))
+        .collect()
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_child_nodes(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    rule_name: Option<String>,
+) -> PhpResult<Vec<Zval>> {
+    let ast = native_ast(native_ast_zval)?;
+    ast.arena
+        .node(native_ast_node_index(node_index)?)?
+        .children
+        .iter()
+        .copied()
+        .filter(|child| ast.arena.child_node_matches(*child, rule_name.as_deref()))
+        .map(|child| ast.arena.child_to_zval(native_ast_zval, child))
+        .collect()
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_child_tokens(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    token_id: Option<i64>,
+) -> PhpResult<Vec<Zval>> {
+    let ast = native_ast(native_ast_zval)?;
+    ast.arena
+        .node(native_ast_node_index(node_index)?)?
+        .children
+        .iter()
+        .copied()
+        .filter(|child| ast.arena.child_token_matches(*child, token_id))
+        .map(|child| ast.arena.child_to_zval(native_ast_zval, child))
+        .collect()
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_descendants(
+    native_ast_zval: &Zval,
+    node_index: i64,
+) -> PhpResult<Vec<Zval>> {
+    let ast = native_ast(native_ast_zval)?;
+    let mut descendants = Vec::new();
+    let mut stack = ast
+        .arena
+        .descendant_stack(native_ast_node_index(node_index)?)?;
+    while let Some(child) = stack.pop() {
+        descendants.push(ast.arena.child_to_zval(native_ast_zval, child)?);
+        if let NativeAstChild::Node(index) = child {
+            for child in ast.arena.node(index)?.children.iter().rev() {
+                stack.push(*child);
+            }
+        }
+    }
+    Ok(descendants)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_descendant_nodes(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    rule_name: Option<String>,
+) -> PhpResult<Vec<Zval>> {
+    let ast = native_ast(native_ast_zval)?;
+    let mut descendants = Vec::new();
+    let mut stack = ast
+        .arena
+        .descendant_stack(native_ast_node_index(node_index)?)?;
+    while let Some(child) = stack.pop() {
+        if ast.arena.child_node_matches(child, rule_name.as_deref()) {
+            descendants.push(ast.arena.child_to_zval(native_ast_zval, child)?);
+        }
+        if let NativeAstChild::Node(index) = child {
+            for child in ast.arena.node(index)?.children.iter().rev() {
+                stack.push(*child);
+            }
+        }
+    }
+    Ok(descendants)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_descendant_tokens(
+    native_ast_zval: &Zval,
+    node_index: i64,
+    token_id: Option<i64>,
+) -> PhpResult<Vec<Zval>> {
+    let ast = native_ast(native_ast_zval)?;
+    let mut descendants = Vec::new();
+    let mut stack = ast
+        .arena
+        .descendant_stack(native_ast_node_index(node_index)?)?;
+    while let Some(child) = stack.pop() {
+        if ast.arena.child_token_matches(child, token_id) {
+            descendants.push(ast.arena.child_to_zval(native_ast_zval, child)?);
+        }
+        if let NativeAstChild::Node(index) = child {
+            for child in ast.arena.node(index)?.children.iter().rev() {
+                stack.push(*child);
+            }
+        }
+    }
+    Ok(descendants)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_start(
+    native_ast_zval: &Zval,
+    node_index: i64,
+) -> PhpResult<i64> {
+    let ast = native_ast(native_ast_zval)?;
+    let node = ast.arena.node(native_ast_node_index(node_index)?)?;
+    let token_index = node
+        .first_token
+        .ok_or_else(|| php_error("Native AST node has no descendant tokens"))?;
+    let token = ast.arena.token_source.token_info(token_index)?;
+    i64::try_from(token.start).map_err(php_error)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_length(
+    native_ast_zval: &Zval,
+    node_index: i64,
+) -> PhpResult<i64> {
+    let ast = native_ast(native_ast_zval)?;
+    let node = ast.arena.node(native_ast_node_index(node_index)?)?;
+    let first_token_index = node
+        .first_token
+        .ok_or_else(|| php_error("Native AST node has no descendant tokens"))?;
+    let last_token_index = node
+        .last_token
+        .ok_or_else(|| php_error("Native AST node has no descendant tokens"))?;
+    let first_token = ast.arena.token_source.token_info(first_token_index)?;
+    let last_token = ast.arena.token_source.token_info(last_token_index)?;
+    let length = last_token.end.saturating_sub(first_token.start);
+    i64::try_from(length).map_err(php_error)
 }
 
 #[php_class]
 #[php(name = "WP_MySQL_Native_Parser")]
 pub struct WpMySqlNativeParser {
     grammar: Arc<Grammar>,
-    token_source: ParserTokenSource,
+    token_source: Arc<ParserTokenSource>,
     token_ids: Vec<i64>,
     position: usize,
-    current_ast: Option<ParseMatch>,
+    current_ast: Option<Arc<NativeAstArena>>,
     current_php_ast: Option<Zval>,
 }
 
@@ -1018,7 +1501,7 @@ impl WpMySqlNativeParser {
 
         Ok(Self {
             grammar,
-            token_source,
+            token_source: Arc::new(token_source),
             token_ids,
             position: 0,
             current_ast: None,
@@ -1028,8 +1511,8 @@ impl WpMySqlNativeParser {
 
     pub fn parse(&mut self) -> PhpResult<Zval> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            let ast = self.parse_recursive_inner(self.grammar.query_rule_id)?;
-            self.create_php_ast(&ast)
+            let ast = self.parse_native_ast()?;
+            self.create_php_ast(ast)
         })
     }
 
@@ -1046,7 +1529,7 @@ impl WpMySqlNativeParser {
             return Ok(Zval::null());
         };
 
-        let ast = self.create_php_ast(native_ast)?;
+        let ast = self.create_php_ast(Arc::clone(native_ast))?;
         self.current_php_ast = Some(ast);
         match self.current_php_ast.as_ref() {
             Some(ast) => Ok(ast.shallow_clone()),
@@ -1063,25 +1546,49 @@ impl WpMySqlNativeParser {
             return Ok(false);
         }
 
-        self.current_ast = Some(self.parse_recursive_inner(self.grammar.query_rule_id)?);
+        self.current_ast = Some(self.parse_native_ast()?);
         self.current_php_ast = None;
         Ok(true)
     }
 
-    fn parse_recursive_inner(&mut self, rule_id: i64) -> PhpResult<ParseMatch> {
+    fn parse_native_ast(&mut self) -> PhpResult<Arc<NativeAstArena>> {
+        let mut arena =
+            NativeAstArena::new(Arc::clone(&self.grammar), Arc::clone(&self.token_source));
+        let query_rule_id = self.grammar.query_rule_id;
+        arena.root = match self.parse_recursive_inner(&mut arena, query_rule_id)? {
+            NativeParseMatch::No => NativeAstRoot::No,
+            NativeParseMatch::Empty => NativeAstRoot::Empty,
+            NativeParseMatch::Node(index) => NativeAstRoot::Node(index),
+            NativeParseMatch::Token(index) => NativeAstRoot::Token(index),
+            NativeParseMatch::Fragment(children) => {
+                if children.is_empty() {
+                    NativeAstRoot::Empty
+                } else {
+                    NativeAstRoot::Node(arena.push_node(query_rule_id, children))
+                }
+            }
+        };
+        Ok(Arc::new(arena))
+    }
+
+    fn parse_recursive_inner(
+        &mut self,
+        arena: &mut NativeAstArena,
+        rule_id: i64,
+    ) -> PhpResult<NativeParseMatch> {
         if rule_id <= self.grammar.highest_terminal_id {
             if self.position >= self.token_ids.len() {
-                return Ok(ParseMatch::No);
+                return Ok(NativeParseMatch::No);
             }
             if rule_id == 0 {
-                return Ok(ParseMatch::Empty);
+                return Ok(NativeParseMatch::Empty);
             }
             if self.token_ids[self.position] == rule_id {
                 let token_index = self.position;
                 self.position += 1;
-                return Ok(ParseMatch::Token(token_index));
+                return Ok(NativeParseMatch::Token(token_index));
             }
-            return Ok(ParseMatch::No);
+            return Ok(NativeParseMatch::No);
         }
 
         let grammar = unsafe {
@@ -1092,43 +1599,44 @@ impl WpMySqlNativeParser {
         };
 
         let Some(rule) = grammar.rule(rule_id) else {
-            return Ok(ParseMatch::No);
+            return Ok(NativeParseMatch::No);
         };
         if rule.branches.is_empty() {
-            return Ok(ParseMatch::No);
+            return Ok(NativeParseMatch::No);
         }
 
         if let Some(lookahead) = rule.lookahead.as_ref() {
             let token_id = self.token_ids.get(self.position).copied().unwrap_or(0);
             if lookahead.binary_search(&token_id).is_err() && lookahead.binary_search(&0).is_err() {
-                return Ok(ParseMatch::No);
+                return Ok(NativeParseMatch::No);
             }
         }
 
         let starting_position = self.position;
-        let mut matched_node = None;
+        let starting_node_count = arena.nodes.len();
+        let mut matched_children = None;
 
         for branch in &rule.branches {
             self.position = starting_position;
+            arena.nodes.truncate(starting_node_count);
             let mut children = Vec::new();
             let mut branch_matches = true;
 
             for &subrule_id in branch {
-                match self.parse_recursive_inner(subrule_id)? {
-                    ParseMatch::No => {
+                match self.parse_recursive_inner(arena, subrule_id)? {
+                    NativeParseMatch::No => {
                         branch_matches = false;
                         break;
                     }
-                    ParseMatch::Empty => {}
-                    ParseMatch::Token(token_index) => {
-                        children.push(AstChild::Token(token_index));
+                    NativeParseMatch::Empty => {}
+                    NativeParseMatch::Token(token_index) => {
+                        children.push(NativeAstChild::Token(token_index));
                     }
-                    ParseMatch::Node(subnode) => {
-                        if grammar.is_fragment(subrule_id) {
-                            children.extend(subnode.children);
-                        } else {
-                            children.push(AstChild::Node(subnode));
-                        }
+                    NativeParseMatch::Node(node_index) => {
+                        children.push(NativeAstChild::Node(node_index));
+                    }
+                    NativeParseMatch::Fragment(fragment_children) => {
+                        children.extend(fragment_children);
                     }
                 }
             }
@@ -1144,79 +1652,34 @@ impl WpMySqlNativeParser {
             }
 
             if branch_matches {
-                matched_node = Some(AstNode { rule_id, children });
+                matched_children = Some(children);
                 break;
             }
         }
 
-        let Some(node) = matched_node else {
+        let Some(children) = matched_children else {
             self.position = starting_position;
-            return Ok(ParseMatch::No);
+            arena.nodes.truncate(starting_node_count);
+            return Ok(NativeParseMatch::No);
         };
 
-        if node.children.is_empty() {
-            Ok(ParseMatch::Empty)
+        if children.is_empty() {
+            Ok(NativeParseMatch::Empty)
+        } else if rule.is_fragment {
+            Ok(NativeParseMatch::Fragment(children))
         } else {
-            Ok(ParseMatch::Node(node))
+            Ok(NativeParseMatch::Node(arena.push_node(rule_id, children)))
         }
     }
 
-    fn create_php_ast(&self, ast: &ParseMatch) -> PhpResult<Zval> {
+    fn create_php_ast(&self, arena: Arc<NativeAstArena>) -> PhpResult<Zval> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            self.create_php_ast_inner(ast)
+            let native_ast_zval = WpMySqlNativeAst { arena }
+                .into_zval(false)
+                .map_err(php_error)?;
+            let native_ast = native_ast(&native_ast_zval)?;
+            native_ast.arena.create_php_ast(&native_ast_zval)
         })
-    }
-
-    fn create_php_ast_inner(&self, ast: &ParseMatch) -> PhpResult<Zval> {
-        match ast {
-            ParseMatch::No => Ok(Zval::null()),
-            ParseMatch::Empty => {
-                let mut zval = Zval::new();
-                zval.set_bool(true);
-                Ok(zval)
-            }
-            ParseMatch::Node(node) => self.create_php_node(node),
-            ParseMatch::Token(index) => self.token_source.create_php_token(*index),
-        }
-    }
-
-    fn create_php_node(&self, ast_node: &AstNode) -> PhpResult<Zval> {
-        self.create_php_node_inner(ast_node)
-    }
-
-    fn create_php_node_inner(&self, ast_node: &AstNode) -> PhpResult<Zval> {
-        let classes = php_classes()?;
-        let mut object = classes.parser_node.new();
-        let rule_name = self
-            .grammar
-            .rule(ast_node.rule_id)
-            .map(|rule| rule.rule_name.as_str())
-            .unwrap_or_default();
-        let mut children = Vec::with_capacity(ast_node.children.len());
-
-        for child in &ast_node.children {
-            let child_zval = match child {
-                AstChild::Node(child_node) => self.create_php_node(child_node)?,
-                AstChild::Token(index) => self.token_source.create_php_token(*index)?,
-            };
-            children.push(child_zval);
-        }
-
-        update_object_property(
-            &mut object,
-            classes.parser_node,
-            "rule_id",
-            ast_node.rule_id,
-        )?;
-        update_object_property(
-            &mut object,
-            classes.parser_node,
-            "rule_name",
-            rule_name.to_owned(),
-        )?;
-        update_object_property(&mut object, classes.parser_node, "children", children)?;
-
-        object.into_zval(false).map_err(php_error)
     }
 }
 
@@ -1451,8 +1914,37 @@ extern "C" fn php_module_info(_module: *mut ModuleEntry) {
 #[php_module]
 pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
     module
+        .class::<WpMySqlNativeAst>()
         .class::<WpMySqlNativeTokenStream>()
         .class::<WpMySqlNativeLexer>()
         .class::<WpMySqlNativeParser>()
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_has_child))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_has_child_node))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_has_child_token))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_get_first_child))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_first_child_node
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_first_child_token
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_first_descendant_node
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_first_descendant_token
+        ))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_get_children))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_get_child_nodes))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_get_child_tokens))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_get_descendants))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_descendant_nodes
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_descendant_tokens
+        ))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_get_start))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_get_length))
         .info_function(php_module_info)
 }
