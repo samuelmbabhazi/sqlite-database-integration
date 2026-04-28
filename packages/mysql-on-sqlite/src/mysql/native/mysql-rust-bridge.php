@@ -13,10 +13,10 @@
  */
 function wp_sqlite_mysql_native_export_grammar( WP_Parser_Grammar $grammar ): array {
 	return array(
-		'highest_terminal_id'         => $grammar->highest_terminal_id,
-		'rules'                       => $grammar->rules,
-		'lookahead_is_match_possible' => $grammar->lookahead_is_match_possible,
-		'rule_names'                  => $grammar->rule_names,
-		'fragment_ids'                => $grammar->fragment_ids,
+		'highest_terminal_id'         => $grammar->get_highest_terminal_id(),
+		'rules'                       => $grammar->get_rules(),
+		'lookahead_is_match_possible' => $grammar->get_lookahead_is_match_possible(),
+		'rule_names'                  => $grammar->get_rule_names(),
+		'fragment_ids'                => $grammar->get_fragment_ids(),
 	);
 }

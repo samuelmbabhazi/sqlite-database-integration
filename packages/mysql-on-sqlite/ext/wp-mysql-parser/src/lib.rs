@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use ext_php_rs::convert::{FromZval, IntoZval, IntoZvalDyn};
 use ext_php_rs::exception::{PhpException, PhpResult};
@@ -62,33 +62,15 @@ struct PhpClasses {
     parser_node: &'static ClassEntry,
 }
 
-// Class entries are process-lifetime Zend metadata. We only read the pointers
-// after lookup, and PHP owns their lifetime.
-unsafe impl Send for PhpClasses {}
-unsafe impl Sync for PhpClasses {}
-
-static PHP_CLASSES: OnceLock<PhpClasses> = OnceLock::new();
-
-fn php_classes() -> PhpResult<&'static PhpClasses> {
-    if let Some(classes) = PHP_CLASSES.get() {
-        return Ok(classes);
-    }
-
-    let classes = PhpClasses {
+fn php_classes() -> PhpResult<PhpClasses> {
+    Ok(PhpClasses {
         parser_token: ClassEntry::try_find("WP_Parser_Token")
             .ok_or_else(|| php_error("Missing WP_Parser_Token class"))?,
         mysql_token: ClassEntry::try_find("WP_MySQL_Token")
             .ok_or_else(|| php_error("Missing WP_MySQL_Token class"))?,
         parser_node: ClassEntry::try_find("WP_Parser_Node")
             .ok_or_else(|| php_error("Missing WP_Parser_Node class"))?,
-    };
-
-    PHP_CLASSES
-        .set(classes)
-        .map_err(|_| php_error("PHP class cache was initialized concurrently"))?;
-    PHP_CLASSES
-        .get()
-        .ok_or_else(|| php_error("PHP class cache initialization failed"))
+    })
 }
 
 fn update_object_property(
@@ -942,7 +924,11 @@ impl Grammar {
     }
 }
 
-static GRAMMAR_CACHE: OnceLock<Mutex<HashMap<u32, Arc<Grammar>>>> = OnceLock::new();
+#[php_class]
+#[php(name = "WP_MySQL_Native_Grammar")]
+pub struct WpMySqlNativeGrammar {
+    grammar: Arc<Grammar>,
+}
 
 enum ParserTokenSource {
     Php(Vec<Zval>),
@@ -1683,21 +1669,13 @@ impl WpMySqlNativeParser {
     }
 }
 
-fn export_grammar(grammar: &mut Zval) -> PhpResult<Arc<Grammar>> {
-    let grammar_id = grammar.object().map(|object| object.get_id());
-    if let Some(grammar_id) = grammar_id {
-        let cache = GRAMMAR_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-        if let Some(cached) = cache
-            .lock()
-            .map_err(|_| php_error("Grammar cache lock poisoned"))?
-            .get(&grammar_id)
-        {
-            return Ok(Arc::clone(cached));
-        }
+fn export_grammar(grammar_zval: &mut Zval) -> PhpResult<Arc<Grammar>> {
+    if let Some(cached) = cached_native_grammar(grammar_zval)? {
+        return Ok(cached);
     }
 
     let exported = php_function("wp_sqlite_mysql_native_export_grammar")?
-        .try_call(vec![&*grammar as &dyn IntoZvalDyn])
+        .try_call(vec![&*grammar_zval as &dyn IntoZvalDyn])
         .map_err(php_error)?;
     let array = exported
         .array()
@@ -1752,15 +1730,37 @@ fn export_grammar(grammar: &mut Zval) -> PhpResult<Arc<Grammar>> {
         select_statement_rule_id,
     });
 
-    if let Some(grammar_id) = grammar_id {
-        GRAMMAR_CACHE
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-            .map_err(|_| php_error("Grammar cache lock poisoned"))?
-            .insert(grammar_id, Arc::clone(&grammar));
-    }
+    cache_native_grammar(grammar_zval, Arc::clone(&grammar))?;
 
     Ok(grammar)
+}
+
+fn cached_native_grammar(grammar: &Zval) -> PhpResult<Option<Arc<Grammar>>> {
+    let object = grammar
+        .object()
+        .ok_or_else(|| php_error("Parser grammar must be an object"))?;
+    let properties = object.get_properties().map_err(php_error)?;
+    let Some(native_grammar) = properties.get("native_grammar") else {
+        return Ok(None);
+    };
+    let Some(native_grammar) = <&WpMySqlNativeGrammar as FromZval>::from_zval(native_grammar)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(Arc::clone(&native_grammar.grammar)))
+}
+
+fn cache_native_grammar(grammar_zval: &mut Zval, grammar: Arc<Grammar>) -> PhpResult<()> {
+    let object = grammar_zval
+        .object_mut()
+        .ok_or_else(|| php_error("Parser grammar must be an object"))?;
+    let native_grammar = WpMySqlNativeGrammar { grammar }
+        .into_zval(false)
+        .map_err(php_error)?;
+    object
+        .set_property("native_grammar", native_grammar)
+        .map_err(php_error)
 }
 
 fn export_tokens(tokens: &mut Zval) -> PhpResult<(ParserTokenSource, Vec<i64>)> {
@@ -1914,6 +1914,7 @@ extern "C" fn php_module_info(_module: *mut ModuleEntry) {
 #[php_module]
 pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
     module
+        .class::<WpMySqlNativeGrammar>()
         .class::<WpMySqlNativeAst>()
         .class::<WpMySqlNativeTokenStream>()
         .class::<WpMySqlNativeLexer>()
