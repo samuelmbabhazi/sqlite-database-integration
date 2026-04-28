@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use ext_php_rs::convert::{IntoZval, IntoZvalDyn};
+use ext_php_rs::convert::{FromZval, IntoZval, IntoZvalDyn};
 use ext_php_rs::exception::{PhpException, PhpResult};
 use ext_php_rs::ffi::{zend_class_entry, zend_object, zval};
 use ext_php_rs::flags::DataType;
@@ -110,6 +110,32 @@ fn update_object_property(
     Ok(())
 }
 
+fn create_mysql_token(sql_zval: &Zval, token: TokenInfo, no_backslash: bool) -> PhpResult<Zval> {
+    let id = token.id;
+    let start = i64::try_from(token.start).map_err(php_error)?;
+    let length = i64::try_from(token.end.saturating_sub(token.start)).map_err(php_error)?;
+    let classes = php_classes()?;
+    let mut object = classes.mysql_token.new();
+
+    update_object_property(&mut object, classes.parser_token, "id", id)?;
+    update_object_property(&mut object, classes.parser_token, "start", start)?;
+    update_object_property(&mut object, classes.parser_token, "length", length)?;
+    update_object_property(
+        &mut object,
+        classes.parser_token,
+        "input",
+        sql_zval.shallow_clone(),
+    )?;
+    update_object_property(
+        &mut object,
+        classes.mysql_token,
+        "sql_mode_no_backslash_escapes_enabled",
+        no_backslash,
+    )?;
+
+    object.into_zval(false).map_err(php_error)
+}
+
 fn sql_modes_mask(sql_modes: &[String]) -> i64 {
     let mut mask = 0;
     for sql_mode in sql_modes {
@@ -180,6 +206,22 @@ struct TokenInfo {
     id: i64,
     start: usize,
     end: usize,
+}
+
+#[php_class]
+#[php(name = "WP_MySQL_Native_Token_Stream")]
+pub struct WpMySqlNativeTokenStream {
+    sql_zval: Zval,
+    tokens: Vec<TokenInfo>,
+    no_backslash: bool,
+}
+
+#[php_impl]
+#[php(change_method_case = "snake_case")]
+impl WpMySqlNativeTokenStream {
+    pub fn count(&self) -> usize {
+        self.tokens.len()
+    }
 }
 
 #[php_class]
@@ -266,6 +308,21 @@ impl WpMySqlNativeLexer {
         Ok(tokens)
     }
 
+    pub fn native_token_stream(&mut self) -> WpMySqlNativeTokenStream {
+        let mut tokens = Vec::new();
+        while self.next_token() {
+            if let Some(token) = self.current_token_info() {
+                tokens.push(token);
+            }
+        }
+
+        WpMySqlNativeTokenStream {
+            sql_zval: self.sql_zval.shallow_clone(),
+            tokens,
+            no_backslash: self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES),
+        }
+    }
+
     pub fn get_mysql_version(&self) -> i64 {
         self.mysql_version
     }
@@ -293,30 +350,11 @@ impl WpMySqlNativeLexer {
     }
 
     fn create_token(&self, token: TokenInfo) -> PhpResult<Zval> {
-        let id = token.id;
-        let start = i64::try_from(token.start).map_err(php_error)?;
-        let length = i64::try_from(token.end.saturating_sub(token.start)).map_err(php_error)?;
-        let no_backslash = self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES);
-        let classes = php_classes()?;
-        let mut object = classes.mysql_token.new();
-
-        update_object_property(&mut object, classes.parser_token, "id", id)?;
-        update_object_property(&mut object, classes.parser_token, "start", start)?;
-        update_object_property(&mut object, classes.parser_token, "length", length)?;
-        update_object_property(
-            &mut object,
-            classes.parser_token,
-            "input",
-            self.sql_zval.shallow_clone(),
-        )?;
-        update_object_property(
-            &mut object,
-            classes.mysql_token,
-            "sql_mode_no_backslash_escapes_enabled",
-            no_backslash,
-        )?;
-
-        object.into_zval(false).map_err(php_error)
+        create_mysql_token(
+            &self.sql_zval,
+            token,
+            self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES),
+        )
     }
 
     fn read_next_token(&mut self) -> Option<i64> {
@@ -929,11 +967,42 @@ enum ParseMatch {
     Token(usize),
 }
 
+enum ParserTokenSource {
+    Php(Vec<Zval>),
+    Native {
+        sql_zval: Zval,
+        tokens: Vec<TokenInfo>,
+        no_backslash: bool,
+    },
+}
+
+impl ParserTokenSource {
+    fn create_php_token(&self, index: usize) -> PhpResult<Zval> {
+        match self {
+            Self::Php(tokens) => tokens
+                .get(index)
+                .map(Zval::shallow_clone)
+                .ok_or_else(|| php_error("Parser token index is out of range")),
+            Self::Native {
+                sql_zval,
+                tokens,
+                no_backslash,
+            } => {
+                let token = tokens
+                    .get(index)
+                    .copied()
+                    .ok_or_else(|| php_error("Parser token index is out of range"))?;
+                create_mysql_token(sql_zval, token, *no_backslash)
+            }
+        }
+    }
+}
+
 #[php_class]
 #[php(name = "WP_MySQL_Native_Parser")]
 pub struct WpMySqlNativeParser {
     grammar: Arc<Grammar>,
-    tokens: Vec<Zval>,
+    token_source: ParserTokenSource,
     token_ids: Vec<i64>,
     position: usize,
     current_ast: Option<ParseMatch>,
@@ -945,11 +1014,11 @@ pub struct WpMySqlNativeParser {
 impl WpMySqlNativeParser {
     pub fn __construct(grammar: &mut Zval, tokens: &mut Zval) -> PhpResult<Self> {
         let grammar = export_grammar(grammar)?;
-        let (tokens, token_ids) = export_tokens(tokens)?;
+        let (token_source, token_ids) = export_tokens(tokens)?;
 
         Ok(Self {
             grammar,
-            tokens,
+            token_source,
             token_ids,
             position: 0,
             current_ast: None,
@@ -959,21 +1028,13 @@ impl WpMySqlNativeParser {
 
     pub fn parse(&mut self) -> PhpResult<Zval> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            let ast = self.parse_recursive(self.grammar.query_rule_id)?;
+            let ast = self.parse_recursive_inner(self.grammar.query_rule_id)?;
             self.create_php_ast(&ast)
         })
     }
 
     pub fn next_query(&mut self) -> PhpResult<bool> {
-        if self.position >= self.tokens.len() {
-            self.current_ast = None;
-            self.current_php_ast = None;
-            return Ok(false);
-        }
-
-        self.current_ast = Some(self.parse_recursive(self.grammar.query_rule_id)?);
-        self.current_php_ast = None;
-        Ok(true)
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || self.next_query_inner())
     }
 
     pub fn get_query_ast(&mut self) -> PhpResult<Zval> {
@@ -995,15 +1056,21 @@ impl WpMySqlNativeParser {
 }
 
 impl WpMySqlNativeParser {
-    fn parse_recursive(&mut self, rule_id: i64) -> PhpResult<ParseMatch> {
-        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            self.parse_recursive_inner(rule_id)
-        })
+    fn next_query_inner(&mut self) -> PhpResult<bool> {
+        if self.position >= self.token_ids.len() {
+            self.current_ast = None;
+            self.current_php_ast = None;
+            return Ok(false);
+        }
+
+        self.current_ast = Some(self.parse_recursive_inner(self.grammar.query_rule_id)?);
+        self.current_php_ast = None;
+        Ok(true)
     }
 
     fn parse_recursive_inner(&mut self, rule_id: i64) -> PhpResult<ParseMatch> {
         if rule_id <= self.grammar.highest_terminal_id {
-            if self.position >= self.tokens.len() {
+            if self.position >= self.token_ids.len() {
                 return Ok(ParseMatch::No);
             }
             if rule_id == 0 {
@@ -1047,7 +1114,7 @@ impl WpMySqlNativeParser {
             let mut branch_matches = true;
 
             for &subrule_id in branch {
-                match self.parse_recursive(subrule_id)? {
+                match self.parse_recursive_inner(subrule_id)? {
                     ParseMatch::No => {
                         branch_matches = false;
                         break;
@@ -1095,6 +1162,12 @@ impl WpMySqlNativeParser {
     }
 
     fn create_php_ast(&self, ast: &ParseMatch) -> PhpResult<Zval> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.create_php_ast_inner(ast)
+        })
+    }
+
+    fn create_php_ast_inner(&self, ast: &ParseMatch) -> PhpResult<Zval> {
         match ast {
             ParseMatch::No => Ok(Zval::null()),
             ParseMatch::Empty => {
@@ -1103,14 +1176,12 @@ impl WpMySqlNativeParser {
                 Ok(zval)
             }
             ParseMatch::Node(node) => self.create_php_node(node),
-            ParseMatch::Token(index) => Ok(self.tokens[*index].shallow_clone()),
+            ParseMatch::Token(index) => self.token_source.create_php_token(*index),
         }
     }
 
     fn create_php_node(&self, ast_node: &AstNode) -> PhpResult<Zval> {
-        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            self.create_php_node_inner(ast_node)
-        })
+        self.create_php_node_inner(ast_node)
     }
 
     fn create_php_node_inner(&self, ast_node: &AstNode) -> PhpResult<Zval> {
@@ -1126,7 +1197,7 @@ impl WpMySqlNativeParser {
         for child in &ast_node.children {
             let child_zval = match child {
                 AstChild::Node(child_node) => self.create_php_node(child_node)?,
-                AstChild::Token(index) => self.tokens[*index].shallow_clone(),
+                AstChild::Token(index) => self.token_source.create_php_token(*index)?,
             };
             children.push(child_zval);
         }
@@ -1229,7 +1300,19 @@ fn export_grammar(grammar: &mut Zval) -> PhpResult<Arc<Grammar>> {
     Ok(grammar)
 }
 
-fn export_tokens(tokens: &mut Zval) -> PhpResult<(Vec<Zval>, Vec<i64>)> {
+fn export_tokens(tokens: &mut Zval) -> PhpResult<(ParserTokenSource, Vec<i64>)> {
+    if let Some(stream) = <&WpMySqlNativeTokenStream as FromZval>::from_zval(tokens) {
+        let token_ids = stream.tokens.iter().map(|token| token.id).collect();
+        return Ok((
+            ParserTokenSource::Native {
+                sql_zval: stream.sql_zval.shallow_clone(),
+                tokens: stream.tokens.clone(),
+                no_backslash: stream.no_backslash,
+            },
+            token_ids,
+        ));
+    }
+
     let array = tokens
         .array()
         .ok_or_else(|| php_error("Parser tokens must be an array"))?;
@@ -1245,7 +1328,7 @@ fn export_tokens(tokens: &mut Zval) -> PhpResult<(Vec<Zval>, Vec<i64>)> {
         token_ids.push(id);
     }
 
-    Ok((token_objects, token_ids))
+    Ok((ParserTokenSource::Php(token_objects), token_ids))
 }
 
 fn build_rules(
@@ -1368,6 +1451,7 @@ extern "C" fn php_module_info(_module: *mut ModuleEntry) {
 #[php_module]
 pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
     module
+        .class::<WpMySqlNativeTokenStream>()
         .class::<WpMySqlNativeLexer>()
         .class::<WpMySqlNativeParser>()
         .info_function(php_module_info)
