@@ -1153,11 +1153,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
 	 */
 	public function create_parser( string $query ): WP_MySQL_Parser {
-		$lexer  = new WP_MySQL_Lexer(
+		$lexer = new WP_MySQL_Lexer(
 			$query,
 			80038,
 			$this->active_sql_modes
 		);
+		if ( method_exists( $lexer, 'native_token_stream' ) ) {
+			$tokens = $lexer->native_token_stream();
+			return new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
+		}
+
 		$tokens = $lexer->remaining_tokens();
 		return new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
 	}
