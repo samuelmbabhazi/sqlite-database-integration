@@ -10,23 +10,13 @@
  */
 class WP_Parser {
 	protected $grammar;
-	protected $rules;
-	protected $rule_names;
-	protected $fragment_ids;
-	protected $lookahead_is_match_possible;
-	protected $highest_terminal_id;
 	protected $tokens;
 	protected $position;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
-		$this->grammar                     = $grammar;
-		$this->rules                       = $grammar->get_rules();
-		$this->rule_names                  = $grammar->get_rule_names();
-		$this->fragment_ids                = $grammar->get_fragment_ids();
-		$this->lookahead_is_match_possible = $grammar->get_lookahead_is_match_possible();
-		$this->highest_terminal_id         = $grammar->get_highest_terminal_id();
-		$this->tokens                      = $tokens;
-		$this->position                    = 0;
+		$this->grammar  = $grammar;
+		$this->tokens   = $tokens;
+		$this->position = 0;
 	}
 
 	public function parse() {
@@ -37,7 +27,7 @@ class WP_Parser {
 	}
 
 	private function parse_recursive( $rule_id ) {
-		$is_terminal = $rule_id <= $this->highest_terminal_id;
+		$is_terminal = $rule_id <= $this->grammar->highest_terminal_id;
 		if ( $is_terminal ) {
 			if ( $this->position >= count( $this->tokens ) ) {
 				return false;
@@ -54,24 +44,24 @@ class WP_Parser {
 			return false;
 		}
 
-		$branches = $this->rules[ $rule_id ];
+		$branches = $this->grammar->rules[ $rule_id ];
 		if ( ! count( $branches ) ) {
 			return false;
 		}
 
 		// Bale out from processing the current branch if none of its rules can
 		// possibly match the current token.
-		if ( isset( $this->lookahead_is_match_possible[ $rule_id ] ) ) {
+		if ( isset( $this->grammar->lookahead_is_match_possible[ $rule_id ] ) ) {
 			$token_id = $this->tokens[ $this->position ]->id;
 			if (
-				! isset( $this->lookahead_is_match_possible[ $rule_id ][ $token_id ] ) &&
-				! isset( $this->lookahead_is_match_possible[ $rule_id ][ WP_Parser_Grammar::EMPTY_RULE_ID ] )
+				! isset( $this->grammar->lookahead_is_match_possible[ $rule_id ][ $token_id ] ) &&
+				! isset( $this->grammar->lookahead_is_match_possible[ $rule_id ][ WP_Parser_Grammar::EMPTY_RULE_ID ] )
 			) {
 				return false;
 			}
 		}
 
-		$rule_name         = $this->rule_names[ $rule_id ];
+		$rule_name         = $this->grammar->rule_names[ $rule_id ];
 		$starting_position = $this->position;
 		foreach ( $branches as $branch ) {
 			$this->position = $starting_position;
@@ -96,7 +86,7 @@ class WP_Parser {
 				if ( is_array( $subnode ) && ! count( $subnode ) ) {
 					continue;
 				}
-				if ( isset( $this->fragment_ids[ $subrule_id ] ) ) {
+				if ( isset( $this->grammar->fragment_ids[ $subrule_id ] ) ) {
 					$node->merge_fragment( $subnode );
 				} else {
 					$node->append_child( $subnode );

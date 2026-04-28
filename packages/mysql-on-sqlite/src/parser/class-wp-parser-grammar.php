@@ -26,46 +26,15 @@ class WP_Parser_Grammar {
 	/**
 	 * @TODO: Review and document these properties and their visibility.
 	 */
-	private $rules = array();
-	private $rule_names = array();
-	private $fragment_ids = array();
-	private $lookahead_is_match_possible = array();
-	private $lowest_non_terminal_id;
-	private $highest_terminal_id;
-	public $native_grammar;
+	public $rules;
+	public $rule_names;
+	public $fragment_ids;
+	public $lookahead_is_match_possible = array();
+	public $lowest_non_terminal_id;
+	public $highest_terminal_id;
 
 	public function __construct( array $rules ) {
 		$this->inflate( $rules );
-	}
-
-	public function __get( $name ) {
-		if ( $this->is_grammar_property( $name ) ) {
-			return $this->$name;
-		}
-
-		trigger_error( 'Undefined property: ' . __CLASS__ . '::$' . $name, E_USER_NOTICE );
-		return null;
-	}
-
-	public function __isset( $name ) {
-		return $this->is_grammar_property( $name ) && isset( $this->$name );
-	}
-
-	public function __set( $name, $value ) {
-		if ( $this->is_grammar_property( $name ) ) {
-			$this->$name         = $value;
-			$this->native_grammar = null;
-			return;
-		}
-
-		trigger_error( 'Undefined property: ' . __CLASS__ . '::$' . $name, E_USER_NOTICE );
-	}
-
-	public function __unset( $name ) {
-		if ( $this->is_grammar_property( $name ) ) {
-			unset( $this->$name );
-			$this->native_grammar = null;
-		}
 	}
 
 	public function get_rule_name( $rule_id ) {
@@ -74,41 +43,6 @@ class WP_Parser_Grammar {
 
 	public function get_rule_id( $rule_name ) {
 		return array_search( $rule_name, $this->rule_names, true );
-	}
-
-	public function get_rules() {
-		return $this->rules;
-	}
-
-	public function get_rule_names() {
-		return $this->rule_names;
-	}
-
-	public function get_fragment_ids() {
-		return $this->fragment_ids;
-	}
-
-	public function get_lookahead_is_match_possible() {
-		return $this->lookahead_is_match_possible;
-	}
-
-	public function get_highest_terminal_id() {
-		return $this->highest_terminal_id;
-	}
-
-	private function is_grammar_property( $name ) {
-		return in_array(
-			$name,
-			array(
-				'rules',
-				'rule_names',
-				'fragment_ids',
-				'lookahead_is_match_possible',
-				'lowest_non_terminal_id',
-				'highest_terminal_id',
-			),
-			true
-		);
 	}
 
 	/**
