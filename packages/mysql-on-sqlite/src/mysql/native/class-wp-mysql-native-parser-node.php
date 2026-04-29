@@ -67,129 +67,97 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function has_child(): bool {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_has_child( $this->native_ast, $this->native_node_index );
-		}
+		$this->materialize_native_children();
 		return parent::has_child();
 	}
 
 	/** @inheritDoc */
 	public function has_child_node( ?string $rule_name = null ): bool {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_has_child_node( $this->native_ast, $this->native_node_index, $rule_name );
-		}
+		$this->materialize_native_children();
 		return parent::has_child_node( $rule_name );
 	}
 
 	/** @inheritDoc */
 	public function has_child_token( ?int $token_id = null ): bool {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_has_child_token( $this->native_ast, $this->native_node_index, $token_id );
-		}
+		$this->materialize_native_children();
 		return parent::has_child_token( $token_id );
 	}
 
 	/** @inheritDoc */
 	public function get_first_child() {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_first_child( $this->native_ast, $this->native_node_index );
-		}
+		$this->materialize_native_children();
 		return parent::get_first_child();
 	}
 
 	/** @inheritDoc */
 	public function get_first_child_node( ?string $rule_name = null ): ?WP_Parser_Node {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_first_child_node( $this->native_ast, $this->native_node_index, $rule_name );
-		}
+		$this->materialize_native_children();
 		return parent::get_first_child_node( $rule_name );
 	}
 
 	/** @inheritDoc */
 	public function get_first_child_token( ?int $token_id = null ): ?WP_Parser_Token {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_first_child_token( $this->native_ast, $this->native_node_index, $token_id );
-		}
+		$this->materialize_native_children();
 		return parent::get_first_child_token( $token_id );
 	}
 
 	/** @inheritDoc */
 	public function get_first_descendant_node( ?string $rule_name = null ): ?WP_Parser_Node {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_first_descendant_node( $this->native_ast, $this->native_node_index, $rule_name );
-		}
+		$this->materialize_native_children();
 		return parent::get_first_descendant_node( $rule_name );
 	}
 
 	/** @inheritDoc */
 	public function get_first_descendant_token( ?int $token_id = null ): ?WP_Parser_Token {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_first_descendant_token( $this->native_ast, $this->native_node_index, $token_id );
-		}
+		$this->materialize_native_children();
 		return parent::get_first_descendant_token( $token_id );
 	}
 
 	/** @inheritDoc */
 	public function get_children(): array {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_children( $this->native_ast, $this->native_node_index );
-		}
+		$this->materialize_native_children();
 		return parent::get_children();
 	}
 
 	/** @inheritDoc */
 	public function get_child_nodes( ?string $rule_name = null ): array {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_child_nodes( $this->native_ast, $this->native_node_index, $rule_name );
-		}
+		$this->materialize_native_children();
 		return parent::get_child_nodes( $rule_name );
 	}
 
 	/** @inheritDoc */
 	public function get_child_tokens( ?int $token_id = null ): array {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_child_tokens( $this->native_ast, $this->native_node_index, $token_id );
-		}
+		$this->materialize_native_children();
 		return parent::get_child_tokens( $token_id );
 	}
 
 	/** @inheritDoc */
 	public function get_descendants(): array {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_descendants( $this->native_ast, $this->native_node_index );
-		}
+		$this->materialize_native_children();
 		return parent::get_descendants();
 	}
 
 	/** @inheritDoc */
 	public function get_descendant_nodes( ?string $rule_name = null ): array {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_descendant_nodes( $this->native_ast, $this->native_node_index, $rule_name );
-		}
+		$this->materialize_native_children();
 		return parent::get_descendant_nodes( $rule_name );
 	}
 
 	/** @inheritDoc */
 	public function get_descendant_tokens( ?int $token_id = null ): array {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_descendant_tokens( $this->native_ast, $this->native_node_index, $token_id );
-		}
+		$this->materialize_native_children();
 		return parent::get_descendant_tokens( $token_id );
 	}
 
 	/** @inheritDoc */
 	public function get_start(): int {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_start( $this->native_ast, $this->native_node_index );
-		}
+		$this->materialize_native_children();
 		return parent::get_start();
 	}
 
 	/** @inheritDoc */
 	public function get_length(): int {
-		if ( $this->has_unmaterialized_native_ast() ) {
-			return wp_sqlite_mysql_native_ast_get_length( $this->native_ast, $this->native_node_index );
-		}
+		$this->materialize_native_children();
 		return parent::get_length();
 	}
 
