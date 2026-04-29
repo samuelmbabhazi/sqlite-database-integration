@@ -59,7 +59,7 @@ fn php_function(name: &str) -> PhpResult<ZendCallable<'_>> {
 struct PhpClasses {
     parser_token: &'static ClassEntry,
     mysql_token: &'static ClassEntry,
-    parser_node: &'static ClassEntry,
+    native_parser_node: &'static ClassEntry,
 }
 
 fn php_classes() -> PhpResult<PhpClasses> {
@@ -68,8 +68,8 @@ fn php_classes() -> PhpResult<PhpClasses> {
             .ok_or_else(|| php_error("Missing WP_Parser_Token class"))?,
         mysql_token: ClassEntry::try_find("WP_MySQL_Token")
             .ok_or_else(|| php_error("Missing WP_MySQL_Token class"))?,
-        parser_node: ClassEntry::try_find("WP_Parser_Node")
-            .ok_or_else(|| php_error("Missing WP_Parser_Node class"))?,
+        native_parser_node: ClassEntry::try_find("WP_MySQL_Native_Parser_Node")
+            .ok_or_else(|| php_error("Missing WP_MySQL_Native_Parser_Node class"))?,
     })
 }
 
@@ -1100,7 +1100,7 @@ impl NativeAstArena {
     fn create_php_node(&self, native_ast_zval: &Zval, index: usize) -> PhpResult<Zval> {
         let node = self.node(index)?;
         let classes = php_classes()?;
-        let mut object = classes.parser_node.new();
+        let mut object = classes.native_parser_node.new();
         let rule_name = self
             .grammar
             .rule(node.rule_id)
@@ -1108,20 +1108,30 @@ impl NativeAstArena {
             .unwrap_or_default();
         let index = i64::try_from(index).map_err(php_error)?;
 
-        update_object_property(&mut object, classes.parser_node, "rule_id", node.rule_id)?;
         update_object_property(
             &mut object,
-            classes.parser_node,
+            classes.native_parser_node,
+            "rule_id",
+            node.rule_id,
+        )?;
+        update_object_property(
+            &mut object,
+            classes.native_parser_node,
             "rule_name",
             rule_name.to_owned(),
         )?;
         update_object_property(
             &mut object,
-            classes.parser_node,
+            classes.native_parser_node,
             "native_ast",
             native_ast_zval.shallow_clone(),
         )?;
-        update_object_property(&mut object, classes.parser_node, "native_node_index", index)?;
+        update_object_property(
+            &mut object,
+            classes.native_parser_node,
+            "native_node_index",
+            index,
+        )?;
 
         object.into_zval(false).map_err(php_error)
     }
