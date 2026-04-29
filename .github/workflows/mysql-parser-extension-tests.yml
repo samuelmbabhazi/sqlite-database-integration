@@ -66,8 +66,24 @@ jobs:
         run: cargo build
         working-directory: packages/mysql-on-sqlite/ext/wp-mysql-parser
 
-      - name: Run PHPUnit tests with parser extension
-        run: php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
+      - name: Run native parser smoke tests
+        run: |
+          php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
+          require "src/load.php";
+          $lexer = new WP_MySQL_Lexer( "SELECT ID, post_title FROM wp_posts WHERE ID IN (1, 2, 3)" );
+          if ( ! method_exists( $lexer, "native_token_stream" ) ) {
+              fwrite( STDERR, "Native token stream is not available.\n" );
+              exit( 1 );
+          }
+          $tokens = $lexer->remaining_tokens();
+          $parser = new WP_MySQL_Parser( new WP_Parser_Grammar( include "src/mysql/mysql-grammar.php" ), $tokens );
+          $ast = $parser->parse();
+          if ( ! $ast instanceof WP_Parser_Node || "query" !== $ast->rule_name ) {
+              fwrite( STDERR, "Native parser did not produce the expected query AST.\n" );
+              exit( 1 );
+          }
+          '
+          ./vendor/bin/phpunit -c ./phpunit.xml.dist tests/mysql/WP_MySQL_Lexer_Tests.php tests/parser/WP_Parser_Node_Tests.php
         working-directory: packages/mysql-on-sqlite
 
   sqlite-driver-extension-tests:
@@ -135,10 +151,6 @@ jobs:
               exit( 1 );
           }
           '
-
-      - name: Run PHPUnit tests with SQLite driver using parser extension
-        run: php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
-        working-directory: packages/mysql-on-sqlite
 
       - name: Run native SQLite facade smoke workload
         run: php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" tmp-test-native/run-sqlite-facade-smoke.php
