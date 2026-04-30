@@ -87,13 +87,16 @@ class WP_MySQL_Native_Parser_Node_Identity_Tests extends TestCase {
 		$child = $tree->get_first_child_node();
 		$this->assertNotNull( $child );
 
-		// Public dynamic property — the kind of state a caller might attach
-		// expecting WP_Parser_Node identity to keep it reachable.
-		$child->custom_marker = 'set-on-first-read';
+		// Mutate via the public WP_Parser_Node API — this is exactly the
+		// kind of state the reviewer worried would be lost when accessors
+		// hand back fresh wrappers. rule_name is a declared public property
+		// that the parser itself sets, so PHP 8.2's dynamic-property
+		// deprecation does not apply here.
+		$child->rule_name = 'mutated-rule';
 
 		$same_child = $tree->get_first_child_node();
 		$this->assertSame( $child, $same_child );
-		$this->assertSame( 'set-on-first-read', $same_child->custom_marker );
+		$this->assertSame( 'mutated-rule', $same_child->rule_name );
 	}
 
 	public function test_mutation_survives_parent_materialization(): void {
@@ -101,7 +104,7 @@ class WP_MySQL_Native_Parser_Node_Identity_Tests extends TestCase {
 
 		$child = $tree->get_first_child_node();
 		$this->assertNotNull( $child );
-		$child->custom_marker = 'before-materialize';
+		$child->rule_name = 'before-materialize';
 
 		// Force the parent to materialize its native children by appending
 		// a sibling. After this, the parent walks $this->children directly.
@@ -110,6 +113,6 @@ class WP_MySQL_Native_Parser_Node_Identity_Tests extends TestCase {
 
 		$children = $tree->get_children();
 		$this->assertContains( $child, $children, 'Materialized children must include the previously-mutated wrapper.' );
-		$this->assertSame( 'before-materialize', $child->custom_marker );
+		$this->assertSame( 'before-materialize', $child->rule_name );
 	}
 }

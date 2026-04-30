@@ -39,10 +39,10 @@ while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 }
 fclose( $handle );
 
-$total      = 0;
-$walked     = 0;
+$total       = 0;
+$walked      = 0;
 $identity_ok = true;
-$failures   = 0;
+$failures    = 0;
 
 if ( function_exists( 'memory_reset_peak_usage' ) ) {
 	memory_reset_peak_usage();

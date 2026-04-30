@@ -223,7 +223,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 		if ( isset( $cache->nodes[ $index ] ) ) {
 			return $cache->nodes[ $index ];
 		}
-		$value->cache          = $cache;
+		$value->cache           = $cache;
 		$cache->nodes[ $index ] = $value;
 		return $value;
 	}
