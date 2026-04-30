@@ -5,12 +5,10 @@ on:
     paths:
       - '.github/workflows/mysql-parser-extension-tests.yml'
       - 'packages/mysql-on-sqlite/**'
-      - 'tmp-test-native/**'
   pull_request:
     paths:
       - '.github/workflows/mysql-parser-extension-tests.yml'
       - 'packages/mysql-on-sqlite/**'
-      - 'tmp-test-native/**'
   workflow_dispatch:
 
 concurrency:
@@ -71,8 +69,8 @@ jobs:
           php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
           require "src/load.php";
           $lexer = new WP_MySQL_Lexer( "SELECT ID, post_title FROM wp_posts WHERE ID IN (1, 2, 3)" );
-          if ( ! method_exists( $lexer, "native_token_stream" ) ) {
-              fwrite( STDERR, "Native token stream is not available.\n" );
+          if ( ! ( $lexer instanceof WP_MySQL_Native_Lexer ) ) {
+              fwrite( STDERR, "Native lexer is not available.\n" );
               exit( 1 );
           }
           $tokens = $lexer->remaining_tokens();
@@ -135,8 +133,8 @@ jobs:
           php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
           require "packages/mysql-on-sqlite/src/load.php";
           $lexer = new WP_MySQL_Lexer( "SELECT 1" );
-          if ( ! method_exists( $lexer, "native_token_stream" ) ) {
-              fwrite( STDERR, "Native token stream is not available.\n" );
+          if ( ! ( $lexer instanceof WP_MySQL_Native_Lexer ) ) {
+              fwrite( STDERR, "Native lexer is not available.\n" );
               exit( 1 );
           }
           $driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=wp;" );
@@ -151,6 +149,3 @@ jobs:
               exit( 1 );
           }
           '
-
-      - name: Run native SQLite facade smoke workload
-        run: php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" tmp-test-native/run-sqlite-facade-smoke.php

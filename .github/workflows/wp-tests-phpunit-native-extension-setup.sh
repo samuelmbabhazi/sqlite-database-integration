@@ -116,8 +116,8 @@ cat > "$WP_DIR/native-verify-extension.php" <<'EOF'
 require '/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database/load.php';
 
 $lexer = new WP_MySQL_Lexer( 'SELECT 1' );
-if ( ! method_exists( $lexer, 'native_token_stream' ) ) {
-	fwrite( STDERR, "Native token stream is not available in the WordPress PHP test container.\n" );
+if ( ! ( $lexer instanceof WP_MySQL_Native_Lexer ) ) {
+	fwrite( STDERR, "Native lexer is not available in the WordPress PHP test container.\n" );
 	exit( 1 );
 }
 
