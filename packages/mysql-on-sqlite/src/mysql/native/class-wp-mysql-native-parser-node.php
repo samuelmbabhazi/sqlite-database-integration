@@ -143,7 +143,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 		if ( $this->was_mutated() ) {
 			return parent::get_child_nodes( $rule_name );
 		}
-		return $this->intern_all( wp_sqlite_mysql_native_ast_get_child_nodes( $this->native_ast, $this->native_node_index, $rule_name ) );
+		return $this->intern_nodes( wp_sqlite_mysql_native_ast_get_child_nodes( $this->native_ast, $this->native_node_index, $rule_name ) );
 	}
 
 	/** @inheritDoc */
@@ -167,7 +167,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 		if ( $this->was_mutated() ) {
 			return parent::get_descendant_nodes( $rule_name );
 		}
-		return $this->intern_all( wp_sqlite_mysql_native_ast_get_descendant_nodes( $this->native_ast, $this->native_node_index, $rule_name ) );
+		return $this->intern_nodes( wp_sqlite_mysql_native_ast_get_descendant_nodes( $this->native_ast, $this->native_node_index, $rule_name ) );
 	}
 
 	/** @inheritDoc */
@@ -231,12 +231,62 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 	/**
 	 * Intern every entry in an accessor return array.
 	 *
+	 * Hot path: this runs once per descendant when a caller walks the tree,
+	 * so cache lookup and the cache-miss write are inlined and the cache
+	 * reference is hoisted out of the loop.
+	 *
 	 * @param array $values
 	 * @return array
 	 */
 	private function intern_all( array $values ): array {
+		if ( ! $values ) {
+			return $values;
+		}
+		$cache = $this->cache ?? $this->ensure_cache();
+		$nodes = &$cache->nodes;
 		foreach ( $values as $i => $value ) {
-			$values[ $i ] = $this->intern( $value );
+			if ( ! $value instanceof WP_MySQL_Native_Parser_Node ) {
+				continue;
+			}
+			$index = $value->native_node_index;
+			if ( null === $index ) {
+				continue;
+			}
+			if ( isset( $nodes[ $index ] ) ) {
+				$values[ $i ] = $nodes[ $index ];
+			} else {
+				$value->cache    = $cache;
+				$nodes[ $index ] = $value;
+			}
+		}
+		return $values;
+	}
+
+	/**
+	 * Intern array of guaranteed-node results (no token/null mixing).
+	 *
+	 * Used by `get_child_nodes()` / `get_descendant_nodes()` whose Rust
+	 * bridge returns only WP_MySQL_Native_Parser_Node instances. Skips
+	 * the per-item `instanceof` check that intern_all() must do for the
+	 * mixed `get_children()` / `get_descendants()` arrays.
+	 *
+	 * @param array $values
+	 * @return array
+	 */
+	private function intern_nodes( array $values ): array {
+		if ( ! $values ) {
+			return $values;
+		}
+		$cache = $this->cache ?? $this->ensure_cache();
+		$nodes = &$cache->nodes;
+		foreach ( $values as $i => $value ) {
+			$index = $value->native_node_index;
+			if ( isset( $nodes[ $index ] ) ) {
+				$values[ $i ] = $nodes[ $index ];
+			} else {
+				$value->cache    = $cache;
+				$nodes[ $index ] = $value;
+			}
 		}
 		return $values;
 	}
