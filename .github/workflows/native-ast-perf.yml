@@ -93,19 +93,75 @@ jobs:
         run: |
           php -d extension="$NATIVE_EXT" tests/tools/run-native-ast-walk-benchmark.php | tee native-walk.txt
 
+      - name: Check out baseline (PR base, no identity cache)
+        run: |
+          git fetch --no-tags --depth=1 origin codex/native-lazy-ast-facade
+          git worktree add ../baseline FETCH_HEAD
+
+      - name: Install Composer dependencies (baseline mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: ../baseline/packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Build baseline parser extension (release)
+        run: cargo build --release
+        working-directory: ../baseline/packages/php-ext-wp-mysql-parser
+
+      - name: Stage benchmark + corpus into baseline
+        run: |
+          mkdir -p ../baseline/packages/mysql-on-sqlite/tests/mysql/data
+          cp packages/mysql-on-sqlite/tests/tools/run-native-ast-walk-benchmark.php \
+             ../baseline/packages/mysql-on-sqlite/tests/tools/
+          cp packages/mysql-on-sqlite/tests/mysql/data/*.csv \
+             ../baseline/packages/mysql-on-sqlite/tests/mysql/data/ 2>/dev/null || true
+
+      - name: Benchmark — baseline native path (walk, no identity cache)
+        working-directory: ../baseline/packages/mysql-on-sqlite
+        run: |
+          BASE_EXT="$(realpath ../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
+          php -d extension="$BASE_EXT" tests/tools/run-native-ast-walk-benchmark.php \
+            | tee "$GITHUB_WORKSPACE/packages/mysql-on-sqlite/baseline-native-walk.txt"
+
+      - name: Benchmark — baseline native path (parse only)
+        working-directory: ../baseline/packages/mysql-on-sqlite
+        run: |
+          BASE_EXT="$(realpath ../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
+          php -d extension="$BASE_EXT" tests/tools/run-native-ast-walk-benchmark.php --no-walk \
+            | tee "$GITHUB_WORKSPACE/packages/mysql-on-sqlite/baseline-native-parse-only.txt"
+
       - name: Summarize
         if: always()
         working-directory: packages/mysql-on-sqlite
         run: |
+          extract() {
+            # Pull a numeric field (e.g. duration=1.23s) from a benchmark
+            # output line. Returns "n/a" if missing.
+            local file="$1" key="$2"
+            [ -f "$file" ] || { echo "n/a"; return; }
+            grep -oE "${key}=[^ ]+" "$file" | head -1 | cut -d= -f2 || echo "n/a"
+          }
+
           {
             echo '### Native AST walk perf'
             echo
             echo '| scenario | result |'
             echo '|---|---|'
-            for f in php-parse-only.txt php-walk.txt native-parse-only.txt native-walk.txt; do
+            for f in php-parse-only.txt php-walk.txt native-parse-only.txt native-walk.txt baseline-native-parse-only.txt baseline-native-walk.txt; do
               [ -f "$f" ] || continue
               line="$(cat "$f")"
               echo "| ${f%.txt} | \`$line\` |"
+            done
+            echo
+            echo '### Identity-cache cost (native walk: with cache vs PR base without)'
+            echo
+            echo '| metric | with cache (this PR) | baseline | delta |'
+            echo '|---|---|---|---|'
+            for key in duration qps peak_mem walked_nodes; do
+              with="$(extract native-walk.txt "$key")"
+              base="$(extract baseline-native-walk.txt "$key")"
+              echo "| $key | $with | $base | — |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
