@@ -1158,7 +1158,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			80038,
 			$this->active_sql_modes
 		);
-		if ( method_exists( $lexer, 'native_token_stream' ) ) {
+		if ( $lexer instanceof WP_MySQL_Native_Lexer ) {
 			$tokens = $lexer->native_token_stream();
 			return new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
 		}

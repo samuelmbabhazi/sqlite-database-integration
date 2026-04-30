@@ -56,7 +56,7 @@ for ( $i = 1; $i < count( $records ); $i += 1 ) {
 
 	try {
 		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = method_exists( $lexer, 'native_token_stream' )
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
 			? $lexer->native_token_stream()
 			: $lexer->remaining_tokens();
 		if ( ( is_array( $tokens ) ? count( $tokens ) : $tokens->count() ) === 0 ) {
