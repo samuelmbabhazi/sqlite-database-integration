@@ -120,14 +120,14 @@ jobs:
       - name: Benchmark — baseline native path (walk, no identity cache)
         working-directory: ../baseline/packages/mysql-on-sqlite
         run: |
-          BASE_EXT="$(realpath ../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
+          BASE_EXT="$(realpath ../../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
           php -d extension="$BASE_EXT" tests/tools/run-native-ast-walk-benchmark.php \
             | tee "$GITHUB_WORKSPACE/packages/mysql-on-sqlite/baseline-native-walk.txt"
 
       - name: Benchmark — baseline native path (parse only)
         working-directory: ../baseline/packages/mysql-on-sqlite
         run: |
-          BASE_EXT="$(realpath ../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
+          BASE_EXT="$(realpath ../../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
           php -d extension="$BASE_EXT" tests/tools/run-native-ast-walk-benchmark.php --no-walk \
             | tee "$GITHUB_WORKSPACE/packages/mysql-on-sqlite/baseline-native-parse-only.txt"
 
