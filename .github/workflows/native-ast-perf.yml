@@ -131,6 +131,48 @@ jobs:
           php -d extension="$BASE_EXT" tests/tools/run-native-ast-walk-benchmark.php --no-walk \
             | tee "$GITHUB_WORKSPACE/packages/mysql-on-sqlite/baseline-native-parse-only.txt"
 
+      # Hit-heavy scenarios — these are where the per-AST identity cache is
+      # supposed to win. The baseline reallocates wrappers on every accessor
+      # call, while the PR reuses them. Run on both to make the gap visible.
+      - name: Benchmark — native rewalk x10 (this PR)
+        working-directory: packages/mysql-on-sqlite
+        run: |
+          php -d extension="$NATIVE_EXT" tests/tools/run-native-ast-walk-benchmark.php --mode=rewalk --repeat=10 \
+            | tee native-rewalk.txt
+
+      - name: Benchmark — baseline rewalk x10
+        working-directory: ../baseline/packages/mysql-on-sqlite
+        run: |
+          BASE_EXT="$(realpath ../../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
+          php -d extension="$BASE_EXT" tests/tools/run-native-ast-walk-benchmark.php --mode=rewalk --repeat=10 \
+            | tee "$GITHUB_WORKSPACE/packages/mysql-on-sqlite/baseline-native-rewalk.txt"
+
+      - name: Benchmark — native reread x20 (this PR)
+        working-directory: packages/mysql-on-sqlite
+        run: |
+          php -d extension="$NATIVE_EXT" tests/tools/run-native-ast-walk-benchmark.php --mode=reread --repeat=20 \
+            | tee native-reread.txt
+
+      - name: Benchmark — baseline reread x20
+        working-directory: ../baseline/packages/mysql-on-sqlite
+        run: |
+          BASE_EXT="$(realpath ../../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
+          php -d extension="$BASE_EXT" tests/tools/run-native-ast-walk-benchmark.php --mode=reread --repeat=20 \
+            | tee "$GITHUB_WORKSPACE/packages/mysql-on-sqlite/baseline-native-reread.txt"
+
+      - name: Benchmark — native subtree x5 (this PR)
+        working-directory: packages/mysql-on-sqlite
+        run: |
+          php -d extension="$NATIVE_EXT" tests/tools/run-native-ast-walk-benchmark.php --mode=subtree --repeat=5 \
+            | tee native-subtree.txt
+
+      - name: Benchmark — baseline subtree x5
+        working-directory: ../baseline/packages/mysql-on-sqlite
+        run: |
+          BASE_EXT="$(realpath ../../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
+          php -d extension="$BASE_EXT" tests/tools/run-native-ast-walk-benchmark.php --mode=subtree --repeat=5 \
+            | tee "$GITHUB_WORKSPACE/packages/mysql-on-sqlite/baseline-native-subtree.txt"
+
       - name: Summarize
         if: always()
         working-directory: packages/mysql-on-sqlite
@@ -148,7 +190,7 @@ jobs:
             echo
             echo '| scenario | result |'
             echo '|---|---|'
-            for f in php-parse-only.txt php-walk.txt native-parse-only.txt native-walk.txt baseline-native-parse-only.txt baseline-native-walk.txt; do
+            for f in php-parse-only.txt php-walk.txt native-parse-only.txt native-walk.txt baseline-native-parse-only.txt baseline-native-walk.txt native-rewalk.txt baseline-native-rewalk.txt native-reread.txt baseline-native-reread.txt native-subtree.txt baseline-native-subtree.txt; do
               [ -f "$f" ] || continue
               line="$(cat "$f")"
               echo "| ${f%.txt} | \`$line\` |"
