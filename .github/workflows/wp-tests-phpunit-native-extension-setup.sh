@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WP_DIR="$ROOT_DIR/wordpress"
 COMPOSE_OVERRIDE="$WP_DIR/docker-compose.override.yml"
 RUNTIME_DIR="$ROOT_DIR/tmp-native-extension"
-EXTENSION_SOURCE_VOLUME="      - ../packages/mysql-on-sqlite/ext/wp-mysql-parser:/var/native-parser-extension-src"
+EXTENSION_SOURCE_VOLUME="      - ../packages/php-ext-wp-mysql-parser:/var/native-parser-extension-src"
 EXTENSION_RUNTIME_VOLUME="      - ../tmp-native-extension:/var/native-parser-extension:ro"
 EXTENSION_INI_VOLUME="      - ../tmp-native-extension/wp-mysql-parser.ini:/usr/local/etc/php/conf.d/wp-mysql-parser.ini:ro"
 
@@ -103,7 +103,7 @@ cd "$WP_DIR"
 node tools/local-env/scripts/docker.js run --rm php sh /var/www/native-build-extension.sh
 
 mkdir -p "$RUNTIME_DIR"
-cp "$ROOT_DIR/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" "$RUNTIME_DIR/libwp_mysql_parser.so"
+cp "$ROOT_DIR/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" "$RUNTIME_DIR/libwp_mysql_parser.so"
 printf '%s\n' 'extension=/var/native-parser-extension/libwp_mysql_parser.so' > "$RUNTIME_DIR/wp-mysql-parser.ini"
 
 add_volume_to_service php "$EXTENSION_RUNTIME_VOLUME"

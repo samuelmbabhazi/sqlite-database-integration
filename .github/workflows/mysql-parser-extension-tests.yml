@@ -58,15 +58,15 @@ jobs:
 
       - name: Check Rust formatting
         run: cargo fmt --check
-        working-directory: packages/mysql-on-sqlite/ext/wp-mysql-parser
+        working-directory: packages/php-ext-wp-mysql-parser
 
       - name: Build parser extension
         run: cargo build
-        working-directory: packages/mysql-on-sqlite/ext/wp-mysql-parser
+        working-directory: packages/php-ext-wp-mysql-parser
 
       - name: Run native parser smoke tests
         run: |
-          php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
+          php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
           require "src/load.php";
           $lexer = new WP_MySQL_Lexer( "SELECT ID, post_title FROM wp_posts WHERE ID IN (1, 2, 3)" );
           if ( ! ( $lexer instanceof WP_MySQL_Native_Lexer ) ) {
@@ -126,11 +126,11 @@ jobs:
 
       - name: Build parser extension
         run: cargo build
-        working-directory: packages/mysql-on-sqlite/ext/wp-mysql-parser
+        working-directory: packages/php-ext-wp-mysql-parser
 
       - name: Verify SQLite driver selects the native parser path
         run: |
-          php -d extension="$GITHUB_WORKSPACE/packages/mysql-on-sqlite/ext/wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
+          php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
           require "packages/mysql-on-sqlite/src/load.php";
           $lexer = new WP_MySQL_Lexer( "SELECT 1" );
           if ( ! ( $lexer instanceof WP_MySQL_Native_Lexer ) ) {
