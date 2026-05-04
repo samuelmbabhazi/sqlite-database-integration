@@ -2508,10 +2508,16 @@ class WP_MySQL_Lexer {
 				$type = self::LOGICAL_NOT_OPERATOR;
 			}
 		} elseif ( '-' === $byte ) {
+			$third_byte = $this->sql[ $this->bytes_already_read + 2 ] ?? null;
 			if (
 				'-' === $next_byte
-				&& $this->bytes_already_read + 2 < $this->sql_length
-				&& false !== strpos( self::WHITESPACE_MASK, $this->sql[ $this->bytes_already_read + 2 ] )
+				&& (
+					' ' === $third_byte
+					|| "\t" === $third_byte
+					|| "\n" === $third_byte
+					|| "\r" === $third_byte
+					|| "\f" === $third_byte
+				)
 			) {
 				$type = $this->read_line_comment();
 			} elseif ( '>' === $next_byte ) {
