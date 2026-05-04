@@ -14,8 +14,7 @@ class WP_MySQL_Parser extends WP_Parser {
 	 * @param array<WP_Parser_Token> $tokens The parser tokens.
 	 */
 	public function reset_tokens( array $tokens ): void {
-		$this->tokens      = $tokens;
-		$this->position    = 0;
+		$this->set_tokens( $tokens );
 		$this->current_ast = null;
 	}
 

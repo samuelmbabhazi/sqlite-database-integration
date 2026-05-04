@@ -25,30 +25,7 @@ class WP_Parser {
 	private $single_candidate_rules;
 
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
-		$this->grammar     = $grammar;
-		$this->token_count = count( $tokens );
-		// Append an end-of-input sentinel token whose id is EMPTY_RULE_ID
-		// (0). The hot path can then read $tokens[$pos]->id unconditionally
-		// when $pos is the current cursor, because the sentinel naturally
-		// fails to match any real grammar terminal while feeding the
-		// nullable-fallback branch of the selector check.
-		//
-		// Invariants the hot path relies on:
-		// - The sentinel id (0) cannot match any grammar terminal.
-		//   strip_epsilon_markers() removes id 0 from every branch at
-		//   grammar build time, so no $subrule_id in the inner loop ever
-		//   equals 0 and ++$this->position can never advance past the
-		//   sentinel.
-		// - The sentinel must never be appended to a node's children. It
-		//   is only inspected via $tokens[$pos]->id; tokens are pushed
-		//   into $children only on terminal-id equality, which the
-		//   sentinel cannot satisfy.
-		// - WP_MySQL_Parser::next_query() bounds at $position < $token_count
-		//   (set above, before the append), so the sentinel sits at index
-		//   $token_count and is never fed into a parse round.
-		$tokens[]                     = new WP_Parser_Token( WP_Parser_Grammar::EMPTY_RULE_ID, 0, 0, '' );
-		$this->tokens                 = $tokens;
-		$this->position               = 0;
+		$this->grammar                = $grammar;
 		$this->rule_names             = $grammar->rule_names;
 		$this->fragment_ids           = $grammar->fragment_ids;
 		$this->branches_for_token     = $grammar->branches_for_token;
@@ -60,6 +37,40 @@ class WP_Parser {
 		// the rule id so the per-call check is an int compare instead of a
 		// string compare.
 		$this->select_statement_rule_id = $grammar->get_or_cache_rule_id( 'selectStatement' );
+
+		$this->set_tokens( $tokens );
+	}
+
+	/**
+	 * Initialize the parser's token state.
+	 *
+	 * Stores the given token array, resets the position cursor, and appends
+	 * an end-of-input sentinel token whose id is `EMPTY_RULE_ID` (0). The
+	 * hot path can then read `$tokens[$pos]->id` unconditionally when
+	 * `$pos` is the current cursor, because the sentinel naturally fails
+	 * to match any real grammar terminal while feeding the nullable-fallback
+	 * branch of the selector check.
+	 *
+	 * Invariants the hot path relies on:
+	 * - The sentinel id (0) cannot match any grammar terminal.
+	 *   `strip_epsilon_markers()` removes id 0 from every branch at grammar
+	 *   build time, so no `$subrule_id` in the inner loop ever equals 0
+	 *   and `++$this->position` can never advance past the sentinel.
+	 * - The sentinel must never be appended to a node's children. It is
+	 *   only inspected via `$tokens[$pos]->id`; tokens are pushed into
+	 *   `$children` only on terminal-id equality, which the sentinel
+	 *   cannot satisfy.
+	 * - `WP_MySQL_Parser::next_query()` bounds at `$position < $token_count`
+	 *   (set below, before the sentinel append), so the sentinel sits at
+	 *   index `$token_count` and is never fed into a parse round.
+	 *
+	 * @param array<WP_Parser_Token> $tokens
+	 */
+	protected function set_tokens( array $tokens ): void {
+		$this->token_count = count( $tokens );
+		$tokens[]          = new WP_Parser_Token( WP_Parser_Grammar::EMPTY_RULE_ID, 0, 0, '' );
+		$this->tokens      = $tokens;
+		$this->position    = 0;
 	}
 
 	public function parse() {
