@@ -1,6 +1,5 @@
 #![cfg_attr(windows, feature(abi_vectorcall))]
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::os::raw::c_char;
 use std::ptr;
@@ -975,38 +974,6 @@ impl ParserTokenSource {
             }
         }
     }
-
-    fn token_info(&self, index: usize) -> PhpResult<TokenInfo> {
-        match self {
-            Self::Php(tokens) => {
-                let token = tokens
-                    .get(index)
-                    .ok_or_else(|| php_error("Parser token index is out of range"))?;
-                let token_object = token
-                    .object()
-                    .ok_or_else(|| php_error("Parser token must be an object"))?;
-                let id = token_object.get_property::<i64>("id").map_err(php_error)?;
-                let start = token_object
-                    .get_property::<i64>("start")
-                    .map_err(php_error)?;
-                let length = token_object
-                    .get_property::<i64>("length")
-                    .map_err(php_error)?;
-                let start = usize::try_from(start).map_err(php_error)?;
-                let length = usize::try_from(length).map_err(php_error)?;
-
-                Ok(TokenInfo {
-                    id,
-                    start,
-                    end: start.saturating_add(length),
-                })
-            }
-            Self::Native { tokens, .. } => tokens
-                .get(index)
-                .copied()
-                .ok_or_else(|| php_error("Parser token index is out of range")),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1034,9 +1001,6 @@ enum NativeParseMatch {
 struct NativeAstNode {
     rule_id: i64,
     children: Vec<NativeAstChild>,
-    first_token: Option<usize>,
-    last_token: Option<usize>,
-    descendant_count: usize,
 }
 
 struct NativeAstArena {
@@ -1062,39 +1026,7 @@ impl NativeAstArena {
 
     fn push_node(&mut self, rule_id: i64, children: Vec<NativeAstChild>) -> usize {
         let index = self.nodes.len();
-        let mut first_token = None;
-        let mut last_token = None;
-        let mut descendant_count = 0;
-        for child in &children {
-            match child {
-                NativeAstChild::Node(child_index) => {
-                    if let Some(node) = self.nodes.get(*child_index) {
-                        descendant_count += 1 + node.descendant_count;
-                        if first_token.is_none() {
-                            first_token = node.first_token;
-                        }
-                        if node.last_token.is_some() {
-                            last_token = node.last_token;
-                        }
-                    }
-                }
-                NativeAstChild::Token(token_index) => {
-                    if first_token.is_none() {
-                        first_token = Some(*token_index);
-                    }
-                    last_token = Some(*token_index);
-                    descendant_count += 1;
-                }
-            }
-        }
-
-        self.nodes.push(NativeAstNode {
-            rule_id,
-            children,
-            first_token,
-            last_token,
-            descendant_count,
-        });
+        self.nodes.push(NativeAstNode { rule_id, children });
         index
     }
 
@@ -1102,40 +1034,6 @@ impl NativeAstArena {
         self.nodes
             .get(index)
             .ok_or_else(|| php_error("Native AST node index is out of range"))
-    }
-
-    fn child_node_matches(&self, child: NativeAstChild, rule_name: Option<&str>) -> bool {
-        let NativeAstChild::Node(index) = child else {
-            return false;
-        };
-        let Ok(node) = self.node(index) else {
-            return false;
-        };
-        rule_name.is_none_or(|expected| {
-            self.grammar
-                .rule(node.rule_id)
-                .map(|rule| rule.rule_name == expected)
-                .unwrap_or(false)
-        })
-    }
-
-    fn child_token_matches(&self, child: NativeAstChild, token_id: Option<i64>) -> bool {
-        let NativeAstChild::Token(index) = child else {
-            return false;
-        };
-        token_id.is_none_or(|expected| {
-            self.token_source
-                .token_info(index)
-                .map(|token| token.id == expected)
-                .unwrap_or(false)
-        })
-    }
-
-    fn descendant_stack(&self, index: usize) -> PhpResult<Vec<NativeAstChild>> {
-        let node = self.node(index)?;
-        let mut stack = Vec::with_capacity(node.descendant_count);
-        stack.extend(node.children.iter().rev().copied());
-        Ok(stack)
     }
 }
 

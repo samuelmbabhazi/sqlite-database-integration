@@ -145,7 +145,7 @@ $parser  = new WP_MySQL_Parser( $grammar, $tokens );
 wp_sqlite_assert_native_parser_delegate( $parser, 'WordPress PHP test container did not select the native parser delegate.' );
 
 $parser_ast = $parser->parse();
-if ( ! ( $parser_ast instanceof WP_MySQL_Native_Parser_Node ) ) {
+if ( ! ( $parser_ast instanceof WP_Parser_Node ) ) {
 	wp_sqlite_native_parser_verification_fail( 'Native parser did not produce a native-backed AST in the WordPress PHP test container.' );
 }
 
@@ -155,18 +155,13 @@ wp_sqlite_assert_native_parser_delegate( $parser, 'WordPress PHP test container 
 $parser->next_query();
 $ast = $parser->get_query_ast();
 
-if ( ! ( $ast instanceof WP_MySQL_Native_Parser_Node ) ) {
+if ( ! ( $ast instanceof WP_Parser_Node ) ) {
 	wp_sqlite_native_parser_verification_fail( 'WordPress PHP test container did not select the native-backed AST.' );
 }
 
-$reflection = new ReflectionObject( $ast );
-if ( $reflection->hasProperty( 'native_ast' ) || $reflection->hasProperty( 'native_node_index' ) ) {
-	wp_sqlite_native_parser_verification_fail( 'Native wrapper still stores Rust AST handle properties.' );
-}
-
 $first = $ast->get_first_child_node();
-if ( ! ( $first instanceof WP_MySQL_Native_Parser_Node ) ) {
-	wp_sqlite_native_parser_verification_fail( 'Native wrapper did not return a native-backed child node.' );
+if ( ! ( $first instanceof WP_Parser_Node ) ) {
+	wp_sqlite_native_parser_verification_fail( 'Native wrapper did not return a child node.' );
 }
 
 if ( $first !== $ast->get_first_child_node() ) {
@@ -177,7 +172,7 @@ $synthetic = new WP_Parser_Node( 0, 'synthetic' );
 $first->append_child( $synthetic );
 $same_first = $ast->get_first_child_node();
 if ( $same_first !== $first || ! in_array( $synthetic, $same_first->get_children(), true ) ) {
-	wp_sqlite_native_parser_verification_fail( 'Materialized native wrapper was lost from the parent cache.' );
+	wp_sqlite_native_parser_verification_fail( 'Mutated child was lost from the parent.' );
 }
 EOF
 

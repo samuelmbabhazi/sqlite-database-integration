@@ -59,7 +59,7 @@ function wp_sqlite_verify_native_parser_extension(): void {
 	);
 
 	$parser_ast = $parser->parse();
-	if ( ! ( $parser_ast instanceof WP_MySQL_Native_Parser_Node ) || 'query' !== $parser_ast->rule_name ) {
+	if ( ! ( $parser_ast instanceof WP_Parser_Node ) || 'query' !== $parser_ast->rule_name ) {
 		wp_sqlite_native_parser_verification_fail( 'Native parser did not produce the expected query AST.' );
 	}
 
@@ -72,29 +72,24 @@ function wp_sqlite_verify_native_parser_extension(): void {
 
 	$parser->next_query();
 	$ast = $parser->get_query_ast();
-	if ( ! ( $ast instanceof WP_MySQL_Native_Parser_Node ) ) {
+	if ( ! ( $ast instanceof WP_Parser_Node ) ) {
 		wp_sqlite_native_parser_verification_fail( 'WP_PDO_MySQL_On_SQLite did not produce a native-backed AST.' );
 	}
 
-	$reflection = new ReflectionObject( $ast );
-	if ( $reflection->hasProperty( 'native_ast' ) || $reflection->hasProperty( 'native_node_index' ) ) {
-		wp_sqlite_native_parser_verification_fail( 'Native wrapper still stores Rust AST handle properties.' );
-	}
-
 	$first = $ast->get_first_child_node();
-	if ( ! ( $first instanceof WP_MySQL_Native_Parser_Node ) ) {
-		wp_sqlite_native_parser_verification_fail( 'Native wrapper did not return a native-backed child node.' );
+	if ( ! ( $first instanceof WP_Parser_Node ) ) {
+		wp_sqlite_native_parser_verification_fail( 'Native wrapper did not return a child node.' );
 	}
 
 	if ( $first !== $ast->get_first_child_node() ) {
-		wp_sqlite_native_parser_verification_fail( 'Native wrapper identity is not stable across reads.' );
+		wp_sqlite_native_parser_verification_fail( 'AST node identity is not stable across reads.' );
 	}
 
 	$synthetic = new WP_Parser_Node( 0, 'synthetic' );
 	$first->append_child( $synthetic );
 	$same_first = $ast->get_first_child_node();
 	if ( $same_first !== $first || ! in_array( $synthetic, $same_first->get_children(), true ) ) {
-		wp_sqlite_native_parser_verification_fail( 'Materialized native wrapper was lost from the parent cache.' );
+		wp_sqlite_native_parser_verification_fail( 'Mutated child was lost from the parent.' );
 	}
 }
 
