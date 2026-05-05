@@ -2,10 +2,10 @@
 
 ## Current status
 
-The spike now builds and loads `wp_mysql_parser` in Playground across every
+The spike now builds and loads `wp_mysql_parser` in PHP.wasm across every
 PHP version supported by the current `ext-php-rs` binding layer: 8.0 through
 8.5, all JSPI. CI verifies each generated side module by loading its manifest
-through Playground's compile-extension test harness and running a native lexer
+through the released `@php-wasm/node` runtime and running a native lexer
 smoke test. PHP 7.4 is outside this Rust path because `ext-php-rs` 0.15
 depends on PHP 8 Zend APIs and does not compile against PHP 7.4 headers.
 
@@ -19,12 +19,11 @@ struct fields.
 
 The build uses the published `@php-wasm/compile-extension` CLI for the phpize
 side-module build, static archive force-linking, wasm-opt pass, and manifest
-generation. A sparse Playground checkout is still required for the
-`packages/php-wasm/compile` Docker assets and for CI's Playground load test.
-The CLI is installed into an isolated temporary npm prefix before it is run;
-the sparse Playground workspace also contains an unbuilt local
-`@php-wasm/compile-extension` package, so relying on workspace `.bin` links
-would bypass the published package.
+generation. The CLI is installed into an isolated temporary npm prefix before
+it is run and lazily fetches the PHP.wasm Docker assets it needs from the
+matching Playground npm release. CI no longer checks out
+`WordPress/wordpress-playground` for Docker assets or for the loader smoke
+test.
 The local glue that remains is Rust-specific: build `libwp_mysql_parser.a`
 with the same Emscripten/PHP.wasm ABI and patch the vendored `ext-php-rs`
 registry copy so it can run as a PHP.wasm side module.
@@ -108,31 +107,22 @@ extension build and manifest machinery.
 
 | Path | What it is |
 | --- | --- |
-| `Dockerfile.rust` | Rust/nightly/host-PHP layer on top of Playground's compile-extension image. |
+| `Dockerfile.rust` | Rust/nightly/host-PHP layer on top of the PHP.wasm compile-extension image. |
 | `build-in-docker-rust.sh` | Builds the Rust staticlib, then calls the published `@php-wasm/compile-extension` CLI. |
 | `write-extension-manifest.mjs` | Writes the combined all-version artifact manifest for the publish workflow. |
 | `shim/config.m4` | Minimal phpize wrapper. |
 | `shim/wp_mysql_parser_shim.c` | Pulls the Rust `get_module()` symbol into the side-module link. |
-| `run-spike.mjs` | Loads the generated manifest in Playground and verifies the native lexer. |
+| `run-spike.mjs` | Loads the generated manifest in `@php-wasm/node` and verifies the native lexer. |
 
 ## Reproduce
 
 ```bash
 cd packages/php-ext-wp-mysql-parser/wasm-spike
 
-PLAYGROUND_REPO=/abs/path/to/wordpress-playground \
-  bash build-in-docker-rust.sh
+bash build-in-docker-rust.sh
 
-PLAYGROUND_REPO=/abs/path/to/wordpress-playground PHP_VERSION=8.4 \
-  node run-spike.mjs
+npm install --no-save --package-lock=false --no-audit --no-fund \
+  @php-wasm/node@3.1.28 @php-wasm/universal@3.1.28
+
+PHP_VERSION=8.4 node --experimental-wasm-jspi run-spike.mjs
 ```
-
-The workflow still uses a sparse checkout of `WordPress/wordpress-playground`
-for `packages/php-wasm/compile` Docker assets and the Playground loader smoke
-test, while the extension compile itself runs through an isolated install of
-the published npm CLI.
-
-Follow-up for Playground: make `@php-wasm/compile-extension` self-contained so
-external extension projects do not need to shallow or sparse checkout
-`WordPress/wordpress-playground` just to access Docker assets or test harness
-files.

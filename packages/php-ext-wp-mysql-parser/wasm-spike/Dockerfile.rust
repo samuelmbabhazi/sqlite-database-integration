@@ -1,5 +1,5 @@
 # Layer that adds rustup + the wasm32-unknown-emscripten target on top of
-# Playground's compile-extension image.
+# PHP.wasm's compile-extension image.
 #
 # Base image is the one produced by `@php-wasm/compile-extension`'s
 # Dockerfile.ext, tagged as
@@ -61,7 +61,7 @@ RUN set -eux; \
     /usr/local/bin/php-host-info -i | grep -q "PHP API => ${HOST_PHP_API_VERSION}"
 
 # Set PHP_CONFIG explicitly so bindgen uses the wasm PHP headers from the
-# Playground compile-extension image, not any host PHP package that apt may
+# PHP.wasm compile-extension image, not any host PHP package that apt may
 # provide as a transitive dependency.
 ENV PHP_CONFIG=/usr/local/bin/php-config \
     PHP=/usr/local/bin/php-host-info

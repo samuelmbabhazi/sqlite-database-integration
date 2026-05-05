@@ -1,4 +1,4 @@
-dnl C shim that lets the Playground compile-extension Docker pipeline (phpize +
+dnl C shim that lets the PHP.wasm compile-extension Docker pipeline (phpize +
 dnl emconfigure + emmake) build a side module whose actual code is a
 dnl pre-compiled Rust staticlib produced by `cargo build --target
 dnl wasm32-unknown-emscripten --release`.

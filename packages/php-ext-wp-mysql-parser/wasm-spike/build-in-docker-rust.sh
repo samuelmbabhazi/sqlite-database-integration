@@ -4,7 +4,7 @@
 #
 #   1. cargo build --release --target wasm32-unknown-emscripten
 #      inside playground-php-wasm-ext-rust:<PHP_VERSION>-<ASYNC>, which
-#      layers rustup + ext-php-rs build metadata on top of the Playground
+#      layers rustup + ext-php-rs build metadata on top of the PHP.wasm
 #      compile-extension image.
 #   2. Hand the resulting libwp_mysql_parser.a + C shim + config.m4 to
 #      `@php-wasm/compile-extension`, which owns phpize, emconfigure,
@@ -21,9 +21,19 @@ ASYNC_MODE="${ASYNC_MODE:-jspi}"
 SPIKE_DIR="$(cd "$(dirname "$0")" && pwd)"
 CRATE_DIR="$(cd "$SPIKE_DIR/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$SPIKE_DIR/dist}"
-COMPILE_EXTENSION_PACKAGE="${COMPILE_EXTENSION_PACKAGE:-@php-wasm/compile-extension@3.1.27}"
-PLAYGROUND_REPO="${PLAYGROUND_REPO:-$(cd "$SPIKE_DIR/../../../../wordpress-playground" 2>/dev/null && pwd || true)}"
+COMPILE_EXTENSION_PACKAGE="${COMPILE_EXTENSION_PACKAGE:-@php-wasm/compile-extension@3.1.28}"
+CLI_STAGE="$(mktemp -d)"
+SRC_STAGE=""
+COMPILE_EXTENSION_CLI="$CLI_STAGE/node_modules/@php-wasm/compile-extension/cli.js"
 mkdir -p "$OUT_DIR"
+
+cleanup() {
+  if [ -n "$SRC_STAGE" ]; then
+    rm -rf "$SRC_STAGE"
+  fi
+  rm -rf "$CLI_STAGE"
+}
+trap cleanup EXIT
 
 if [ "$ASYNC_MODE" != "jspi" ]; then
   echo "Unsupported ASYNC_MODE: $ASYNC_MODE. @php-wasm/compile-extension is JSPI-only." >&2
@@ -31,12 +41,12 @@ if [ "$ASYNC_MODE" != "jspi" ]; then
 fi
 
 case "$PHP_VERSION" in
-  8.0) PHP_API_VERSION=20200930; PHP_RELEASE=8.0.30 ;;
-  8.1) PHP_API_VERSION=20210902; PHP_RELEASE=8.1.34 ;;
-  8.2) PHP_API_VERSION=20220829; PHP_RELEASE=8.2.30 ;;
-  8.3) PHP_API_VERSION=20230831; PHP_RELEASE=8.3.30 ;;
-  8.4) PHP_API_VERSION=20240924; PHP_RELEASE=8.4.20 ;;
-  8.5) PHP_API_VERSION=20250925; PHP_RELEASE=8.5.5 ;;
+  8.0) PHP_API_VERSION=20200930 ;;
+  8.1) PHP_API_VERSION=20210902 ;;
+  8.2) PHP_API_VERSION=20220829 ;;
+  8.3) PHP_API_VERSION=20230831 ;;
+  8.4) PHP_API_VERSION=20240924 ;;
+  8.5) PHP_API_VERSION=20250925 ;;
   7.4)
     echo "Unsupported PHP_VERSION: 7.4" >&2
     echo "The WASM Rust build uses ext-php-rs 0.15, which depends on PHP 8 Zend APIs and does not compile against PHP 7.4 headers." >&2
@@ -49,71 +59,16 @@ case "$PHP_VERSION" in
     ;;
 esac
 
-if [ -z "$PLAYGROUND_REPO" ] || [ ! -f "$PLAYGROUND_REPO/packages/php-wasm/compile/Makefile" ] || [ ! -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/docker/Dockerfile.ext" ]; then
-  echo "PLAYGROUND_REPO must point at a wordpress-playground checkout with packages/php-wasm/compile and packages/php-wasm/compile-extension/docker." >&2
-  exit 1
-fi
-
-patch_compile_extension_cli() {
-  local cli_path="$1"
-
-  # The npm CLI currently rebuilds the Docker images itself. This script has
-  # already prepared those exact images in Stage 0, so patch the pinned CLI to
-  # reuse them and fail loudly if the installed package changes shape.
-  node --input-type=module - "$cli_path" <<'NODE'
-import { readFileSync, writeFileSync } from 'node:fs';
-
-const cliPath = process.argv[2];
-let source = readFileSync(cliPath, 'utf8');
-
-const replacements = [
-  [
-    'async function k(e){await p("make",["base-image"],{cwd:e.compileRoot})}',
-    'async function k(e){if(process.env.COMPILE_EXTENSION_SKIP_IMAGE_BUILD==="1"){await p("docker",["image","inspect","playground-php-wasm:base"],{stdio:"ignore"});console.log("Skipping compile-extension base image build; using existing playground-php-wasm:base");return}await p("make",["base-image"],{cwd:e.compileRoot})}',
-  ],
-  [
-    'async function j(e){const t=$(e);return await p("docker",["build","-f","compile-extension/docker/Dockerfile.ext",".",`--tag=${t}`,"--progress=plain","--build-arg",`PHP_VERSION=${e.phpRelease}`,"--build-arg","JSPI=yes"],{cwd:e.phpWasmRoot}),t}',
-    'async function j(e){const t=$(e);if(process.env.COMPILE_EXTENSION_SKIP_IMAGE_BUILD==="1"){await p("docker",["image","inspect",t],{stdio:"ignore"});console.log(`Skipping compile-extension image build; using existing ${t}`);return t}return await p("docker",["build","-f","compile-extension/docker/Dockerfile.ext",".",`--tag=${t}`,"--progress=plain","--build-arg",`PHP_VERSION=${e.phpRelease}`,"--build-arg","JSPI=yes"],{cwd:e.phpWasmRoot}),t}',
-  ],
-];
-
-for (const [from, to] of replacements) {
-  if (!source.includes(from)) {
-    throw new Error(`Unable to patch @php-wasm/compile-extension CLI. Missing pattern: ${from}`);
-  }
-  source = source.replace(from, to);
-}
-
-writeFileSync(cliPath, source);
-NODE
-
-  grep -q 'COMPILE_EXTENSION_SKIP_IMAGE_BUILD' "$cli_path"
-}
-
 RUST_IMAGE="playground-php-wasm-ext-rust:${PHP_VERSION}-${ASYNC_MODE}"
 BASE_IMAGE="playground-php-wasm:compile-extension-php${PHP_VERSION//./-}-${ASYNC_MODE}"
 
-echo "==> Stage 0: preparing $BASE_IMAGE via Playground compile-extension tooling"
-if [ "${SKIP_BASE_IMAGE_BUILD:-}" = "1" ]; then
-  if ! docker image inspect playground-php-wasm:base >/dev/null 2>&1; then
-    echo "SKIP_BASE_IMAGE_BUILD=1 requires a preloaded playground-php-wasm:base image." >&2
-    exit 1
-  fi
-  echo "==> Stage 0: using preloaded playground-php-wasm:base"
-else
-  BASE_IMAGE_DIR="$PLAYGROUND_REPO/packages/php-wasm/compile/base-image"
-  docker build \
-    -f "$BASE_IMAGE_DIR/Dockerfile" \
-    --tag="playground-php-wasm:base" \
-    "$BASE_IMAGE_DIR"
-fi
-docker build \
-  -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/docker/Dockerfile.ext" \
-  --tag="$BASE_IMAGE" \
-  --progress=plain \
-  --build-arg "PHP_VERSION=$PHP_RELEASE" \
-  --build-arg "JSPI=yes" \
-  "$PLAYGROUND_REPO/packages/php-wasm"
+npm install --prefix "$CLI_STAGE" --no-audit --no-fund --ignore-scripts "$COMPILE_EXTENSION_PACKAGE"
+
+echo "==> Stage 0: preparing $BASE_IMAGE via @php-wasm/compile-extension"
+node "$COMPILE_EXTENSION_CLI" \
+  --prepare-image \
+  --php-versions "$PHP_VERSION" \
+  --jobs 1
 
 echo "==> Stage 0: building $RUST_IMAGE"
 docker build \
@@ -301,30 +256,21 @@ EOF
 
 echo "==> Stage 2: phpize + emconfigure + emmake (@php-wasm/compile-extension)"
 SRC_STAGE="$(mktemp -d)"
-CLI_STAGE="$(mktemp -d)"
-trap 'rm -rf "$SRC_STAGE" "$CLI_STAGE"' EXIT
 cp "$SPIKE_DIR/shim/config.m4"               "$SRC_STAGE/"
 cp "$SPIKE_DIR/shim/wp_mysql_parser_shim.c"  "$SRC_STAGE/"
 cp "$OUT_DIR/libwp_mysql_parser.a"           "$SRC_STAGE/"
 
 ARTIFACT="wp_mysql_parser-php${PHP_VERSION}-${ASYNC_MODE}.so"
-COMPILE_EXTENSION_CLI="$CLI_STAGE/node_modules/@php-wasm/compile-extension/cli.js"
 
-npm install --prefix "$CLI_STAGE" --no-audit --no-fund --ignore-scripts "$COMPILE_EXTENSION_PACKAGE"
-patch_compile_extension_cli "$COMPILE_EXTENSION_CLI"
-
-(
-  cd "$PLAYGROUND_REPO"
-  COMPILE_EXTENSION_SKIP_IMAGE_BUILD=1 node "$COMPILE_EXTENSION_CLI" \
-    --source "$SRC_STAGE" \
-    --name wp_mysql_parser \
-    --php-versions "$PHP_VERSION" \
-    --out "$OUT_DIR" \
-    --jobs 1 \
-    --extra-ldflags "/build/libwp_mysql_parser.a"
-)
+node "$COMPILE_EXTENSION_CLI" \
+  --source "$SRC_STAGE" \
+  --name wp_mysql_parser \
+  --php-versions "$PHP_VERSION" \
+  --out "$OUT_DIR" \
+  --jobs 1 \
+  --extra-ldflags "/build/libwp_mysql_parser.a"
 
 rm -rf "$SRC_STAGE"
-trap - EXIT
+SRC_STAGE=""
 
 echo "==> Built $OUT_DIR/$ARTIFACT"
