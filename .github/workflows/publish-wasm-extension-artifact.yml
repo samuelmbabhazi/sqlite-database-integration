@@ -236,7 +236,8 @@ jobs:
           pages_dir="$(mktemp -d)"
           git init "$pages_dir"
           git -C "$pages_dir" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git -C "$pages_dir" config http.https://github.com/.extraheader "AUTHORIZATION: bearer ${GITHUB_TOKEN}"
+          auth_header="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w 0)"
+          git -C "$pages_dir" config http.https://github.com/.extraheader "AUTHORIZATION: basic ${auth_header}"
           git -C "$pages_dir" config user.name "github-actions[bot]"
           git -C "$pages_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
