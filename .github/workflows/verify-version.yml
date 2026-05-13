@@ -14,6 +14,7 @@ jobs:
   verify-version:
     name: Assert release metadata is internally consistent
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read # Required to clone the repo.
     steps:
