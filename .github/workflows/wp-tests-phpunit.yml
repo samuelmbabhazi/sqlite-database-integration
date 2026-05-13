@@ -6,11 +6,17 @@ on:
       - main
   pull_request:
 
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
 jobs:
   test:
     name: WordPress PHPUnit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the repo.
 
     steps:
       - name: Checkout repository
@@ -35,6 +41,8 @@ jobs:
     name: WordPress PHPUnit Tests / Rust extension
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    permissions:
+      contents: read # Required to clone the repo.
 
     steps:
       - name: Checkout repository

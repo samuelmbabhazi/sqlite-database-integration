@@ -9,6 +9,10 @@ concurrency:
   group: release-publish
   cancel-in-progress: false
 
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
 jobs:
   publish-release:
     name: Build plugin and create GitHub release
@@ -18,7 +22,7 @@ jobs:
       && startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Required to clone the repo, create the GitHub release, and delete the release branch.
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
@@ -130,6 +134,8 @@ jobs:
     needs: publish-release
     if: needs.publish-release.outputs.prerelease == 'false'
     uses: ./.github/workflows/release-wporg.yml
+    permissions:
+      contents: read # Required to clone the repo and download the release asset.
     with:
       tag: ${{ needs.publish-release.outputs.tag }}
     secrets: inherit

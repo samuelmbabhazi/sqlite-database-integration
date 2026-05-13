@@ -6,12 +6,16 @@ on:
       - main
   pull_request:
 
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
 jobs:
   test:
     name: PHP ${{ matrix.php }} / SQLite ${{ matrix.sqlite || 'latest' }}
     uses: ./.github/workflows/phpunit-tests-run.yml
     permissions:
-      contents: read
+      contents: read # Required to clone the repo.
     secrets: inherit
     strategy:
       fail-fast: false

@@ -17,13 +17,17 @@ concurrency:
   group: release-wporg
   cancel-in-progress: false
 
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
 jobs:
   deploy:
     name: Deploy plugin to WordPress.org
     if: github.repository == 'WordPress/sqlite-database-integration'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: read # Required to clone the repo and download the release asset via gh.
 
     steps:
       - name: Checkout repository
