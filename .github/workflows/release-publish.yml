@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write # Required to clone the repo, create the GitHub release, and delete the release branch.
+      pull-requests: read # Required for gh api graphql queries that read pull request author data.
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
