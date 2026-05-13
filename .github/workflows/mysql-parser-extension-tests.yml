@@ -19,11 +19,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
 jobs:
   extension-tests:
     name: PHP ${{ matrix.php }} / ${{ matrix.coverage }} / ubuntu-latest
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read # Required to clone the repo.
     strategy:
       fail-fast: false
       matrix:
