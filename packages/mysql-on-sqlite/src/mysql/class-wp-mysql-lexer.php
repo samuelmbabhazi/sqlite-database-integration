@@ -2292,6 +2292,11 @@ class WP_MySQL_Lexer {
 	 * This method can be used to tokenize the whole SQL payload at once, at the
 	 * expense of storing all token objects in memory at the same time.
 	 *
+	 * This deliberately inlines the same tokenizer step as next_token() instead
+	 * of looping over next_token()/get_token(), to avoid a method call and a
+	 * token-object round trip per token. Keep the EOF/invalid-input guard, the
+	 * whitespace skip, and the comment-skip do-while in sync with next_token().
+	 *
 	 * @return WP_MySQL_Token[] An array of token objects representing the remaining tokens.
 	 */
 	public function remaining_tokens(): array {

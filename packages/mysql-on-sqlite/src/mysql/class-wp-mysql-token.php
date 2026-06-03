@@ -30,6 +30,10 @@ class WP_MySQL_Token extends WP_Parser_Token {
 		string $input,
 		bool $sql_mode_no_backslash_escapes_enabled
 	) {
+		// Assign the inherited fields directly instead of calling
+		// parent::__construct(). The lexer builds one token per recognized
+		// token, so skipping the parent call is a measurable hot-path win.
+		// Keep these assignments in sync with WP_Parser_Token's fields.
 		$this->id     = $id;
 		$this->start  = $start;
 		$this->length = $length;
