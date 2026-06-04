@@ -86,14 +86,22 @@ The GitHub Pages demo reads published benchmark data from:
 
 <https://wordpress.github.io/sqlite-database-integration/native-extension/benchmark.json>
 
-Latest local measurement (Apple Silicon macOS, PHP 8.4.5 CLI, 2026-05-26):
+Latest local measurement (Apple Silicon macOS, PHP 8.5.5 CLI, default config without JIT, 2026-06-04):
 
 | Benchmark | Implementation | Queries | QPS | Speedup |
 | --- | --- | ---: | ---: | ---: |
-| MySQL lexer | Pure PHP | 69,577 | 71,553 | — |
-| MySQL lexer | Native extension | 69,577 | 343,124 | 4.80x |
-| MySQL parser | Pure PHP | 69,577 | 7,015 | — |
-| MySQL parser | Native extension | 69,577 | 108,354 | 15.45x |
+| MySQL lexer | Pure PHP | 69,577 | 178,409 | — |
+| MySQL lexer | Native extension | 69,577 | 355,084 | 2.00x |
+| MySQL parser | Pure PHP | 69,577 | 29,048 | — |
+| MySQL parser | Native extension | 69,577 | 58,111 | 2.00x |
+
+The parser rows are parse-only. On this branch the native parser materializes the full
+`WP_Parser_Node` tree eagerly, so the number reflects building a complete AST rather than a
+deferred handle (the earlier 15x figure measured a lazy parse that never built the tree).
+
+These are default-CLI numbers, matching the published `benchmark.json` environment. The native
+code is JIT-independent, while the pure-PHP path speeds up substantially under opcache + tracing
+JIT, so the native edge there narrows to roughly 1.1x (lexer ~1.08x, parser ~1.13x).
 
 That file should be updated whenever a new extension build or benchmark environment is published.
 
