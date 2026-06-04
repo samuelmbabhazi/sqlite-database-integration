@@ -4,6 +4,28 @@
 
 When the extension is loaded before `packages/mysql-on-sqlite/src/load.php`, it registers native base classes used by the public `WP_MySQL_Lexer` and `WP_MySQL_Parser` wrappers. Without the extension, those public wrappers extend the pure-PHP implementations instead.
 
+## Versioning and the grammar ABI
+
+The native parser and the PHP driver exchange the parser grammar at runtime via
+`wp_sqlite_mysql_native_export_grammar()`. The shape of that data is an ABI shared
+between the extension binary and the PHP code, and it can change between releases
+(for example, the move from a coarse lookahead table to per-token branch selectors).
+
+Compatibility is tracked by the extension's **minor** version (the `x` in `0.x`):
+
+- **Bump the minor version on any backward-incompatible change to the grammar ABI**
+  (the data exchanged by `wp_sqlite_mysql_native_export_grammar()` or consumed by the
+  native parser). Patch releases must keep the ABI unchanged.
+- The PHP side (`packages/mysql-on-sqlite/src/load.php`) pins the supported minor
+  line and selects the native lexer/parser only when `phpversion( 'wp_mysql_parser' )`
+  falls within it. A mismatch — most commonly a plugin update that outpaces the
+  installed extension binary — falls back cleanly to the pure-PHP path instead of
+  failing at parse time.
+
+When you change the grammar ABI, bump `version` in `Cargo.toml` and update the
+supported range in `wp_sqlite_mysql_native_grammar_abi_supported()` in `load.php`
+together.
+
 ## Published WASM build for Playground
 
 Published WASM builds are listed on this repository's GitHub Pages site, with manifest links and a “Run in Playground” link for each release:
