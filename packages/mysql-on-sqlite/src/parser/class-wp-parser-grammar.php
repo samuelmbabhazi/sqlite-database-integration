@@ -78,6 +78,31 @@ class WP_Parser_Grammar {
 	 */
 	private $cached_rule_ids = array();
 
+	/**
+	 * Per-rule FIRST sets from the fixpoint.
+	 *
+	 * Kept so per-rule selectors can be denormalized lazily on first use, and
+	 * exported to the native parser (which needs only each rule's FIRST set,
+	 * not the lazily-built per-token selector table).
+	 *
+	 * @var array<int,array<int,true>>
+	 */
+	public $first_sets = array();
+
+	/**
+	 * Per-rule NULLABLE flags from the fixpoint.
+	 *
+	 * @var array<int,bool>
+	 */
+	private $rule_nullable = array();
+
+	/**
+	 * Rules whose branch selector has already been built.
+	 *
+	 * @var array<int,true>
+	 */
+	private $rule_selector_built = array();
+
 	public function __construct( array $rules ) {
 		$this->inflate( $rules );
 	}
@@ -275,122 +300,193 @@ class WP_Parser_Grammar {
 			$first_sets[ $rule_id ] = array();
 		}
 
-		// Iterate to fixpoint. FIRST and NULLABLE set monotonically grow.
-		do {
-			$changed = false;
-			foreach ( $rule_ids as $rule_id ) {
-				$branches = $rules[ $rule_id ];
-				foreach ( $branches as $branch ) {
-					$branch_nullable = true;
-					foreach ( $branch as $symbol ) {
-						if ( $empty_rule === $symbol ) {
-							// ε: contributes nothing to FIRST, stays nullable.
-							continue;
-						}
-						if ( $symbol < $low_nt ) {
-							// Terminal.
-							if ( ! isset( $first_sets[ $rule_id ][ $symbol ] ) ) {
-								$first_sets[ $rule_id ][ $symbol ] = true;
-								$changed                           = true;
-							}
-							$branch_nullable = false;
-							break;
-						}
-						// Non-terminal.
-						foreach ( $first_sets[ $symbol ] as $tid => $_ ) {
-							if ( ! isset( $first_sets[ $rule_id ][ $tid ] ) ) {
-								$first_sets[ $rule_id ][ $tid ] = true;
-								$changed                        = true;
-							}
-						}
-						if ( ! $nullable[ $symbol ] ) {
-							$branch_nullable = false;
-							break;
-						}
-					}
-					if ( $branch_nullable && ! $nullable[ $rule_id ] ) {
-						$nullable[ $rule_id ] = true;
-						$changed              = true;
+		// Reverse-dependency map: for each non-terminal, the rules that
+		// reference it. FIRST/NULLABLE grow monotonically, so a rule can only
+		// be affected when one of the rules it references grows.
+		$dependents = array();
+		foreach ( $rule_ids as $rule_id ) {
+			$seen = array();
+			foreach ( $rules[ $rule_id ] as $branch ) {
+				foreach ( $branch as $symbol ) {
+					if ( $symbol >= $low_nt && ! isset( $seen[ $symbol ] ) ) {
+						$seen[ $symbol ]         = true;
+						$dependents[ $symbol ][] = $rule_id;
 					}
 				}
 			}
-		} while ( $changed );
+		}
 
-		// Build per-(rule, token) branch indices.
-		foreach ( $rule_ids as $rule_id ) {
-			$branches            = $rules[ $rule_id ];
-			$selector            = array();
-			$nullable_branch_ids = array();
-			foreach ( $branches as $idx => $branch ) {
-				$branch_first    = array();
+		// Worklist fixpoint. Recompute a rule's FIRST/NULLABLE only when a rule
+		// it references has grown, instead of rescanning every rule on every
+		// pass until the whole grammar stabilizes.
+		$queued   = array_fill_keys( $rule_ids, true );
+		$worklist = $rule_ids;
+		while ( $worklist ) {
+			$rule_id = array_pop( $worklist );
+			unset( $queued[ $rule_id ] );
+
+			$first        = $first_sets[ $rule_id ];
+			$before       = count( $first );
+			$was_nullable = $nullable[ $rule_id ];
+			$is_nullable  = $was_nullable;
+			foreach ( $rules[ $rule_id ] as $branch ) {
 				$branch_nullable = true;
 				foreach ( $branch as $symbol ) {
 					if ( $empty_rule === $symbol ) {
+						// ε: contributes nothing to FIRST, stays nullable.
 						continue;
 					}
 					if ( $symbol < $low_nt ) {
-						$branch_first[ $symbol ] = true;
-						$branch_nullable         = false;
+						// Terminal.
+						$first[ $symbol ] = true;
+						$branch_nullable  = false;
 						break;
 					}
-					foreach ( $first_sets[ $symbol ] as $tid => $_ ) {
-						$branch_first[ $tid ] = true;
-					}
+					// Non-terminal: union FIRST(symbol) in one operation.
+					$first += $first_sets[ $symbol ];
 					if ( ! $nullable[ $symbol ] ) {
 						$branch_nullable = false;
 						break;
 					}
 				}
-				foreach ( $branch_first as $tid => $_ ) {
-					$selector[ $tid ][] = $idx;
-				}
 				if ( $branch_nullable ) {
-					$nullable_branch_ids[] = $idx;
+					$is_nullable = true;
 				}
 			}
 
-			// Nullable branches also match when the current token is not in
-			// any branch's FIRST set. Fold them into every populated entry
-			// so the runtime lookup is a single array access.
-			if ( $nullable_branch_ids ) {
-				$merged = array();
-				foreach ( $selector as $tid => $idx_list ) {
-					$merged[ $tid ] = self::merge_sorted( $idx_list, $nullable_branch_ids );
+			// Re-enqueue dependents only when this rule actually grew.
+			if ( count( $first ) > $before || ( $is_nullable && ! $was_nullable ) ) {
+				$first_sets[ $rule_id ] = $first;
+				$nullable[ $rule_id ]   = $is_nullable;
+				if ( isset( $dependents[ $rule_id ] ) ) {
+					foreach ( $dependents[ $rule_id ] as $dependent ) {
+						if ( ! isset( $queued[ $dependent ] ) ) {
+							$queued[ $dependent ] = true;
+							$worklist[]           = $dependent;
+						}
+					}
 				}
-				$selector                            = $merged;
+			}
+		}
+
+		// FIRST/NULLABLE are now final. A rule is nullable exactly when it has
+		// a nullable branch, so publish nullable_branches eagerly; the parser's
+		// nullable fallback consults it for every rule. branches_for_token and
+		// single_candidate_rules are built lazily per rule (ensure_rule_selector)
+		// because a typical query touches only a few percent of all rules, so
+		// denormalizing the whole grammar up front is mostly wasted work.
+		$this->first_sets    = $first_sets;
+		$this->rule_nullable = $nullable;
+		foreach ( $nullable as $rule_id => $is_nullable ) {
+			if ( $is_nullable ) {
 				$this->nullable_branches[ $rule_id ] = true;
 			}
-			if ( $selector ) {
-				// Embed the branch symbol sequences directly so the parser can
-				// iterate candidate branches without a $branches[$idx] lookup on
-				// every attempt. Many tokens in a rule share the same branch-id
-				// list, so deduplicate by signature and let copy-on-write share
-				// one sequences array across them. This dedup matters: unshared,
-				// the table would be ~35 MiB on the MySQL grammar; shared, it is
-				// a few MiB, built once per process (not per query).
-				$by_signature          = array();
-				$all_single_candidates = true;
-				foreach ( $selector as $tid => $idx_list ) {
-					if ( 1 !== count( $idx_list ) ) {
-						$all_single_candidates = false;
-					}
-					$sig = implode( ',', $idx_list );
-					if ( isset( $by_signature[ $sig ] ) ) {
-						$selector[ $tid ] = $by_signature[ $sig ];
-					} else {
-						$seqs = array();
-						foreach ( $idx_list as $idx ) {
-							$seqs[] = $branches[ $idx ];
-						}
-						$by_signature[ $sig ] = $seqs;
-						$selector[ $tid ]     = $seqs;
-					}
+		}
+	}
+
+	/**
+	 * Build the per-token branch selector for one rule on first use.
+	 *
+	 * Denormalizes the rule's branches into `token_id => branch sequences[]`
+	 * from the precomputed FIRST/NULLABLE sets, populating branches_for_token
+	 * (and single_candidate_rules). Memoized, so repeated calls are cheap.
+	 *
+	 * @param int $rule_id
+	 */
+	public function ensure_rule_selector( $rule_id ): void {
+		if ( isset( $this->rule_selector_built[ $rule_id ] ) ) {
+			return;
+		}
+		$this->rule_selector_built[ $rule_id ] = true;
+
+		$low_nt              = $this->lowest_non_terminal_id;
+		$empty_rule          = self::EMPTY_RULE_ID;
+		$first_sets          = $this->first_sets;
+		$nullable            = $this->rule_nullable;
+		$branches            = $this->rules[ $rule_id ];
+		$selector            = array();
+		$nullable_branch_ids = array();
+		foreach ( $branches as $idx => $branch ) {
+			$branch_first    = array();
+			$branch_nullable = true;
+			foreach ( $branch as $symbol ) {
+				if ( $empty_rule === $symbol ) {
+					continue;
 				}
-				$this->branches_for_token[ $rule_id ] = $selector;
-				if ( $all_single_candidates ) {
-					$this->single_candidate_rules[ $rule_id ] = true;
+				if ( $symbol < $low_nt ) {
+					$branch_first[ $symbol ] = true;
+					$branch_nullable         = false;
+					break;
+				}
+				$branch_first += $first_sets[ $symbol ];
+				if ( ! $nullable[ $symbol ] ) {
+					$branch_nullable = false;
+					break;
 				}
 			}
+			foreach ( $branch_first as $tid => $_ ) {
+				$selector[ $tid ][] = $idx;
+			}
+			if ( $branch_nullable ) {
+				$nullable_branch_ids[] = $idx;
+			}
+		}
+
+		// Nullable branches also match when the current token is not in
+		// any branch's FIRST set. Fold them into every populated entry
+		// so the runtime lookup is a single array access.
+		if ( $nullable_branch_ids ) {
+			// nullable_branches is already published eagerly from the fixpoint;
+			// here we only fold the nullable branches into each selector entry.
+			$merged = array();
+			foreach ( $selector as $tid => $idx_list ) {
+				$merged[ $tid ] = self::merge_sorted( $idx_list, $nullable_branch_ids );
+			}
+			$selector = $merged;
+		}
+		if ( $selector ) {
+			// Embed the branch symbol sequences directly so the parser can
+			// iterate candidate branches without a $branches[$idx] lookup on
+			// every attempt. Many tokens in a rule share the same branch-id
+			// list, so deduplicate by signature and let copy-on-write share
+			// one sequences array across them. This dedup matters: unshared,
+			// the table would be ~35 MiB on the MySQL grammar; shared, it is
+			// a few MiB, built once per process (not per query).
+			$by_signature          = array();
+			$all_single_candidates = true;
+			foreach ( $selector as $tid => $idx_list ) {
+				if ( 1 !== count( $idx_list ) ) {
+					$all_single_candidates = false;
+				}
+				$sig = isset( $idx_list[1] ) ? implode( ',', $idx_list ) : $idx_list[0];
+				if ( isset( $by_signature[ $sig ] ) ) {
+					$selector[ $tid ] = $by_signature[ $sig ];
+				} else {
+					$seqs = array();
+					foreach ( $idx_list as $idx ) {
+						$seqs[] = $branches[ $idx ];
+					}
+					$by_signature[ $sig ] = $seqs;
+					$selector[ $tid ]     = $seqs;
+				}
+			}
+			$this->branches_for_token[ $rule_id ] = $selector;
+			if ( $all_single_candidates ) {
+				$this->single_candidate_rules[ $rule_id ] = true;
+			}
+		}
+	}
+
+	/**
+	 * Eagerly build every rule's selector.
+	 *
+	 * The pure-PHP parser builds selectors lazily and the native bridge exports
+	 * the FIRST sets instead, so this is only for consumers that read the full
+	 * branches_for_token table directly (currently the grammar tests).
+	 */
+	public function build_all_selectors(): void {
+		foreach ( array_keys( $this->rules ) as $rule_id ) {
+			$this->ensure_rule_selector( $rule_id );
 		}
 	}
 

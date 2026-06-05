@@ -24,14 +24,18 @@ class WP_Parser {
 	private $select_statement_rule_id;
 	private $single_candidate_rules;
 
+	// Rules whose selector has been pulled from the grammar into the caches
+	// above. Selectors are built lazily on first descent into a rule.
+	private $built_rules = array();
+
 	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
 		$this->grammar                = $grammar;
 		$this->rule_names             = $grammar->rule_names;
 		$this->fragment_ids           = $grammar->fragment_ids;
-		$this->branches_for_token     = $grammar->branches_for_token;
+		$this->branches_for_token     = array();
 		$this->nullable_branches      = $grammar->nullable_branches;
 		$this->highest_terminal_id    = $grammar->highest_terminal_id;
-		$this->single_candidate_rules = $grammar->single_candidate_rules;
+		$this->single_candidate_rules = array();
 
 		// The INTO negative-lookahead only fires for selectStatement. Cache
 		// the rule id so the per-call check is an int compare instead of a
@@ -91,16 +95,31 @@ class WP_Parser {
 		$position = $this->position;
 
 		// Narrow the set of branches worth trying using the precomputed FIRST
-		// sets. When no entry exists for the current token but the rule is
-		// nullable, all candidate branches would match empty, so we return
-		// immediately without entering any branch.
+		// sets. branches_for_token is built lazily per rule, so a lookup miss
+		// means either "this token cannot start the rule" or "the rule is not
+		// denormalized yet". The hit path stays a single array access; only a
+		// miss consults built_rules and builds the rule's selector on first touch.
 		$tid = $tokens[ $position ]->id;
 		if ( isset( $this->branches_for_token[ $rule_id ][ $tid ] ) ) {
 			$candidate_branches = $this->branches_for_token[ $rule_id ][ $tid ];
-		} elseif ( isset( $this->nullable_branches[ $rule_id ] ) ) {
-			return true;
+		} elseif ( isset( $this->built_rules[ $rule_id ] ) ) {
+			// Rule already built; this token simply does not start it.
+			return isset( $this->nullable_branches[ $rule_id ] );
 		} else {
-			return false;
+			// First descent into this rule: build its selector, then resolve.
+			$this->built_rules[ $rule_id ] = true;
+			$this->grammar->ensure_rule_selector( $rule_id );
+			if ( isset( $this->grammar->branches_for_token[ $rule_id ] ) ) {
+				$this->branches_for_token[ $rule_id ] = $this->grammar->branches_for_token[ $rule_id ];
+				if ( isset( $this->grammar->single_candidate_rules[ $rule_id ] ) ) {
+					$this->single_candidate_rules[ $rule_id ] = true;
+				}
+			}
+			if ( isset( $this->branches_for_token[ $rule_id ][ $tid ] ) ) {
+				$candidate_branches = $this->branches_for_token[ $rule_id ][ $tid ];
+			} else {
+				return isset( $this->nullable_branches[ $rule_id ] );
+			}
 		}
 
 		$highest_terminal_id = $this->highest_terminal_id;

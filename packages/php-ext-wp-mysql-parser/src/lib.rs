@@ -1337,11 +1337,11 @@ fn export_grammar(grammar_zval: &mut Zval) -> PhpResult<Arc<Grammar>> {
             .and_then(Zval::array)
             .ok_or_else(|| php_error("Missing grammar rules"))?,
     )?;
-    let parsed_first_sets = parse_branches_for_token_first_sets(
+    let parsed_first_sets = parse_first_sets(
         array
-            .get("branches_for_token")
+            .get("first_sets")
             .and_then(Zval::array)
-            .ok_or_else(|| php_error("Missing grammar branches_for_token"))?,
+            .ok_or_else(|| php_error("Missing grammar first_sets"))?,
     )?;
     let parsed_nullable = parse_id_set(
         array
@@ -1516,22 +1516,19 @@ fn parse_rules(array: &ZendHashTable) -> PhpResult<HashMap<i64, Vec<Vec<i64>>>> 
     Ok(rules)
 }
 
-/// Build a per-rule FIRST set from `branches_for_token`, which is keyed
-/// `[rule_id => [token_id => array<branch_seq>]]`. Only the inner keys
-/// (the token ids) are needed here; the branch sequences are the
-/// pure-PHP parser's per-token candidate set, irrelevant to the native
-/// parser's early-bailout.
-fn parse_branches_for_token_first_sets(
-    array: &ZendHashTable,
-) -> PhpResult<HashMap<i64, HashSet<i64>>> {
+/// Parse the per-rule FIRST sets, keyed `[rule_id => [token_id => true]]`.
+/// The native parser uses these to decide early whether a rule can start
+/// with the current token; it builds its own branch candidates from
+/// `rules`, so the pure-PHP parser's per-token selector table is not needed.
+fn parse_first_sets(array: &ZendHashTable) -> PhpResult<HashMap<i64, HashSet<i64>>> {
     let mut first_sets = HashMap::new();
-    for (rule_key, selector_zval) in array {
+    for (rule_key, tokens_zval) in array {
         let rule_id = array_key_to_i64(rule_key)?;
-        let selector = selector_zval
+        let tokens = tokens_zval
             .array()
-            .ok_or_else(|| php_error("Grammar branches_for_token entry must be an array"))?;
-        let mut set = HashSet::with_capacity(selector.len());
-        for (token_key, _) in selector {
+            .ok_or_else(|| php_error("Grammar first_sets entry must be an array"))?;
+        let mut set = HashSet::with_capacity(tokens.len());
+        for (token_key, _) in tokens {
             set.insert(array_key_to_i64(token_key)?);
         }
         first_sets.insert(rule_id, set);

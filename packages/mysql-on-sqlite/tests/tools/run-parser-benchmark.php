@@ -64,7 +64,11 @@ while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 $failures   = array();
 $exceptions = array();
 $processed  = 0;
-$start      = microtime( true );
+// Reuse a single parser across queries, mirroring the driver
+// (WP_PDO_MySQL_On_SQLite::reset_or_create_parser), which resets tokens on the
+// same instance rather than constructing a fresh parser per query.
+$parser = null;
+$start  = microtime( true );
 foreach ( $queries as $query ) {
 	try {
 		$lexer  = new WP_MySQL_Lexer( $query );
@@ -75,8 +79,12 @@ foreach ( $queries as $query ) {
 			throw new Exception( 'Failed to tokenize query: ' . $query );
 		}
 
-		$parser = new WP_MySQL_Parser( $grammar, $tokens );
-		$ast    = $parser->parse();
+		if ( null === $parser ) {
+			$parser = new WP_MySQL_Parser( $grammar, $tokens );
+		} else {
+			$parser->reset_tokens( $tokens );
+		}
+		$ast = $parser->parse();
 		if ( null === $ast ) {
 			$failures[] = $query;
 		}

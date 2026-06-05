@@ -27,13 +27,17 @@ class WP_Parser_Grammar_Tests extends TestCase {
 	 * @param array    $grammar      Branches by index; each branch is an int[].
 	 */
 	private function build_grammar( int $rules_offset, array $names, array $grammar ): WP_Parser_Grammar {
-		return new WP_Parser_Grammar(
+		$g = new WP_Parser_Grammar(
 			array(
 				'rules_offset' => $rules_offset,
 				'rules_names'  => $names,
 				'grammar'      => $grammar,
 			)
 		);
+		// Selectors are denormalized lazily per rule; force a full build so the
+		// assertions below can read the complete branches_for_token table.
+		$g->build_all_selectors();
+		return $g;
 	}
 
 	public function test_strip_epsilon_markers_and_nullable_fallback(): void {
@@ -151,8 +155,36 @@ class WP_Parser_Grammar_Tests extends TestCase {
 		$this->assertSame( array( 0, 1 ), $merge->invoke( null, array( 0, 1 ), array( 1 ) ) );
 	}
 
+	public function test_lazy_selector_matches_full_build(): void {
+		// child ::= A | B ;  top ::= child   (A=1, B=2)
+		$g        = $this->build_grammar(
+			10,
+			array( 'top', 'child' ),
+			array(
+				array( array( 11 ) ),
+				array( array( 1 ), array( 2 ) ),
+			)
+		);
+		$expected = $g->branches_for_token[10];
+
+		// A fresh grammar that never forces a full build must produce the same
+		// selector for a rule the moment it is requested, and be idempotent.
+		$lazy = new WP_Parser_Grammar(
+			array(
+				'rules_offset' => 10,
+				'rules_names'  => array( 'top', 'child' ),
+				'grammar'      => array( array( array( 11 ) ), array( array( 1 ), array( 2 ) ) ),
+			)
+		);
+		$this->assertArrayNotHasKey( 10, $lazy->branches_for_token );
+		$lazy->ensure_rule_selector( 10 );
+		$lazy->ensure_rule_selector( 10 );
+		$this->assertSame( $expected, $lazy->branches_for_token[10] );
+	}
+
 	public function test_real_mysql_grammar_invariants(): void {
 		$g = new WP_Parser_Grammar( require __DIR__ . '/../../src/mysql/mysql-grammar.php' );
+		$g->build_all_selectors();
 
 		// Epsilon markers are fully stripped from every branch. The parser's
 		// end-of-input sentinel relies on no real branch symbol being 0.
