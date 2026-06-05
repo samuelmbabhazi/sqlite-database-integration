@@ -36,4 +36,28 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 		$this->assertNotNull( $ast );
 		$this->assertInstanceOf( WP_Parser_Node::class, $ast );
 	}
+
+	public function test_native_ast_node_identity_survives_mutation(): void {
+		if ( ! class_exists( 'WP_MySQL_Native_Parser_Node', false ) ) {
+			$this->markTestSkipped( 'Native parser extension is not active.' );
+		}
+
+		$grammar = new WP_Parser_Grammar( include __DIR__ . '/../../../src/mysql/mysql-grammar.php' );
+		$lexer   = new WP_MySQL_Lexer( 'SELECT 1' );
+		$parser  = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+
+		$ast = $parser->parse();
+		$this->assertInstanceOf( WP_MySQL_Native_Parser_Node::class, $ast );
+
+		$first_child = $ast->get_first_child_node();
+		$this->assertInstanceOf( WP_Parser_Node::class, $first_child );
+		$this->assertSame( $first_child, $ast->get_first_child_node() );
+
+		$synthetic = new WP_Parser_Node( 0, 'synthetic' );
+		$first_child->append_child( $synthetic );
+
+		$same_first_child = $ast->get_first_child_node();
+		$this->assertSame( $first_child, $same_first_child );
+		$this->assertTrue( in_array( $synthetic, $same_first_child->get_children(), true ) );
+	}
 }

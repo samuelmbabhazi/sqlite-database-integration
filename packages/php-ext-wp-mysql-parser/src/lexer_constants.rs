@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::mem;
 use std::ptr;
+use std::sync::OnceLock;
 
 use ext_php_rs::boxed::ZBox;
 use ext_php_rs::builders::ClassBuilder;
@@ -3944,6 +3946,10 @@ pub const TOKEN_SYNONYMS: &[(i64, i64)] = &[
     (630i64, 629i64),
 ];
 
+static KEYWORD_TOKEN_MAP: OnceLock<HashMap<&'static str, i64>> = OnceLock::new();
+static VERSION_RULE_MAP: OnceLock<HashMap<i64, i64>> = OnceLock::new();
+static TOKEN_SYNONYM_MAP: OnceLock<HashMap<i64, i64>> = OnceLock::new();
+
 pub const UNDERSCORE_CHARSET_NAMES: &[&str] = &[
     "_armscii8",
     "_ascii",
@@ -4003,15 +4009,17 @@ pub fn token_name(id: i64) -> Option<&'static str> {
 }
 
 pub fn keyword_token(keyword: &str) -> Option<i64> {
-    KEYWORD_TOKENS
-        .iter()
-        .find_map(|(candidate, id)| (*candidate == keyword).then_some(*id))
+    KEYWORD_TOKEN_MAP
+        .get_or_init(|| KEYWORD_TOKENS.iter().copied().collect())
+        .get(keyword)
+        .copied()
 }
 
 pub fn version_rule(token_id: i64) -> Option<i64> {
-    VERSION_RULES
-        .iter()
-        .find_map(|(candidate, version)| (*candidate == token_id).then_some(*version))
+    VERSION_RULE_MAP
+        .get_or_init(|| VERSION_RULES.iter().copied().collect())
+        .get(&token_id)
+        .copied()
 }
 
 pub fn is_function_token(token_id: i64) -> bool {
@@ -4019,9 +4027,10 @@ pub fn is_function_token(token_id: i64) -> bool {
 }
 
 pub fn token_synonym(token_id: i64) -> Option<i64> {
-    TOKEN_SYNONYMS
-        .iter()
-        .find_map(|(candidate, synonym)| (*candidate == token_id).then_some(*synonym))
+    TOKEN_SYNONYM_MAP
+        .get_or_init(|| TOKEN_SYNONYMS.iter().copied().collect())
+        .get(&token_id)
+        .copied()
 }
 
 pub fn is_underscore_charset(name: &str) -> bool {

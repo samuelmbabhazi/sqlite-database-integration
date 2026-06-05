@@ -8,6 +8,10 @@
  * Options:
  *   --json       Print machine-readable benchmark output.
  *   --limit=N    Only benchmark the first N queries.
+ *   --consume=MODE
+ *                How much AST data to consume after parsing:
+ *                none        Only require parse() to return an AST (default).
+ *                descendants Walk all descendants with get_descendants().
  */
 
 // Throw exception if anything fails.
@@ -17,12 +21,20 @@ set_error_handler(
 	}
 );
 
-$json  = in_array( '--json', $argv, true );
-$limit = null;
+$json    = in_array( '--json', $argv, true );
+$limit   = null;
+$consume = 'none';
 foreach ( $argv as $arg ) {
 	if ( 0 === strpos( $arg, '--limit=' ) ) {
 		$limit = max( 1, (int) substr( $arg, strlen( '--limit=' ) ) );
 	}
+	if ( 0 === strpos( $arg, '--consume=' ) ) {
+		$consume = substr( $arg, strlen( '--consume=' ) );
+	}
+}
+
+if ( ! in_array( $consume, array( 'none', 'descendants' ), true ) ) {
+	throw new InvalidArgumentException( sprintf( 'Unsupported --consume mode: %s', $consume ) );
 }
 
 // Use the integration loader so an already-loaded native extension selects
@@ -61,9 +73,10 @@ while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 }
 
 // Run the parser.
-$failures   = array();
-$exceptions = array();
-$processed  = 0;
+$failures    = array();
+$exceptions  = array();
+$processed   = 0;
+$descendants = 0;
 // Reuse a single parser across queries, mirroring the driver
 // (WP_PDO_MySQL_On_SQLite::reset_or_create_parser), which resets tokens on the
 // same instance rather than constructing a fresh parser per query.
@@ -87,6 +100,8 @@ foreach ( $queries as $query ) {
 		$ast = $parser->parse();
 		if ( null === $ast ) {
 			$failures[] = $query;
+		} elseif ( 'descendants' === $consume ) {
+			$descendants += count( $ast->get_descendants() );
 		}
 	} catch ( Exception $e ) {
 		$exceptions[] = $query;
@@ -107,6 +122,8 @@ if ( $json ) {
 			'implementation'   => class_exists( 'WP_MySQL_Native_Parser', false ) ? 'native-extension' : 'php',
 			'extension_loaded' => extension_loaded( 'wp_mysql_parser' ),
 			'queries'          => $processed,
+			'consume'          => $consume,
+			'descendants'      => $descendants,
 			'duration'         => $duration,
 			'qps'              => $qps,
 			'failures'         => count( $failures ),
@@ -119,6 +136,11 @@ if ( $json ) {
 }
 
 echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
+printf( "AST consumption: %s", $consume );
+if ( 'descendants' === $consume ) {
+	printf( " (%d descendants)", $descendants );
+}
+echo "\n";
 
 // Print the results.
 printf( "\nParsed %d queries in %.5fs @ %d QPS.\n", $processed, $duration, $qps );
