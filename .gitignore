@@ -10,3 +10,6 @@ composer.lock
 /.claude/settings.local.json
 /.adversarial-loop/
 /packages/php-ext-wp-mysql-parser/target/
+
+# Generated LALR(1) parsing table (experiment); regenerate with grammar-tools/build-lalr-table.php
+/packages/mysql-on-sqlite/src/mysql/mysql-lalr-table.php
