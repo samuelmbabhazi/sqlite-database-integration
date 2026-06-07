@@ -12,6 +12,8 @@
  *                How much AST data to consume after parsing:
  *                none        Only require parse() to return an AST (default).
  *                descendants Walk all descendants with get_descendants().
+ *                descendant-ids
+ *                            Consume all descendants as scalar kind/id rows.
  */
 
 // Throw exception if anything fails.
@@ -33,7 +35,7 @@ foreach ( $argv as $arg ) {
 	}
 }
 
-if ( ! in_array( $consume, array( 'none', 'descendants' ), true ) ) {
+if ( ! in_array( $consume, array( 'none', 'descendants', 'descendant-ids' ), true ) ) {
 	throw new InvalidArgumentException( sprintf( 'Unsupported --consume mode: %s', $consume ) );
 }
 
@@ -77,6 +79,7 @@ $failures    = array();
 $exceptions  = array();
 $processed   = 0;
 $descendants = 0;
+$checksum    = 0;
 // Reuse a single parser across queries, mirroring the driver
 // (WP_PDO_MySQL_On_SQLite::reset_or_create_parser), which resets tokens on the
 // same instance rather than constructing a fresh parser per query.
@@ -102,6 +105,27 @@ foreach ( $queries as $query ) {
 			$failures[] = $query;
 		} elseif ( 'descendants' === $consume ) {
 			$descendants += count( $ast->get_descendants() );
+		} elseif ( 'descendant-ids' === $consume ) {
+			if (
+				class_exists( 'WP_MySQL_Native_Parser_Node', false )
+				&& $ast instanceof WP_MySQL_Native_Parser_Node
+				&& method_exists( $ast, 'get_native_descendant_id_rows' )
+			) {
+				$rows         = $ast->get_native_descendant_id_rows();
+				$descendants += intdiv( count( $rows ), 2 );
+				foreach ( $rows as $value ) {
+					$checksum += $value;
+				}
+			} else {
+				foreach ( $ast->get_descendants() as $descendant ) {
+					++$descendants;
+					if ( $descendant instanceof WP_Parser_Node ) {
+						$checksum += $descendant->rule_id;
+					} else {
+						$checksum += 1 + $descendant->id;
+					}
+				}
+			}
 		}
 	} catch ( Exception $e ) {
 		$exceptions[] = $query;
@@ -124,6 +148,7 @@ if ( $json ) {
 			'queries'          => $processed,
 			'consume'          => $consume,
 			'descendants'      => $descendants,
+			'checksum'         => $checksum,
 			'duration'         => $duration,
 			'qps'              => $qps,
 			'failures'         => count( $failures ),
@@ -137,8 +162,8 @@ if ( $json ) {
 
 echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
 printf( "AST consumption: %s", $consume );
-if ( 'descendants' === $consume ) {
-	printf( " (%d descendants)", $descendants );
+if ( 'descendants' === $consume || 'descendant-ids' === $consume ) {
+	printf( " (%d descendants, checksum %d)", $descendants, $checksum );
 }
 echo "\n";
 

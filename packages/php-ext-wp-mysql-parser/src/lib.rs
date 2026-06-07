@@ -1233,6 +1233,37 @@ impl NativeAstArena {
     }
 }
 
+fn native_ast_child_handle(child: NativeAstChild) -> PhpResult<i64> {
+    let (index, is_token) = match child {
+        NativeAstChild::Node(index) => (index, 0_i64),
+        NativeAstChild::Token(index) => (index, 1_i64),
+    };
+    let index = i64::try_from(index).map_err(php_error)?;
+    index
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(is_token))
+        .ok_or_else(|| php_error("Native AST handle is out of range"))
+}
+
+fn native_ast_child_from_handle(handle: i64) -> PhpResult<NativeAstChild> {
+    if handle < 0 {
+        return Err(php_error("Native AST handle must be non-negative"));
+    }
+    let index = usize::try_from(handle / 2).map_err(php_error)?;
+    if handle % 2 == 0 {
+        Ok(NativeAstChild::Node(index))
+    } else {
+        Ok(NativeAstChild::Token(index))
+    }
+}
+
+fn native_ast_node_index_from_handle(handle: i64) -> PhpResult<usize> {
+    match native_ast_child_from_handle(handle)? {
+        NativeAstChild::Node(index) => Ok(index),
+        NativeAstChild::Token(_) => Err(php_error("Native AST handle does not refer to a node")),
+    }
+}
+
 fn native_ast_wrapper_key(wrapper_zval: &Zval) -> PhpResult<usize> {
     let object = wrapper_zval
         .object()
@@ -1648,6 +1679,107 @@ pub fn wp_sqlite_mysql_native_ast_get_descendant_tokens(
         }
     }
     Ok(descendants)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_handle(wrapper_zval: &Zval) -> PhpResult<i64> {
+    let (_ast, node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    native_ast_child_handle(NativeAstChild::Node(node_index))
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_child_handles(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    let node_index = native_ast_node_index_from_handle(handle)?;
+    ast.arena
+        .node(node_index)?
+        .children
+        .iter()
+        .copied()
+        .map(native_ast_child_handle)
+        .collect()
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_handles(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    let node_index = native_ast_node_index_from_handle(handle)?;
+    let node = ast.arena.node(node_index)?;
+    let mut descendants = Vec::with_capacity(node.descendant_count);
+    let mut stack = ast.arena.descendant_stack(node_index)?;
+    while let Some(child) = stack.pop() {
+        descendants.push(native_ast_child_handle(child)?);
+        if let NativeAstChild::Node(index) = child {
+            for child in ast.arena.node(index)?.children.iter().rev() {
+                stack.push(*child);
+            }
+        }
+    }
+    Ok(descendants)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_id_rows(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    let node_index = native_ast_node_index_from_handle(handle)?;
+    let node = ast.arena.node(node_index)?;
+    let mut rows = Vec::with_capacity(node.descendant_count.saturating_mul(2));
+    let mut stack = ast.arena.descendant_stack(node_index)?;
+    while let Some(child) = stack.pop() {
+        match child {
+            NativeAstChild::Node(index) => {
+                rows.push(0);
+                rows.push(ast.arena.node(index)?.rule_id);
+                for child in ast.arena.node(index)?.children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            NativeAstChild::Token(index) => {
+                rows.push(1);
+                rows.push(ast.arena.token_source.token_info(index)?.id);
+            }
+        }
+    }
+    Ok(rows)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_handle_kind(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<i64> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    match native_ast_child_from_handle(handle)? {
+        NativeAstChild::Node(index) => {
+            ast.arena.node(index)?;
+            Ok(0)
+        }
+        NativeAstChild::Token(index) => {
+            ast.arena.token_source.token_info(index)?;
+            Ok(1)
+        }
+    }
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_handle_id(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<i64> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    match native_ast_child_from_handle(handle)? {
+        NativeAstChild::Node(index) => Ok(ast.arena.node(index)?.rule_id),
+        NativeAstChild::Token(index) => Ok(ast.arena.token_source.token_info(index)?.id),
+    }
 }
 
 #[php_function]
@@ -2174,6 +2306,22 @@ pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
         ))
         .function(wrap_function!(
             wp_sqlite_mysql_native_ast_get_descendant_tokens
+        ))
+        .function(wrap_function!(wp_sqlite_mysql_native_ast_get_native_handle))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_native_child_handles
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_native_descendant_handles
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_native_descendant_id_rows
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_native_handle_kind
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_native_handle_id
         ))
         .function(wrap_function!(wp_sqlite_mysql_native_ast_get_start))
         .function(wrap_function!(wp_sqlite_mysql_native_ast_get_length))

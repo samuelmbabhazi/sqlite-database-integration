@@ -140,6 +140,49 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 		return wp_sqlite_mysql_native_ast_get_descendant_tokens( $this, $token_id );
 	}
 
+	public function get_native_handle(): int {
+		return wp_sqlite_mysql_native_ast_get_native_handle( $this );
+	}
+
+	public function get_native_child_handles( ?int $handle = null ): array {
+		return wp_sqlite_mysql_native_ast_get_native_child_handles(
+			$this,
+			$handle ?? $this->get_native_handle()
+		);
+	}
+
+	public function get_native_descendant_handles( ?int $handle = null ): array {
+		return wp_sqlite_mysql_native_ast_get_native_descendant_handles(
+			$this,
+			$handle ?? $this->get_native_handle()
+		);
+	}
+
+	/**
+	 * Return descendant metadata without materializing PHP node/token objects.
+	 *
+	 * The result is a flat list of `[kind, id, kind, id, ...]` pairs, where
+	 * kind `0` is a parser node and kind `1` is a token. The id is the node's
+	 * rule id or the token id.
+	 *
+	 * @param  int|null $handle Optional native node handle. Defaults to this node.
+	 * @return int[]
+	 */
+	public function get_native_descendant_id_rows( ?int $handle = null ): array {
+		return wp_sqlite_mysql_native_ast_get_native_descendant_id_rows(
+			$this,
+			$handle ?? $this->get_native_handle()
+		);
+	}
+
+	public function get_native_handle_kind( int $handle ): int {
+		return wp_sqlite_mysql_native_ast_get_native_handle_kind( $this, $handle );
+	}
+
+	public function get_native_handle_id( int $handle ): int {
+		return wp_sqlite_mysql_native_ast_get_native_handle_id( $this, $handle );
+	}
+
 	/** @inheritDoc */
 	public function get_start(): int {
 		if ( $this->was_mutated() ) {
