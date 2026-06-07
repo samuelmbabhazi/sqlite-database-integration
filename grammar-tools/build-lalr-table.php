@@ -23,10 +23,12 @@ $T0 = microtime( true );
 $ROOT = dirname( __DIR__ );
 require_once $ROOT . '/packages/mysql-on-sqlite/src/mysql/class-wp-mysql-lexer.php';
 
-$opts  = getopt( '', array( 'stage::', 'quiet', 'merge::', 'dump-state::' ) );
+$opts  = getopt( '', array( 'stage::', 'quiet', 'merge::', 'dump-state::', 'inline::' ) );
 $STAGE = $opts['stage'] ?? 'all';
 $QUIET = isset( $opts['quiet'] );
 $MERGE = $opts['merge'] ?? 'atom+dedup';   // none | atom | atom+dedup
+// Single-production inlining: off | frag (%f fragments only) | all (also real rules).
+$INLINE = isset( $opts['inline'] ) ? ( 'all' === $opts['inline'] ? 'all' : 'frag' ) : 'off';
 
 function logln( $msg ) {
 	global $QUIET, $T0;
@@ -264,6 +266,88 @@ if ( 'atom+dedup' === $MERGE ) {
 	$merged = $build_merged();
 }
 
+/*
+ * Transform C: inline single-production nonterminals (pure aliases).
+ *
+ * A nonterminal with exactly one production is an alias for that production's
+ * body, so it can be substituted at every use site and removed -- this never
+ * duplicates productions (unlike full unit elimination) and removes the alias's
+ * reduction state, shrinking the automaton and the per-parse reduce count.
+ *
+ * START and atoms are protected (atoms carry the keyword disambiguation); real
+ * rule names are protected unless --inline=all, to keep them as AST nodes.
+ * Leaves (inlinable rules whose body has no inlinable symbol) are inlined layer
+ * by layer, which terminates and naturally leaves cyclic aliases in place.
+ */
+if ( 'off' !== $INLINE ) {
+	$is_protected = function ( $lhs ) use ( $START, $rule_names, $OFFSET, $INLINE ) {
+		if ( $lhs === $START ) {
+			return true;
+		}
+		$nm = $rule_names[ $lhs - $OFFSET ];
+		if ( 0 === strpos( $nm, '%atom' ) ) {
+			return true;
+		}
+		return '%' !== $nm[0] && 'all' !== $INLINE;
+	};
+
+	$removed = 0;
+	while ( true ) {
+		$inlinable = array();
+		foreach ( $merged as $lhs => $bset ) {
+			if ( 1 !== count( $bset ) || $is_protected( $lhs ) ) {
+				continue;
+			}
+			$branch = reset( $bset );
+			if ( in_array( $lhs, $branch, true ) ) {
+				continue;   // self-recursive alias
+			}
+			$inlinable[ $lhs ] = $branch;
+		}
+		// Leaves: inlinable rules whose body references no inlinable symbol.
+		$leaves = array();
+		foreach ( $inlinable as $lhs => $branch ) {
+			$leaf = true;
+			foreach ( $branch as $sym ) {
+				if ( isset( $inlinable[ $sym ] ) ) {
+					$leaf = false;
+					break;
+				}
+			}
+			if ( $leaf ) {
+				$leaves[ $lhs ] = $branch;
+			}
+		}
+		if ( ! $leaves ) {
+			break;
+		}
+		$next = array();
+		foreach ( $merged as $lhs => $bset ) {
+			if ( isset( $leaves[ $lhs ] ) ) {
+				continue;
+			}
+			$nbset = array();
+			foreach ( $bset as $br ) {
+				$out = array();
+				foreach ( $br as $sym ) {
+					if ( isset( $leaves[ $sym ] ) ) {
+						foreach ( $leaves[ $sym ] as $e ) {
+							$out[] = $e;
+						}
+					} else {
+						$out[] = $sym;
+					}
+				}
+				$nbset[ implode( ',', $out ) ] = $out;
+			}
+			$next[ $lhs ] = $nbset;
+		}
+		$merged   = $next;
+		$removed += count( $leaves );
+	}
+	logln( "Inline: removed $removed single-production nonterminals." );
+}
+
 // Flatten merged rules into the production list (START production first).
 $prods        = array();
 $prods_by_lhs = array();
@@ -297,6 +381,81 @@ logln( "Loaded grammar: $num_prods productions, $rule_count nonterminals, max rh
 function is_terminal( $sym ) {
 	global $is_nonterm;
 	return ! isset( $is_nonterm[ $sym ] );
+}
+
+if ( 'units' === $STAGE ) {
+	// Unit productions: A -> B with a single nonterminal on the rhs.
+	$unit_edges = array();   // A => [B, ...]
+	$unit       = 0;
+	$unit_real  = 0;
+	$nonunit_by_lhs = array();
+	foreach ( $prods as $p ) {
+		$is_unit = ( 1 === count( $p[1] ) ) && isset( $is_nonterm[ $p[1][0] ] );
+		if ( $is_unit ) {
+			++$unit;
+			$unit_edges[ $p[0] ][] = $p[1][0];
+			if ( '%' !== $rule_names[ $p[0] - $OFFSET ][0] ) {
+				++$unit_real;
+			}
+		} else {
+			$nonunit_by_lhs[ $p[0] ][] = 1;
+		}
+	}
+	// Estimate productions after full unit elimination: for each nonterminal,
+	// sum the non-unit productions reachable through unit edges (incl. itself).
+	$reach_cache = array();
+	$reach = function ( $a ) use ( &$reach, &$reach_cache, &$unit_edges ) {
+		if ( isset( $reach_cache[ $a ] ) ) {
+			return $reach_cache[ $a ];
+		}
+		$reach_cache[ $a ] = array( $a => true );   // cycle guard
+		$set = array( $a => true );
+		foreach ( $unit_edges[ $a ] ?? array() as $b ) {
+			foreach ( $reach( $b ) as $c => $_ ) {
+				$set[ $c ] = true;
+			}
+		}
+		return $reach_cache[ $a ] = $set;
+	};
+	$est = 0;
+	$maxgain = 0;
+	foreach ( array_keys( $is_nonterm ) as $a ) {
+		$g = 0;
+		foreach ( $reach( $a ) as $b => $_ ) {
+			$g += count( $nonunit_by_lhs[ $b ] ?? array() );
+		}
+		$est += $g;
+		$maxgain = max( $maxgain, $g );
+	}
+	fwrite( STDERR, "Unit productions: $unit of $num_prods (real-rule lhs: $unit_real, fragment lhs: " . ( $unit - $unit_real ) . ")\n" );
+	fwrite( STDERR, "Nonterminals with unit edges: " . count( $unit_edges ) . "\n" );
+	fwrite( STDERR, "Estimated productions after FULL unit elimination: ~$est (now $num_prods); worst single nonterminal gains $maxgain\n" );
+
+	// Single-production nonterminals (pure aliases, safe to inline without blowup).
+	$prod_count = array();
+	foreach ( $prods as $p ) {
+		$prod_count[ $p[0] ] = ( $prod_count[ $p[0] ] ?? 0 ) + 1;
+	}
+	$single = 0;
+	$single_frag = 0;
+	$single_atom = 0;
+	$single_real = 0;
+	foreach ( $prod_count as $lhs => $c ) {
+		if ( 1 !== $c ) {
+			continue;
+		}
+		++$single;
+		$nm = $rule_names[ $lhs - $OFFSET ];
+		if ( 0 === strpos( $nm, '%atom' ) ) {
+			++$single_atom;
+		} elseif ( '%' === $nm[0] ) {
+			++$single_frag;
+		} else {
+			++$single_real;
+		}
+	}
+	fwrite( STDERR, "Single-production nonterminals (inline candidates): $single (fragment $single_frag, atom $single_atom, real $single_real)\n" );
+	exit( 0 );
 }
 
 /* ---------------------------------------------------------------------------
