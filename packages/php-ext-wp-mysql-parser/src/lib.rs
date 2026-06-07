@@ -16,6 +16,8 @@ use ext_php_rs::types::{ArrayKey, ZendCallable, ZendHashTable, ZendObject, Zval}
 use ext_php_rs::zend::{ClassEntry, ModuleEntry};
 use ext_php_rs::{info_table_end, info_table_row, info_table_start};
 
+#[rustfmt::skip]
+mod compiled_packed_id_parser;
 mod lexer_constants;
 use lexer_constants as lex;
 use lexer_constants::register_lexer_constants;
@@ -2590,6 +2592,10 @@ impl WpMySqlNativeParser {
         &mut self,
         format: NativeAstStatsFormat,
     ) -> PhpResult<Option<NativeAstStats>> {
+        if matches!(format, NativeAstStatsFormat::PackedId) {
+            return Ok(self.parse_packed_id_stats_for_token_ids(&self.token_ids));
+        }
+
         let sql_bytes = match format {
             NativeAstStatsFormat::PackedScalar {
                 consume_token_bytes: true,
@@ -2707,6 +2713,21 @@ impl WpMySqlNativeParser {
     }
 
     fn parse_packed_id_stats_for_token_ids(&self, token_ids: &[i64]) -> Option<NativeAstStats> {
+        if self.grammar.highest_terminal_id == compiled_packed_id_parser::HIGHEST_TERMINAL_ID
+            && self.grammar.query_rule_id == compiled_packed_id_parser::QUERY_RULE_ID
+            && self.grammar.select_statement_rule_id
+                == Some(compiled_packed_id_parser::SELECT_STATEMENT_RULE_ID)
+        {
+            return compiled_packed_id_parser::CompiledPackedIdStatsParser::new(token_ids)
+                .parse()
+                .map(|(descendants, checksum)| NativeAstStats {
+                    descendants,
+                    checksum,
+                    format: NativeAstStatsFormat::PackedId,
+                    sql_bytes: None,
+                });
+        }
+
         let mut stats = NativeAstStats::new(NativeAstStatsFormat::PackedId, None);
         let mut position = 0;
         match parse_recursive_packed_id_stats(
