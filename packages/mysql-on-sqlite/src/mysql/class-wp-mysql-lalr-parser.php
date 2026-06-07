@@ -63,15 +63,26 @@ class WP_MySQL_LALR_Parser {
 		$this->ns        = $table['ns'];
 		$this->start     = $table['start'];
 		$this->dollar    = $table['dollar'];
-		$this->a_col     = $table['a_col'];
+		// Column maps: ordered symbol-id list -> (symbol id => column index).
+		$this->a_col     = array_flip( $dec( $table['a_col'] ) );
 		$this->a_row     = $dec( $table['a_row'] );
 		$this->a_default = $dec( $table['a_default'] );
 		$this->a_base    = $dec( $table['a_base'] );
 		$this->a_check   = $dec( $table['a_check'] );
 		$this->a_value   = $dec( $table['a_value'] );
 		$this->a_len     = count( $this->a_check );
-		$this->conflicts = $table['conflicts'];
-		$this->g_col     = $table['g_col'];
+		// Conflict lists: length-prefixed integer stream -> list of code lists.
+		$cf              = $dec( $table['conflicts'] );
+		$this->conflicts = array();
+		for ( $j = 0, $m = count( $cf ); $j < $m; ) {
+			$len  = $cf[ $j++ ];
+			$list = array();
+			for ( $k = 0; $k < $len; $k++ ) {
+				$list[] = $cf[ $j++ ];
+			}
+			$this->conflicts[] = $list;
+		}
+		$this->g_col     = array_flip( $dec( $table['g_col'] ) );
 		$this->g_row     = $dec( $table['g_row'] );
 		$this->g_base    = $dec( $table['g_base'] );
 		$this->g_check   = $dec( $table['g_check'] );

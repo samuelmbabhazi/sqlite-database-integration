@@ -1040,18 +1040,28 @@ $enc_ints = function ( array $a ) {
 	return base64_encode( gzdeflate( $bin, 9 ) );
 };
 
+// Column maps are stored as the ordered list of symbol ids (column = position).
+// Conflict action lists are flattened to a length-prefixed integer stream.
+$conflict_stream = array();
+foreach ( $conflicts as $list ) {
+	$conflict_stream[] = count( $list );
+	foreach ( $list as $c ) {
+		$conflict_stream[] = $c;
+	}
+}
+
 $table = array(
 	'start'    => $s0,
 	'dollar'   => $DOLLAR,
 	'ns'       => $NS,
-	'a_col'    => $a_col,
+	'a_col'    => $enc_ints( array_keys( $a_col ) ),
 	'a_row'    => $enc_ints( $a_row ),
 	'a_default' => $enc_ints( $a_default ),
 	'a_base'   => $enc_ints( $a_base ),
 	'a_check'  => $enc_ints( $a_check ),
 	'a_value'  => $enc_ints( $a_value ),
-	'conflicts' => $conflicts,
-	'g_col'    => $g_col,
+	'conflicts' => $enc_ints( $conflict_stream ),
+	'g_col'    => $enc_ints( array_keys( $g_col ) ),
 	'g_row'    => $enc_ints( $g_row ),
 	'g_base'   => $enc_ints( $g_base ),
 	'g_check'  => $enc_ints( $g_check ),
