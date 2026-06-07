@@ -123,14 +123,20 @@ function consume_native_descendant_packed_id_rows( array $rows, int &$descendant
 	}
 }
 
-function consume_native_descendant_scalar_rows( array $rows, string $query, bool $consume_token_bytes, int &$descendants, int &$checksum ): void {
+function consume_native_descendant_scalar_rows(
+	array $rows,
+	string $query,
+	bool $consume_token_bytes,
+	int &$descendants,
+	int &$checksum
+): void {
 	$row_count    = count( $rows );
 	$descendants += intdiv( $row_count, 4 );
 	for ( $i = 0; $i < $row_count; $i += 4 ) {
-		$kind     = $rows[ $i ];
-		$id       = $rows[ $i + 1 ];
-		$start    = $rows[ $i + 2 ];
-		$length   = $rows[ $i + 3 ];
+		$kind      = $rows[ $i ];
+		$id        = $rows[ $i + 1 ];
+		$start     = $rows[ $i + 2 ];
+		$length    = $rows[ $i + 3 ];
 		$checksum += $kind + $id + $start + $length;
 		if ( $consume_token_bytes && 1 === $kind ) {
 			$checksum += checksum_bytes( substr( $query, $start, $length ) );
@@ -138,12 +144,18 @@ function consume_native_descendant_scalar_rows( array $rows, string $query, bool
 	}
 }
 
-function consume_native_descendant_packed_scalar_rows( array $rows, string $query, bool $consume_token_bytes, int &$descendants, int &$checksum ): void {
+function consume_native_descendant_packed_scalar_rows(
+	array $rows,
+	string $query,
+	bool $consume_token_bytes,
+	int &$descendants,
+	int &$checksum
+): void {
 	$row_count    = count( $rows );
 	$descendants += intdiv( $row_count, 2 );
 	for ( $i = 0; $i < $row_count; $i += 2 ) {
-		$kind_id  = $rows[ $i ];
-		$span     = $rows[ $i + 1 ];
+		$kind_id = $rows[ $i ];
+		$span    = $rows[ $i + 1 ];
 		if ( $span < 0 ) {
 			$checksum += $kind_id - 1;
 		} else {
@@ -320,12 +332,18 @@ foreach ( $queries as $query ) {
 			$parser->reset_tokens( $tokens );
 		}
 
-		$direct_rows_consumed = consume_direct_native_rows( $parser, $consume, $query, $descendants, $checksum );
+		$direct_rows_consumed = consume_direct_native_rows(
+			$parser,
+			$consume,
+			$query,
+			$descendants,
+			$checksum
+		);
 		if ( false === $direct_rows_consumed ) {
 			$failures[] = $query;
 		} elseif ( true !== $direct_rows_consumed ) {
 			$ast_consume = ast_consume_mode( $consume );
-			$ast = $parser->parse();
+			$ast         = $parser->parse();
 			if ( null === $ast ) {
 				$failures[] = $query;
 			} elseif ( 'descendants' === $ast_consume ) {
@@ -401,21 +419,21 @@ $qps      = $processed / $duration;
 if ( $json ) {
 	echo json_encode(
 		array(
-			'benchmark'        => 'mysql-parser',
-			'implementation'   => class_exists( 'WP_MySQL_Native_Parser', false ) ? 'native-extension' : 'php',
-			'api'              => 0 === strpos( $consume, 'direct-' ) && class_exists( 'WP_MySQL_Native_Parser', false ) ? 'direct-native-parser-rows' : 'parse',
-			'extension_loaded' => extension_loaded( 'wp_mysql_parser' ),
-			'queries'          => $processed,
-			'corpus_queries'   => $corpus_queries,
+			'benchmark'              => 'mysql-parser',
+			'implementation'         => class_exists( 'WP_MySQL_Native_Parser', false ) ? 'native-extension' : 'php',
+			'api'                    => 0 === strpos( $consume, 'direct-' ) && class_exists( 'WP_MySQL_Native_Parser', false ) ? 'direct-native-parser-rows' : 'parse',
+			'extension_loaded'       => extension_loaded( 'wp_mysql_parser' ),
+			'queries'                => $processed,
+			'corpus_queries'         => $corpus_queries,
 			'skipped_known_failures' => $skipped_known_failures,
-			'consume'          => $consume,
-			'descendants'      => $descendants,
-			'checksum'         => $checksum,
-			'duration'         => $duration,
-			'qps'              => $qps,
-			'failures'         => count( $failures ),
-			'exceptions'       => count( $exceptions ),
-			'php_version'      => PHP_VERSION,
+			'consume'                => $consume,
+			'descendants'            => $descendants,
+			'checksum'               => $checksum,
+			'duration'               => $duration,
+			'qps'                    => $qps,
+			'failures'               => count( $failures ),
+			'exceptions'             => count( $exceptions ),
+			'php_version'            => PHP_VERSION,
 		),
 		JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
 	), "\n";
@@ -423,10 +441,10 @@ if ( $json ) {
 }
 
 echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
-printf( "AST consumption: %s", $consume );
+printf( 'AST consumption: %s', $consume );
 $ast_consume = ast_consume_mode( $consume );
 if ( 'descendants' === $ast_consume || 'descendant-ids' === $ast_consume || 'descendant-rows' === $ast_consume || 'descendant-token-bytes' === $ast_consume || 'descendant-packed-ids' === $ast_consume || 'descendant-packed-rows' === $ast_consume || 'descendant-packed-token-bytes' === $ast_consume ) {
-	printf( " (%d descendants, checksum %d)", $descendants, $checksum );
+	printf( ' (%d descendants, checksum %d)', $descendants, $checksum );
 }
 echo "\n";
 if ( $skipped_known_failures > 0 ) {
