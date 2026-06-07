@@ -146,4 +146,35 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 		$this->assertSame( $expected_id_rows, $ast->get_native_descendant_packed_id_rows() );
 		$this->assertSame( $expected_scalar_rows, $ast->get_native_descendant_packed_scalar_rows() );
 	}
+
+	public function test_native_parser_direct_rows_match_ast_rows(): void {
+		if ( ! class_exists( 'WP_MySQL_Native_Parser_Node', false ) ) {
+			$this->markTestSkipped( 'Native parser extension is not active.' );
+		}
+
+		$grammar = new WP_Parser_Grammar( include __DIR__ . '/../../../src/mysql/mysql-grammar.php' );
+		$sql     = 'SELECT 1 + 2';
+
+		$lexer      = new WP_MySQL_Lexer( $sql );
+		$ast_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+		$ast        = $ast_parser->parse();
+		$this->assertInstanceOf( WP_MySQL_Native_Parser_Node::class, $ast );
+
+		$lexer         = new WP_MySQL_Lexer( $sql );
+		$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+
+		$this->assertSame( $ast->get_native_descendant_id_rows(), $direct_parser->parse_native_descendant_id_rows() );
+
+		$lexer         = new WP_MySQL_Lexer( $sql );
+		$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+		$this->assertSame( $ast->get_native_descendant_packed_id_rows(), $direct_parser->parse_native_descendant_packed_id_rows() );
+
+		$lexer         = new WP_MySQL_Lexer( $sql );
+		$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+		$this->assertSame( $ast->get_native_descendant_scalar_rows(), $direct_parser->parse_native_descendant_scalar_rows() );
+
+		$lexer         = new WP_MySQL_Lexer( $sql );
+		$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+		$this->assertSame( $ast->get_native_descendant_packed_scalar_rows(), $direct_parser->parse_native_descendant_packed_scalar_rows() );
+	}
 }

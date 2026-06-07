@@ -52,4 +52,20 @@ trait WP_MySQL_Native_Parser_Impl {
 	public function parse() {
 		return $this->native->parse();
 	}
+
+	public function parse_native_descendant_id_rows(): ?array {
+		return $this->native->parse_native_descendant_id_rows();
+	}
+
+	public function parse_native_descendant_packed_id_rows(): ?array {
+		return $this->native->parse_native_descendant_packed_id_rows();
+	}
+
+	public function parse_native_descendant_scalar_rows(): ?array {
+		return $this->native->parse_native_descendant_scalar_rows();
+	}
+
+	public function parse_native_descendant_packed_scalar_rows(): ?array {
+		return $this->native->parse_native_descendant_packed_scalar_rows();
+	}
 }

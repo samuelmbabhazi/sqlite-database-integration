@@ -1274,6 +1274,17 @@ fn native_ast_node_index_from_handle(handle: i64) -> PhpResult<usize> {
     }
 }
 
+fn native_ast_root_descendant_rows(
+    arena: &NativeAstArena,
+    build_rows: impl FnOnce(&NativeAstArena, usize) -> PhpResult<Vec<i64>>,
+) -> PhpResult<Option<Vec<i64>>> {
+    match arena.root {
+        NativeAstRoot::No => Ok(None),
+        NativeAstRoot::Empty | NativeAstRoot::Token(_) => Ok(Some(Vec::new())),
+        NativeAstRoot::Node(index) => Ok(Some(build_rows(arena, index)?)),
+    }
+}
+
 fn native_ast_wrapper_key(wrapper_zval: &Zval) -> PhpResult<usize> {
     let object = wrapper_zval
         .object()
@@ -1746,20 +1757,14 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_handles(
     Ok(descendants)
 }
 
-#[php_function]
-pub fn wp_sqlite_mysql_native_ast_get_native_descendant_id_rows(
-    wrapper_zval: &Zval,
-    handle: i64,
-) -> PhpResult<Vec<i64>> {
-    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
-    let node_index = native_ast_node_index_from_handle(handle)?;
-    let node = ast.arena.node(node_index)?;
+fn native_ast_descendant_id_rows(arena: &NativeAstArena, node_index: usize) -> PhpResult<Vec<i64>> {
+    let node = arena.node(node_index)?;
     let mut rows = Vec::with_capacity(node.descendant_count.saturating_mul(2));
-    let mut stack = ast.arena.descendant_stack(node_index)?;
+    let mut stack = arena.descendant_stack(node_index)?;
     while let Some(child) = stack.pop() {
         match child {
             NativeAstChild::Node(index) => {
-                let node = ast.arena.node(index)?;
+                let node = arena.node(index)?;
                 rows.push(0);
                 rows.push(node.rule_id);
                 for child in node.children.iter().rev() {
@@ -1768,27 +1773,24 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_id_rows(
             }
             NativeAstChild::Token(index) => {
                 rows.push(1);
-                rows.push(ast.arena.token_source.token_info(index)?.id);
+                rows.push(arena.token_source.token_info(index)?.id);
             }
         }
     }
     Ok(rows)
 }
 
-#[php_function]
-pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_id_rows(
-    wrapper_zval: &Zval,
-    handle: i64,
+fn native_ast_descendant_packed_id_rows(
+    arena: &NativeAstArena,
+    node_index: usize,
 ) -> PhpResult<Vec<i64>> {
-    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
-    let node_index = native_ast_node_index_from_handle(handle)?;
-    let node = ast.arena.node(node_index)?;
+    let node = arena.node(node_index)?;
     let mut rows = Vec::with_capacity(node.descendant_count);
-    let mut stack = ast.arena.descendant_stack(node_index)?;
+    let mut stack = arena.descendant_stack(node_index)?;
     while let Some(child) = stack.pop() {
         match child {
             NativeAstChild::Node(index) => {
-                let node = ast.arena.node(index)?;
+                let node = arena.node(index)?;
                 rows.push(native_ast_pack_kind_id(0, node.rule_id));
                 for child in node.children.iter().rev() {
                     stack.push(*child);
@@ -1797,7 +1799,7 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_id_rows(
             NativeAstChild::Token(index) => {
                 rows.push(native_ast_pack_kind_id(
                     1,
-                    ast.arena.token_source.token_info(index)?.id,
+                    arena.token_source.token_info(index)?.id,
                 ));
             }
         }
@@ -1805,20 +1807,17 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_id_rows(
     Ok(rows)
 }
 
-#[php_function]
-pub fn wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
-    wrapper_zval: &Zval,
-    handle: i64,
+fn native_ast_descendant_scalar_rows(
+    arena: &NativeAstArena,
+    node_index: usize,
 ) -> PhpResult<Vec<i64>> {
-    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
-    let node_index = native_ast_node_index_from_handle(handle)?;
-    let node = ast.arena.node(node_index)?;
+    let node = arena.node(node_index)?;
     let mut rows = Vec::with_capacity(node.descendant_count.saturating_mul(4));
-    let mut stack = ast.arena.descendant_stack(node_index)?;
+    let mut stack = arena.descendant_stack(node_index)?;
     while let Some(child) = stack.pop() {
         match child {
             NativeAstChild::Node(index) => {
-                let node = ast.arena.node(index)?;
+                let node = arena.node(index)?;
                 rows.push(0);
                 rows.push(node.rule_id);
                 // Keep the PHP and native benchmark rows directly comparable:
@@ -1831,7 +1830,7 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
                 }
             }
             NativeAstChild::Token(index) => {
-                let token = ast.arena.token_source.token_info(index)?;
+                let token = arena.token_source.token_info(index)?;
                 rows.push(1);
                 rows.push(token.id);
                 rows.push(token.start as i64);
@@ -1842,20 +1841,17 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
     Ok(rows)
 }
 
-#[php_function]
-pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_scalar_rows(
-    wrapper_zval: &Zval,
-    handle: i64,
+fn native_ast_descendant_packed_scalar_rows(
+    arena: &NativeAstArena,
+    node_index: usize,
 ) -> PhpResult<Vec<i64>> {
-    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
-    let node_index = native_ast_node_index_from_handle(handle)?;
-    let node = ast.arena.node(node_index)?;
+    let node = arena.node(node_index)?;
     let mut rows = Vec::with_capacity(node.descendant_count.saturating_mul(2));
-    let mut stack = ast.arena.descendant_stack(node_index)?;
+    let mut stack = arena.descendant_stack(node_index)?;
     while let Some(child) = stack.pop() {
         match child {
             NativeAstChild::Node(index) => {
-                let node = ast.arena.node(index)?;
+                let node = arena.node(index)?;
                 rows.push(native_ast_pack_kind_id(0, node.rule_id));
                 rows.push(-1);
                 for child in node.children.iter().rev() {
@@ -1863,7 +1859,7 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_scalar_rows(
                 }
             }
             NativeAstChild::Token(index) => {
-                let token = ast.arena.token_source.token_info(index)?;
+                let token = arena.token_source.token_info(index)?;
                 rows.push(native_ast_pack_kind_id(1, token.id));
                 rows.push(native_ast_pack_span(
                     token.start,
@@ -1873,6 +1869,42 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_scalar_rows(
         }
     }
     Ok(rows)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_id_rows(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    native_ast_descendant_id_rows(&ast.arena, native_ast_node_index_from_handle(handle)?)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_id_rows(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    native_ast_descendant_packed_id_rows(&ast.arena, native_ast_node_index_from_handle(handle)?)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    native_ast_descendant_scalar_rows(&ast.arena, native_ast_node_index_from_handle(handle)?)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_scalar_rows(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    native_ast_descendant_packed_scalar_rows(&ast.arena, native_ast_node_index_from_handle(handle)?)
 }
 
 #[php_function]
@@ -1979,6 +2011,34 @@ impl WpMySqlNativeParser {
         })
     }
 
+    pub fn parse_native_descendant_id_rows(&mut self) -> PhpResult<Option<Vec<i64>>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            let arena = self.parse_native_arena()?;
+            native_ast_root_descendant_rows(&arena, native_ast_descendant_id_rows)
+        })
+    }
+
+    pub fn parse_native_descendant_packed_id_rows(&mut self) -> PhpResult<Option<Vec<i64>>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            let arena = self.parse_native_arena()?;
+            native_ast_root_descendant_rows(&arena, native_ast_descendant_packed_id_rows)
+        })
+    }
+
+    pub fn parse_native_descendant_scalar_rows(&mut self) -> PhpResult<Option<Vec<i64>>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            let arena = self.parse_native_arena()?;
+            native_ast_root_descendant_rows(&arena, native_ast_descendant_scalar_rows)
+        })
+    }
+
+    pub fn parse_native_descendant_packed_scalar_rows(&mut self) -> PhpResult<Option<Vec<i64>>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            let arena = self.parse_native_arena()?;
+            native_ast_root_descendant_rows(&arena, native_ast_descendant_packed_scalar_rows)
+        })
+    }
+
     pub fn next_query(&mut self) -> PhpResult<bool> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || self.next_query_inner())
     }
@@ -2015,6 +2075,10 @@ impl WpMySqlNativeParser {
     }
 
     fn parse_native_ast(&mut self) -> PhpResult<Rc<NativeAstState>> {
+        Ok(NativeAstState::new(Arc::new(self.parse_native_arena()?)))
+    }
+
+    fn parse_native_arena(&mut self) -> PhpResult<NativeAstArena> {
         let mut arena =
             NativeAstArena::new(Arc::clone(&self.grammar), Arc::clone(&self.token_source));
         let query_rule_id = self.grammar.query_rule_id;
@@ -2031,7 +2095,7 @@ impl WpMySqlNativeParser {
                 }
             }
         };
-        Ok(NativeAstState::new(Arc::new(arena)))
+        Ok(arena)
     }
 
     fn parse_recursive_inner(
