@@ -180,20 +180,34 @@ fn span_until(bytes: &[u8], mut pos: usize, needles: &[u8]) -> usize {
     pos
 }
 
-fn bytes_ascii_upper(bytes: &[u8]) -> String {
-    let mut upper = Vec::with_capacity(bytes.len());
-    upper.extend(bytes.iter().map(u8::to_ascii_uppercase));
-    // The lexer only calls this for identifier slices. ASCII bytes remain
-    // ASCII and non-ASCII identifier bytes have already passed the UTF-8
-    // shape checks in read_identifier().
-    unsafe { String::from_utf8_unchecked(upper) }
-}
-
 fn bytes_ascii_lower(bytes: &[u8]) -> String {
     let mut lower = Vec::with_capacity(bytes.len());
     lower.extend(bytes.iter().map(u8::to_ascii_lowercase));
-    // See bytes_ascii_upper().
+    // The lexer only calls this for identifier slices. ASCII bytes remain
+    // ASCII and non-ASCII identifier bytes have already passed the UTF-8
+    // shape checks in read_identifier().
     unsafe { String::from_utf8_unchecked(lower) }
+}
+
+fn keyword_token_ascii_case_insensitive(value: &[u8]) -> Option<i64> {
+    if !value.is_ascii() {
+        return None;
+    }
+
+    let mut buffer = [0u8; 128];
+    if value.len() <= buffer.len() {
+        for (index, byte) in value.iter().enumerate() {
+            buffer[index] = byte.to_ascii_uppercase();
+        }
+        // ASCII bytes are valid UTF-8 and the buffer slice is initialized above.
+        let keyword = unsafe { std::str::from_utf8_unchecked(&buffer[..value.len()]) };
+        return lex::keyword_token(keyword);
+    }
+
+    let mut upper = Vec::with_capacity(value.len());
+    upper.extend(value.iter().map(u8::to_ascii_uppercase));
+    // ASCII bytes are valid UTF-8.
+    lex::keyword_token(unsafe { std::str::from_utf8_unchecked(&upper) })
 }
 
 #[derive(Clone, Copy)]
@@ -869,10 +883,11 @@ impl WpMySqlNativeLexer {
 
     fn determine_identifier_or_keyword_type(&mut self, start: usize, end: usize) -> i64 {
         let value = &self.sql[start..end];
-        let upper;
         let keyword = if value.iter().any(u8::is_ascii_lowercase) {
-            upper = bytes_ascii_upper(value);
-            upper.as_str()
+            match keyword_token_ascii_case_insensitive(value) {
+                Some(token_type) => return self.determine_keyword_type(token_type),
+                None => return lex::IDENTIFIER,
+            }
         } else {
             match std::str::from_utf8(value) {
                 Ok(value) => value,
@@ -880,11 +895,15 @@ impl WpMySqlNativeLexer {
             }
         };
 
-        let mut token_type = match lex::keyword_token(keyword) {
+        let token_type = match lex::keyword_token(keyword) {
             Some(token_type) => token_type,
             None => return lex::IDENTIFIER,
         };
 
+        self.determine_keyword_type(token_type)
+    }
+
+    fn determine_keyword_type(&mut self, mut token_type: i64) -> i64 {
         if let Some(version) = lex::version_rule(token_type) {
             if self.mysql_version < version || -version >= self.mysql_version {
                 return lex::IDENTIFIER;
@@ -1099,6 +1118,117 @@ enum NativeParseMatch {
     Fragment(Vec<NativeAstChild>),
 }
 
+#[derive(Clone, Copy)]
+enum NativeAstRowFormat {
+    Id,
+    PackedId,
+    Scalar,
+    PackedScalar,
+}
+
+enum NativeDirectParseMatch {
+    No,
+    Empty,
+    Match,
+}
+
+struct NativeAstRows {
+    rows: Vec<i64>,
+    format: NativeAstRowFormat,
+}
+
+impl NativeAstRowFormat {
+    fn estimated_elements_per_token(self) -> usize {
+        match self {
+            Self::PackedId => 8,
+            Self::Id | Self::PackedScalar => 16,
+            Self::Scalar => 32,
+        }
+    }
+}
+
+impl NativeAstRows {
+    fn with_token_capacity(token_count: usize, format: NativeAstRowFormat) -> Self {
+        Self {
+            rows: Vec::with_capacity(
+                token_count.saturating_mul(format.estimated_elements_per_token()),
+            ),
+            format,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.rows.truncate(len);
+    }
+
+    fn push_node(&mut self, rule_id: i64) {
+        match self.format {
+            NativeAstRowFormat::Id => {
+                self.rows.push(0);
+                self.rows.push(rule_id);
+            }
+            NativeAstRowFormat::PackedId => {
+                self.rows.push(native_ast_pack_kind_id(0, rule_id));
+            }
+            NativeAstRowFormat::Scalar => {
+                self.rows.push(0);
+                self.rows.push(rule_id);
+                self.rows.push(-1);
+                self.rows.push(0);
+            }
+            NativeAstRowFormat::PackedScalar => {
+                self.rows.push(native_ast_pack_kind_id(0, rule_id));
+                self.rows.push(-1);
+            }
+        }
+    }
+
+    fn push_token(&mut self, token: TokenInfo) {
+        match self.format {
+            NativeAstRowFormat::Id => {
+                self.push_token_id(token.id);
+            }
+            NativeAstRowFormat::PackedId => {
+                self.push_token_id(token.id);
+            }
+            NativeAstRowFormat::Scalar => {
+                self.rows.push(1);
+                self.rows.push(token.id);
+                self.rows.push(token.start as i64);
+                self.rows.push(token.end.saturating_sub(token.start) as i64);
+            }
+            NativeAstRowFormat::PackedScalar => {
+                self.rows.push(native_ast_pack_kind_id(1, token.id));
+                self.rows.push(native_ast_pack_span(
+                    token.start,
+                    token.end.saturating_sub(token.start),
+                ));
+            }
+        }
+    }
+
+    fn push_token_id(&mut self, token_id: i64) {
+        match self.format {
+            NativeAstRowFormat::Id => {
+                self.rows.push(1);
+                self.rows.push(token_id);
+            }
+            NativeAstRowFormat::PackedId => {
+                self.rows.push(native_ast_pack_kind_id(1, token_id));
+            }
+            NativeAstRowFormat::Scalar | NativeAstRowFormat::PackedScalar => {}
+        }
+    }
+
+    fn into_vec(self) -> Vec<i64> {
+        self.rows
+    }
+}
+
 struct NativeAstNode {
     rule_id: i64,
     children: Vec<NativeAstChild>,
@@ -1271,17 +1401,6 @@ fn native_ast_node_index_from_handle(handle: i64) -> PhpResult<usize> {
     match native_ast_child_from_handle(handle)? {
         NativeAstChild::Node(index) => Ok(index),
         NativeAstChild::Token(_) => Err(php_error("Native AST handle does not refer to a node")),
-    }
-}
-
-fn native_ast_root_descendant_rows(
-    arena: &NativeAstArena,
-    build_rows: impl FnOnce(&NativeAstArena, usize) -> PhpResult<Vec<i64>>,
-) -> PhpResult<Option<Vec<i64>>> {
-    match arena.root {
-        NativeAstRoot::No => Ok(None),
-        NativeAstRoot::Empty | NativeAstRoot::Token(_) => Ok(Some(Vec::new())),
-        NativeAstRoot::Node(index) => Ok(Some(build_rows(arena, index)?)),
     }
 }
 
@@ -2013,29 +2132,25 @@ impl WpMySqlNativeParser {
 
     pub fn parse_native_descendant_id_rows(&mut self) -> PhpResult<Option<Vec<i64>>> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            let arena = self.parse_native_arena()?;
-            native_ast_root_descendant_rows(&arena, native_ast_descendant_id_rows)
+            self.parse_native_descendant_rows(NativeAstRowFormat::Id)
         })
     }
 
     pub fn parse_native_descendant_packed_id_rows(&mut self) -> PhpResult<Option<Vec<i64>>> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            let arena = self.parse_native_arena()?;
-            native_ast_root_descendant_rows(&arena, native_ast_descendant_packed_id_rows)
+            self.parse_native_descendant_rows(NativeAstRowFormat::PackedId)
         })
     }
 
     pub fn parse_native_descendant_scalar_rows(&mut self) -> PhpResult<Option<Vec<i64>>> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            let arena = self.parse_native_arena()?;
-            native_ast_root_descendant_rows(&arena, native_ast_descendant_scalar_rows)
+            self.parse_native_descendant_rows(NativeAstRowFormat::Scalar)
         })
     }
 
     pub fn parse_native_descendant_packed_scalar_rows(&mut self) -> PhpResult<Option<Vec<i64>>> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
-            let arena = self.parse_native_arena()?;
-            native_ast_root_descendant_rows(&arena, native_ast_descendant_packed_scalar_rows)
+            self.parse_native_descendant_rows(NativeAstRowFormat::PackedScalar)
         })
     }
 
@@ -2096,6 +2211,124 @@ impl WpMySqlNativeParser {
             }
         };
         Ok(arena)
+    }
+
+    fn parse_native_descendant_rows(
+        &mut self,
+        format: NativeAstRowFormat,
+    ) -> PhpResult<Option<Vec<i64>>> {
+        let mut rows = NativeAstRows::with_token_capacity(self.token_ids.len(), format);
+        match self.parse_recursive_rows(self.grammar.query_rule_id, &mut rows, true)? {
+            NativeDirectParseMatch::No => Ok(None),
+            NativeDirectParseMatch::Empty | NativeDirectParseMatch::Match => {
+                Ok(Some(rows.into_vec()))
+            }
+        }
+    }
+
+    fn parse_recursive_rows(
+        &mut self,
+        rule_id: i64,
+        rows: &mut NativeAstRows,
+        skip_current_node: bool,
+    ) -> PhpResult<NativeDirectParseMatch> {
+        if rule_id <= self.grammar.highest_terminal_id {
+            if self.position >= self.token_ids.len() {
+                return Ok(NativeDirectParseMatch::No);
+            }
+            if rule_id == 0 {
+                return Ok(NativeDirectParseMatch::Empty);
+            }
+            if self.token_ids[self.position] == rule_id {
+                let token_index = self.position;
+                self.position += 1;
+                match rows.format {
+                    NativeAstRowFormat::Id | NativeAstRowFormat::PackedId => {
+                        rows.push_token_id(rule_id);
+                    }
+                    NativeAstRowFormat::Scalar | NativeAstRowFormat::PackedScalar => {
+                        rows.push_token(self.token_source.token_info(token_index)?);
+                    }
+                }
+                return Ok(NativeDirectParseMatch::Match);
+            }
+            return Ok(NativeDirectParseMatch::No);
+        }
+
+        let grammar = unsafe {
+            // The parser owns an Arc to immutable grammar data for its full lifetime.
+            // Taking a raw shared reference avoids cloning hot branches just to satisfy
+            // the borrow checker while recursive parsing mutates only `position`.
+            &*Arc::as_ptr(&self.grammar)
+        };
+
+        let Some(rule) = grammar.rule(rule_id) else {
+            return Ok(NativeDirectParseMatch::No);
+        };
+        if rule.branches.is_empty() {
+            return Ok(NativeDirectParseMatch::No);
+        }
+
+        if let Some(first_set) = rule.first_set.as_ref() {
+            let token_id = self.token_ids.get(self.position).copied().unwrap_or(0);
+            if !first_set.contains(token_id) && !rule.nullable {
+                return Ok(NativeDirectParseMatch::No);
+            }
+        } else if !rule.nullable {
+            return Ok(NativeDirectParseMatch::No);
+        }
+
+        let starting_position = self.position;
+        let starting_row_count = rows.len();
+
+        for branch in &rule.branches {
+            self.position = starting_position;
+            rows.truncate(starting_row_count);
+            let emit_node = !skip_current_node && !rule.is_fragment;
+            if emit_node {
+                rows.push_node(rule_id);
+            }
+            let mut branch_matches = true;
+            let mut has_children = false;
+
+            for &subrule_id in branch {
+                let child_starting_row_count = rows.len();
+                match self.parse_recursive_rows(subrule_id, rows, false)? {
+                    NativeDirectParseMatch::No => {
+                        branch_matches = false;
+                        break;
+                    }
+                    NativeDirectParseMatch::Empty => {}
+                    NativeDirectParseMatch::Match => {
+                        if rows.len() != child_starting_row_count {
+                            has_children = true;
+                        }
+                    }
+                }
+            }
+
+            if branch_matches
+                && grammar.select_statement_rule_id == Some(rule_id)
+                && self
+                    .token_ids
+                    .get(self.position)
+                    .is_some_and(|token_id| *token_id == lex::INTO_SYMBOL)
+            {
+                branch_matches = false;
+            }
+
+            if branch_matches {
+                if has_children {
+                    return Ok(NativeDirectParseMatch::Match);
+                }
+                rows.truncate(starting_row_count);
+                return Ok(NativeDirectParseMatch::Empty);
+            }
+        }
+
+        self.position = starting_position;
+        rows.truncate(starting_row_count);
+        Ok(NativeDirectParseMatch::No)
     }
 
     fn parse_recursive_inner(

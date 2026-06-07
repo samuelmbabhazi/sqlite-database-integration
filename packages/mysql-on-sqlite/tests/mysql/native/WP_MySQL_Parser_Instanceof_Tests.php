@@ -153,28 +153,34 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 		}
 
 		$grammar = new WP_Parser_Grammar( include __DIR__ . '/../../../src/mysql/mysql-grammar.php' );
-		$sql     = 'SELECT 1 + 2';
+		foreach (
+			array(
+				'SELECT 1 + 2',
+				"INSERT INTO wp_posts (ID, post_title) VALUES (1, 'Hello')",
+				'CREATE TABLE t (id bigint unsigned NOT NULL AUTO_INCREMENT, PRIMARY KEY (id))',
+				'SELECT * FROM t WHERE id IN (SELECT id FROM u)',
+			) as $sql
+		) {
+			$lexer      = new WP_MySQL_Lexer( $sql );
+			$ast_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$ast        = $ast_parser->parse();
+			$this->assertInstanceOf( WP_MySQL_Native_Parser_Node::class, $ast );
 
-		$lexer      = new WP_MySQL_Lexer( $sql );
-		$ast_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
-		$ast        = $ast_parser->parse();
-		$this->assertInstanceOf( WP_MySQL_Native_Parser_Node::class, $ast );
+			$lexer         = new WP_MySQL_Lexer( $sql );
+			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$this->assertSame( $ast->get_native_descendant_id_rows(), $direct_parser->parse_native_descendant_id_rows() );
 
-		$lexer         = new WP_MySQL_Lexer( $sql );
-		$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$lexer         = new WP_MySQL_Lexer( $sql );
+			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$this->assertSame( $ast->get_native_descendant_packed_id_rows(), $direct_parser->parse_native_descendant_packed_id_rows() );
 
-		$this->assertSame( $ast->get_native_descendant_id_rows(), $direct_parser->parse_native_descendant_id_rows() );
+			$lexer         = new WP_MySQL_Lexer( $sql );
+			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$this->assertSame( $ast->get_native_descendant_scalar_rows(), $direct_parser->parse_native_descendant_scalar_rows() );
 
-		$lexer         = new WP_MySQL_Lexer( $sql );
-		$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
-		$this->assertSame( $ast->get_native_descendant_packed_id_rows(), $direct_parser->parse_native_descendant_packed_id_rows() );
-
-		$lexer         = new WP_MySQL_Lexer( $sql );
-		$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
-		$this->assertSame( $ast->get_native_descendant_scalar_rows(), $direct_parser->parse_native_descendant_scalar_rows() );
-
-		$lexer         = new WP_MySQL_Lexer( $sql );
-		$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
-		$this->assertSame( $ast->get_native_descendant_packed_scalar_rows(), $direct_parser->parse_native_descendant_packed_scalar_rows() );
+			$lexer         = new WP_MySQL_Lexer( $sql );
+			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$this->assertSame( $ast->get_native_descendant_packed_scalar_rows(), $direct_parser->parse_native_descendant_packed_scalar_rows() );
+		}
 	}
 }
