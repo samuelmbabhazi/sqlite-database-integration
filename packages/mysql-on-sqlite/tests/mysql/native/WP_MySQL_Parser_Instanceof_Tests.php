@@ -11,6 +11,51 @@ use PHPUnit\Framework\TestCase;
  * both modes.
  */
 class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
+	private function packed_id_stats( array $rows ): array {
+		return array( count( $rows ), array_sum( $rows ) );
+	}
+
+	private function packed_scalar_stats( array $rows ): array {
+		$descendants = intdiv( count( $rows ), 2 );
+		$checksum    = 0;
+		for ( $i = 0; $i < count( $rows ); $i += 2 ) {
+			$kind_id = $rows[ $i ];
+			$span    = $rows[ $i + 1 ];
+			if ( $span < 0 ) {
+				$checksum += $kind_id - 1;
+			} else {
+				$checksum += $kind_id + intdiv( $span, 4294967296 ) + ( $span & 0xffffffff );
+			}
+		}
+		return array( $descendants, $checksum );
+	}
+
+	private function checksum_bytes( string $bytes ): int {
+		$length   = strlen( $bytes );
+		$checksum = $length;
+		for ( $i = 0; $i < $length; $i++ ) {
+			$checksum += ord( $bytes[ $i ] );
+		}
+		return $checksum;
+	}
+
+	private function packed_scalar_token_bytes_stats( array $rows, string $sql ): array {
+		$descendants = intdiv( count( $rows ), 2 );
+		$checksum    = 0;
+		for ( $i = 0; $i < count( $rows ); $i += 2 ) {
+			$kind_id = $rows[ $i ];
+			$span    = $rows[ $i + 1 ];
+			if ( $span < 0 ) {
+				$checksum += $kind_id - 1;
+			} else {
+				$start     = intdiv( $span, 4294967296 );
+				$length    = $span & 0xffffffff;
+				$checksum += $kind_id + $start + $length;
+				$checksum += $this->checksum_bytes( substr( $sql, $start, $length ) );
+			}
+		}
+		return array( $descendants, $checksum );
+	}
 
 	public function test_parser_is_instance_of_wp_parser(): void {
 		$grammar = new WP_Parser_Grammar( include __DIR__ . '/../../../src/mysql/mysql-grammar.php' );
@@ -152,19 +197,32 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 			$this->markTestSkipped( 'Native parser extension is not active.' );
 		}
 
-		$grammar = new WP_Parser_Grammar( include __DIR__ . '/../../../src/mysql/mysql-grammar.php' );
-		foreach (
-			array(
-				'SELECT 1 + 2',
-				"INSERT INTO wp_posts (ID, post_title) VALUES (1, 'Hello')",
-				'CREATE TABLE t (id bigint unsigned NOT NULL AUTO_INCREMENT, PRIMARY KEY (id))',
-				'SELECT * FROM t WHERE id IN (SELECT id FROM u)',
-			) as $sql
-		) {
+		$grammar                    = new WP_Parser_Grammar( include __DIR__ . '/../../../src/mysql/mysql-grammar.php' );
+		$queries                    = array(
+			'SELECT 1 + 2',
+			"INSERT INTO wp_posts (ID, post_title) VALUES (1, 'Hello')",
+			'CREATE TABLE t (id bigint unsigned NOT NULL AUTO_INCREMENT, PRIMARY KEY (id))',
+			'SELECT * FROM t WHERE id IN (SELECT id FROM u)',
+		);
+		$expected_batch_id          = array( count( $queries ), 0, 0, 0 );
+		$expected_batch_scalar      = array( count( $queries ), 0, 0, 0 );
+		$expected_batch_token_bytes = array( count( $queries ), 0, 0, 0 );
+		foreach ( $queries as $sql ) {
 			$lexer      = new WP_MySQL_Lexer( $sql );
 			$ast_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
 			$ast        = $ast_parser->parse();
 			$this->assertInstanceOf( WP_MySQL_Native_Parser_Node::class, $ast );
+			$packed_scalar_rows = $ast->get_native_descendant_packed_scalar_rows();
+			$id_stats           = $this->packed_id_stats( $ast->get_native_descendant_packed_id_rows() );
+			$scalar_stats       = $this->packed_scalar_stats( $packed_scalar_rows );
+			$token_bytes_stats  = $this->packed_scalar_token_bytes_stats( $packed_scalar_rows, $sql );
+
+			$expected_batch_id[2]          += $id_stats[0];
+			$expected_batch_id[3]          += $id_stats[1];
+			$expected_batch_scalar[2]      += $scalar_stats[0];
+			$expected_batch_scalar[3]      += $scalar_stats[1];
+			$expected_batch_token_bytes[2] += $token_bytes_stats[0];
+			$expected_batch_token_bytes[3] += $token_bytes_stats[1];
 
 			$lexer         = new WP_MySQL_Lexer( $sql );
 			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
@@ -181,6 +239,63 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 			$lexer         = new WP_MySQL_Lexer( $sql );
 			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
 			$this->assertSame( $ast->get_native_descendant_packed_scalar_rows(), $direct_parser->parse_native_descendant_packed_scalar_rows() );
+
+			$lexer         = new WP_MySQL_Lexer( $sql );
+			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$this->assertSame(
+				$id_stats,
+				$direct_parser->parse_native_descendant_packed_id_stats()
+			);
+
+			$lexer         = new WP_MySQL_Lexer( $sql );
+			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$this->assertSame(
+				$scalar_stats,
+				$direct_parser->parse_native_descendant_packed_scalar_stats()
+			);
+
+			$lexer         = new WP_MySQL_Lexer( $sql );
+			$direct_parser = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+			$this->assertSame(
+				$token_bytes_stats,
+				$direct_parser->parse_native_descendant_packed_scalar_stats( true )
+			);
+
+			$sql_parser = new WP_MySQL_Parser( $grammar, array() );
+			$this->assertSame(
+				$id_stats,
+				$sql_parser->parse_sql_native_descendant_packed_id_stats( $sql )
+			);
+
+			$sql_parser = new WP_MySQL_Parser( $grammar, array() );
+			$this->assertSame(
+				$scalar_stats,
+				$sql_parser->parse_sql_native_descendant_packed_scalar_stats( $sql )
+			);
+
+			$sql_parser = new WP_MySQL_Parser( $grammar, array() );
+			$this->assertSame(
+				$token_bytes_stats,
+				$sql_parser->parse_sql_native_descendant_packed_scalar_stats( $sql, true )
+			);
 		}
+
+		$sql_parser = new WP_MySQL_Parser( $grammar, array() );
+		$this->assertSame(
+			$expected_batch_id,
+			$sql_parser->parse_sql_batch_native_descendant_packed_id_stats( $queries )
+		);
+
+		$sql_parser = new WP_MySQL_Parser( $grammar, array() );
+		$this->assertSame(
+			$expected_batch_scalar,
+			$sql_parser->parse_sql_batch_native_descendant_packed_scalar_stats( $queries )
+		);
+
+		$sql_parser = new WP_MySQL_Parser( $grammar, array() );
+		$this->assertSame(
+			$expected_batch_token_bytes,
+			$sql_parser->parse_sql_batch_native_descendant_packed_scalar_stats( $queries, true )
+		);
 	}
 }

@@ -261,16 +261,12 @@ impl WpMySqlNativeLexer {
             .into_zval(false)
             .map_err(php_error)?;
 
-        Ok(Self {
+        Ok(Self::from_sql_parts(
             sql,
             sql_zval,
             mysql_version,
-            sql_modes: sql_modes_mask(&sql_modes),
-            bytes_already_read: 0,
-            token_starts_at: 0,
-            token_type: None,
-            in_mysql_comment: false,
-        })
+            sql_modes,
+        ))
     }
 
     pub fn next_token(&mut self) -> bool {
@@ -350,6 +346,80 @@ impl WpMySqlNativeLexer {
 }
 
 impl WpMySqlNativeLexer {
+    fn from_sql_parts(
+        sql: Vec<u8>,
+        sql_zval: Zval,
+        mysql_version: i64,
+        sql_modes: Vec<String>,
+    ) -> Self {
+        Self::from_sql_parts_with_modes_mask(
+            sql,
+            sql_zval,
+            mysql_version,
+            sql_modes_mask(&sql_modes),
+        )
+    }
+
+    fn from_sql_parts_with_modes_mask(
+        sql: Vec<u8>,
+        sql_zval: Zval,
+        mysql_version: i64,
+        sql_modes: i64,
+    ) -> Self {
+        Self {
+            sql,
+            sql_zval,
+            mysql_version,
+            sql_modes,
+            bytes_already_read: 0,
+            token_starts_at: 0,
+            token_type: None,
+            in_mysql_comment: false,
+        }
+    }
+
+    fn from_raw_sql_zval_with_modes_mask(
+        sql: &Zval,
+        mysql_version: Option<i64>,
+        sql_modes: i64,
+    ) -> PhpResult<Self> {
+        Ok(Self::from_sql_parts_with_modes_mask(
+            zval_to_weak_string_bytes(sql)?,
+            Zval::null(),
+            mysql_version.unwrap_or(80038),
+            sql_modes,
+        ))
+    }
+
+    fn into_raw_token_source(mut self) -> (ParserTokenSource, Vec<i64>) {
+        let no_backslash = self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES);
+        let mut tokens = Vec::with_capacity(self.sql.len().saturating_div(4).max(1));
+        while self.next_token() {
+            if let Some(token) = self.current_token_info() {
+                tokens.push(token);
+            }
+        }
+        let token_ids = tokens.iter().map(|token| token.id).collect();
+        (
+            ParserTokenSource::RawSql {
+                sql: self.sql,
+                tokens,
+                no_backslash,
+            },
+            token_ids,
+        )
+    }
+
+    fn into_token_ids(mut self) -> Vec<i64> {
+        let mut token_ids = Vec::with_capacity(self.sql.len().saturating_div(4).max(1));
+        while self.next_token() {
+            if let Some(token_id) = self.token_type {
+                token_ids.push(token_id);
+            }
+        }
+        token_ids
+    }
+
     fn current_token_info(&self) -> Option<TokenInfo> {
         self.token_type.map(|id| TokenInfo {
             id,
@@ -1040,9 +1110,22 @@ enum ParserTokenSource {
         tokens: Vec<TokenInfo>,
         no_backslash: bool,
     },
+    RawSql {
+        sql: Vec<u8>,
+        tokens: Vec<TokenInfo>,
+        no_backslash: bool,
+    },
 }
 
 impl ParserTokenSource {
+    fn sql_bytes(&self) -> Option<Vec<u8>> {
+        match self {
+            Self::Native { sql_zval, .. } => sql_zval.binary::<u8>(),
+            Self::RawSql { sql, .. } => Some(sql.clone()),
+            Self::Php(_) => None,
+        }
+    }
+
     fn create_php_token_with_classes(&self, index: usize, classes: &PhpClasses) -> PhpResult<Zval> {
         match self {
             Self::Php(tokens) => tokens
@@ -1059,6 +1142,20 @@ impl ParserTokenSource {
                     .copied()
                     .ok_or_else(|| php_error("Parser token index is out of range"))?;
                 create_mysql_token_with_classes(sql_zval, token, *no_backslash, classes)
+            }
+            Self::RawSql {
+                sql,
+                tokens,
+                no_backslash,
+            } => {
+                let token = tokens
+                    .get(index)
+                    .copied()
+                    .ok_or_else(|| php_error("Parser token index is out of range"))?;
+                let sql_zval = BinaryString(sql.clone())
+                    .into_zval(false)
+                    .map_err(php_error)?;
+                create_mysql_token_with_classes(&sql_zval, token, *no_backslash, classes)
             }
         }
     }
@@ -1089,6 +1186,10 @@ impl ParserTokenSource {
                 })
             }
             Self::Native { tokens, .. } => tokens
+                .get(index)
+                .copied()
+                .ok_or_else(|| php_error("Parser token index is out of range")),
+            Self::RawSql { tokens, .. } => tokens
                 .get(index)
                 .copied()
                 .ok_or_else(|| php_error("Parser token index is out of range")),
@@ -1132,9 +1233,22 @@ enum NativeDirectParseMatch {
     Match,
 }
 
+#[derive(Clone, Copy)]
+enum NativeAstStatsFormat {
+    PackedId,
+    PackedScalar { consume_token_bytes: bool },
+}
+
 struct NativeAstRows {
     rows: Vec<i64>,
     format: NativeAstRowFormat,
+}
+
+struct NativeAstStats {
+    descendants: i64,
+    checksum: i64,
+    format: NativeAstStatsFormat,
+    sql_bytes: Option<Vec<u8>>,
 }
 
 impl NativeAstRowFormat {
@@ -1227,6 +1341,165 @@ impl NativeAstRows {
     fn into_vec(self) -> Vec<i64> {
         self.rows
     }
+}
+
+impl NativeAstStats {
+    fn new(format: NativeAstStatsFormat, sql_bytes: Option<Vec<u8>>) -> Self {
+        Self {
+            descendants: 0,
+            checksum: 0,
+            format,
+            sql_bytes,
+        }
+    }
+
+    fn state(&self) -> (i64, i64) {
+        (self.descendants, self.checksum)
+    }
+
+    fn restore(&mut self, state: (i64, i64)) {
+        self.descendants = state.0;
+        self.checksum = state.1;
+    }
+
+    fn push_node(&mut self, rule_id: i64) {
+        self.descendants += 1;
+        match self.format {
+            NativeAstStatsFormat::PackedId => {
+                self.checksum += native_ast_pack_kind_id(0, rule_id);
+            }
+            NativeAstStatsFormat::PackedScalar { .. } => {
+                self.checksum += native_ast_pack_kind_id(0, rule_id) - 1;
+            }
+        }
+    }
+
+    fn push_token_id(&mut self, token_id: i64) {
+        self.descendants += 1;
+        self.checksum += native_ast_pack_kind_id(1, token_id);
+    }
+
+    fn push_token(&mut self, token: TokenInfo) {
+        self.descendants += 1;
+        self.checksum += native_ast_pack_kind_id(1, token.id)
+            + token.start as i64
+            + token.end.saturating_sub(token.start) as i64;
+        if matches!(
+            self.format,
+            NativeAstStatsFormat::PackedScalar {
+                consume_token_bytes: true
+            }
+        ) {
+            if let Some(sql_bytes) = self.sql_bytes.as_ref() {
+                let end = token.end.min(sql_bytes.len());
+                let start = token.start.min(end);
+                self.checksum += checksum_bytes(&sql_bytes[start..end]);
+            }
+        }
+    }
+
+    fn into_vec(self) -> Vec<i64> {
+        vec![self.descendants, self.checksum]
+    }
+}
+
+fn checksum_bytes(bytes: &[u8]) -> i64 {
+    bytes.len() as i64 + bytes.iter().map(|byte| *byte as i64).sum::<i64>()
+}
+
+// Raw-SQL packed-id stats do not need token spans, token objects, or a token
+// source. Keep this path separate so the fastest benchmark only lexes token ids.
+fn parse_recursive_packed_id_stats(
+    grammar: &Grammar,
+    token_ids: &[i64],
+    position: &mut usize,
+    rule_id: i64,
+    stats: &mut NativeAstStats,
+    skip_current_node: bool,
+) -> NativeDirectParseMatch {
+    if rule_id <= grammar.highest_terminal_id {
+        if *position >= token_ids.len() {
+            return NativeDirectParseMatch::No;
+        }
+        if rule_id == 0 {
+            return NativeDirectParseMatch::Empty;
+        }
+        if token_ids[*position] == rule_id {
+            *position += 1;
+            stats.push_token_id(rule_id);
+            return NativeDirectParseMatch::Match;
+        }
+        return NativeDirectParseMatch::No;
+    }
+
+    let Some(rule) = grammar.rule(rule_id) else {
+        return NativeDirectParseMatch::No;
+    };
+    if rule.branches.is_empty() {
+        return NativeDirectParseMatch::No;
+    }
+
+    if let Some(first_set) = rule.first_set.as_ref() {
+        let token_id = token_ids.get(*position).copied().unwrap_or(0);
+        if !first_set.contains(token_id) && !rule.nullable {
+            return NativeDirectParseMatch::No;
+        }
+    } else if !rule.nullable {
+        return NativeDirectParseMatch::No;
+    }
+
+    let starting_position = *position;
+    let starting_stats = stats.state();
+
+    for branch in &rule.branches {
+        *position = starting_position;
+        stats.restore(starting_stats);
+        let emit_node = !skip_current_node && !rule.is_fragment;
+        if emit_node {
+            stats.push_node(rule_id);
+        }
+        let mut branch_matches = true;
+        let mut has_children = false;
+
+        for &subrule_id in branch {
+            let child_starting_descendants = stats.descendants;
+            match parse_recursive_packed_id_stats(
+                grammar, token_ids, position, subrule_id, stats, false,
+            ) {
+                NativeDirectParseMatch::No => {
+                    branch_matches = false;
+                    break;
+                }
+                NativeDirectParseMatch::Empty => {}
+                NativeDirectParseMatch::Match => {
+                    if stats.descendants != child_starting_descendants {
+                        has_children = true;
+                    }
+                }
+            }
+        }
+
+        if branch_matches
+            && grammar.select_statement_rule_id == Some(rule_id)
+            && token_ids
+                .get(*position)
+                .is_some_and(|token_id| *token_id == lex::INTO_SYMBOL)
+        {
+            branch_matches = false;
+        }
+
+        if branch_matches {
+            if has_children {
+                return NativeDirectParseMatch::Match;
+            }
+            stats.restore(starting_stats);
+            return NativeDirectParseMatch::Empty;
+        }
+    }
+
+    *position = starting_position;
+    stats.restore(starting_stats);
+    NativeDirectParseMatch::No
 }
 
 struct NativeAstNode {
@@ -2154,6 +2427,84 @@ impl WpMySqlNativeParser {
         })
     }
 
+    pub fn parse_native_descendant_packed_id_stats(&mut self) -> PhpResult<Option<Vec<i64>>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.parse_native_descendant_stats(NativeAstStatsFormat::PackedId)
+        })
+    }
+
+    pub fn parse_native_descendant_packed_scalar_stats(
+        &mut self,
+        consume_token_bytes: Option<bool>,
+    ) -> PhpResult<Option<Vec<i64>>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.parse_native_descendant_stats(NativeAstStatsFormat::PackedScalar {
+                consume_token_bytes: consume_token_bytes.unwrap_or(false),
+            })
+        })
+    }
+
+    pub fn parse_sql_native_descendant_packed_id_stats(
+        &mut self,
+        sql: &Zval,
+        mysql_version: Option<i64>,
+        sql_modes: Option<Vec<String>>,
+    ) -> PhpResult<Option<Vec<i64>>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.parse_sql_native_packed_id_stats(sql, mysql_version, sql_modes)
+        })
+    }
+
+    pub fn parse_sql_native_descendant_packed_scalar_stats(
+        &mut self,
+        sql: &Zval,
+        consume_token_bytes: Option<bool>,
+        mysql_version: Option<i64>,
+        sql_modes: Option<Vec<String>>,
+    ) -> PhpResult<Option<Vec<i64>>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.reset_sql(sql, mysql_version, sql_modes)?;
+            self.parse_native_descendant_stats(NativeAstStatsFormat::PackedScalar {
+                consume_token_bytes: consume_token_bytes.unwrap_or(false),
+            })
+        })
+    }
+
+    pub fn parse_sql_batch_native_descendant_packed_id_stats(
+        &mut self,
+        queries: &Zval,
+        mysql_version: Option<i64>,
+        sql_modes: Option<Vec<String>>,
+    ) -> PhpResult<Vec<i64>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.parse_sql_batch_native_descendant_stats(
+                queries,
+                NativeAstStatsFormat::PackedId,
+                mysql_version,
+                sql_modes,
+            )
+        })
+    }
+
+    pub fn parse_sql_batch_native_descendant_packed_scalar_stats(
+        &mut self,
+        queries: &Zval,
+        consume_token_bytes: Option<bool>,
+        mysql_version: Option<i64>,
+        sql_modes: Option<Vec<String>>,
+    ) -> PhpResult<Vec<i64>> {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
+            self.parse_sql_batch_native_descendant_stats(
+                queries,
+                NativeAstStatsFormat::PackedScalar {
+                    consume_token_bytes: consume_token_bytes.unwrap_or(false),
+                },
+                mysql_version,
+                sql_modes,
+            )
+        })
+    }
+
     pub fn next_query(&mut self) -> PhpResult<bool> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || self.next_query_inner())
     }
@@ -2223,6 +2574,151 @@ impl WpMySqlNativeParser {
             NativeDirectParseMatch::Empty | NativeDirectParseMatch::Match => {
                 Ok(Some(rows.into_vec()))
             }
+        }
+    }
+
+    fn parse_native_descendant_stats(
+        &mut self,
+        format: NativeAstStatsFormat,
+    ) -> PhpResult<Option<Vec<i64>>> {
+        Ok(self
+            .parse_native_descendant_stats_inner(format)?
+            .map(NativeAstStats::into_vec))
+    }
+
+    fn parse_native_descendant_stats_inner(
+        &mut self,
+        format: NativeAstStatsFormat,
+    ) -> PhpResult<Option<NativeAstStats>> {
+        let sql_bytes = match format {
+            NativeAstStatsFormat::PackedScalar {
+                consume_token_bytes: true,
+            } => self.token_source.sql_bytes(),
+            _ => None,
+        };
+        let mut stats = NativeAstStats::new(format, sql_bytes);
+        match self.parse_recursive_stats(self.grammar.query_rule_id, &mut stats, true)? {
+            NativeDirectParseMatch::No => Ok(None),
+            NativeDirectParseMatch::Empty | NativeDirectParseMatch::Match => Ok(Some(stats)),
+        }
+    }
+
+    fn reset_sql(
+        &mut self,
+        sql: &Zval,
+        mysql_version: Option<i64>,
+        sql_modes: Option<Vec<String>>,
+    ) -> PhpResult<()> {
+        let sql_modes = sql_modes
+            .as_ref()
+            .map(|modes| sql_modes_mask(modes))
+            .unwrap_or(0);
+        self.reset_sql_with_modes_mask(sql, mysql_version, sql_modes)
+    }
+
+    fn reset_sql_with_modes_mask(
+        &mut self,
+        sql: &Zval,
+        mysql_version: Option<i64>,
+        sql_modes: i64,
+    ) -> PhpResult<()> {
+        let lexer =
+            WpMySqlNativeLexer::from_raw_sql_zval_with_modes_mask(sql, mysql_version, sql_modes)?;
+        let (token_source, token_ids) = lexer.into_raw_token_source();
+        self.token_ids = token_ids;
+        self.token_source = Arc::new(token_source);
+        self.position = 0;
+        self.current_ast = None;
+        self.current_php_ast = None;
+        Ok(())
+    }
+
+    fn parse_sql_native_packed_id_stats(
+        &self,
+        sql: &Zval,
+        mysql_version: Option<i64>,
+        sql_modes: Option<Vec<String>>,
+    ) -> PhpResult<Option<Vec<i64>>> {
+        let sql_modes = sql_modes
+            .as_ref()
+            .map(|modes| sql_modes_mask(modes))
+            .unwrap_or(0);
+        let lexer =
+            WpMySqlNativeLexer::from_raw_sql_zval_with_modes_mask(sql, mysql_version, sql_modes)?;
+        Ok(self
+            .parse_packed_id_stats_for_token_ids(&lexer.into_token_ids())
+            .map(NativeAstStats::into_vec))
+    }
+
+    fn parse_sql_batch_native_descendant_stats(
+        &mut self,
+        queries: &Zval,
+        format: NativeAstStatsFormat,
+        mysql_version: Option<i64>,
+        sql_modes: Option<Vec<String>>,
+    ) -> PhpResult<Vec<i64>> {
+        let queries = queries
+            .array()
+            .ok_or_else(|| php_error("Parser batch queries must be an array"))?;
+        let mut processed = 0;
+        let mut failures = 0;
+        let mut descendants = 0;
+        let mut checksum = 0;
+        let sql_modes = sql_modes
+            .as_ref()
+            .map(|modes| sql_modes_mask(modes))
+            .unwrap_or(0);
+
+        for (_, query) in queries {
+            processed += 1;
+            match format {
+                NativeAstStatsFormat::PackedId => {
+                    let lexer = WpMySqlNativeLexer::from_raw_sql_zval_with_modes_mask(
+                        query,
+                        mysql_version,
+                        sql_modes,
+                    )?;
+                    match self.parse_packed_id_stats_for_token_ids(&lexer.into_token_ids()) {
+                        Some(stats) => {
+                            descendants += stats.descendants;
+                            checksum += stats.checksum;
+                        }
+                        None => {
+                            failures += 1;
+                        }
+                    }
+                }
+                NativeAstStatsFormat::PackedScalar { .. } => {
+                    self.reset_sql_with_modes_mask(query, mysql_version, sql_modes)?;
+                    match self.parse_native_descendant_stats_inner(format)? {
+                        Some(stats) => {
+                            descendants += stats.descendants;
+                            checksum += stats.checksum;
+                        }
+                        None => {
+                            failures += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(vec![processed, failures, descendants, checksum])
+    }
+
+    fn parse_packed_id_stats_for_token_ids(&self, token_ids: &[i64]) -> Option<NativeAstStats> {
+        let mut stats = NativeAstStats::new(NativeAstStatsFormat::PackedId, None);
+        let mut position = 0;
+        match parse_recursive_packed_id_stats(
+            &self.grammar,
+            token_ids,
+            &mut position,
+            self.grammar.query_rule_id,
+            &mut stats,
+            true,
+        ) {
+            NativeDirectParseMatch::No => None,
+            NativeDirectParseMatch::Empty | NativeDirectParseMatch::Match => Some(stats),
         }
     }
 
@@ -2328,6 +2824,111 @@ impl WpMySqlNativeParser {
 
         self.position = starting_position;
         rows.truncate(starting_row_count);
+        Ok(NativeDirectParseMatch::No)
+    }
+
+    fn parse_recursive_stats(
+        &mut self,
+        rule_id: i64,
+        stats: &mut NativeAstStats,
+        skip_current_node: bool,
+    ) -> PhpResult<NativeDirectParseMatch> {
+        if rule_id <= self.grammar.highest_terminal_id {
+            if self.position >= self.token_ids.len() {
+                return Ok(NativeDirectParseMatch::No);
+            }
+            if rule_id == 0 {
+                return Ok(NativeDirectParseMatch::Empty);
+            }
+            if self.token_ids[self.position] == rule_id {
+                let token_index = self.position;
+                self.position += 1;
+                match stats.format {
+                    NativeAstStatsFormat::PackedId => {
+                        stats.push_token_id(rule_id);
+                    }
+                    NativeAstStatsFormat::PackedScalar { .. } => {
+                        stats.push_token(self.token_source.token_info(token_index)?);
+                    }
+                }
+                return Ok(NativeDirectParseMatch::Match);
+            }
+            return Ok(NativeDirectParseMatch::No);
+        }
+
+        let grammar = unsafe {
+            // The parser owns an Arc to immutable grammar data for its full lifetime.
+            // Taking a raw shared reference avoids cloning hot branches just to satisfy
+            // the borrow checker while recursive parsing mutates only `position`.
+            &*Arc::as_ptr(&self.grammar)
+        };
+
+        let Some(rule) = grammar.rule(rule_id) else {
+            return Ok(NativeDirectParseMatch::No);
+        };
+        if rule.branches.is_empty() {
+            return Ok(NativeDirectParseMatch::No);
+        }
+
+        if let Some(first_set) = rule.first_set.as_ref() {
+            let token_id = self.token_ids.get(self.position).copied().unwrap_or(0);
+            if !first_set.contains(token_id) && !rule.nullable {
+                return Ok(NativeDirectParseMatch::No);
+            }
+        } else if !rule.nullable {
+            return Ok(NativeDirectParseMatch::No);
+        }
+
+        let starting_position = self.position;
+        let starting_stats = stats.state();
+
+        for branch in &rule.branches {
+            self.position = starting_position;
+            stats.restore(starting_stats);
+            let emit_node = !skip_current_node && !rule.is_fragment;
+            if emit_node {
+                stats.push_node(rule_id);
+            }
+            let mut branch_matches = true;
+            let mut has_children = false;
+
+            for &subrule_id in branch {
+                let child_starting_descendants = stats.descendants;
+                match self.parse_recursive_stats(subrule_id, stats, false)? {
+                    NativeDirectParseMatch::No => {
+                        branch_matches = false;
+                        break;
+                    }
+                    NativeDirectParseMatch::Empty => {}
+                    NativeDirectParseMatch::Match => {
+                        if stats.descendants != child_starting_descendants {
+                            has_children = true;
+                        }
+                    }
+                }
+            }
+
+            if branch_matches
+                && grammar.select_statement_rule_id == Some(rule_id)
+                && self
+                    .token_ids
+                    .get(self.position)
+                    .is_some_and(|token_id| *token_id == lex::INTO_SYMBOL)
+            {
+                branch_matches = false;
+            }
+
+            if branch_matches {
+                if has_children {
+                    return Ok(NativeDirectParseMatch::Match);
+                }
+                stats.restore(starting_stats);
+                return Ok(NativeDirectParseMatch::Empty);
+            }
+        }
+
+        self.position = starting_position;
+        stats.restore(starting_stats);
         Ok(NativeDirectParseMatch::No)
     }
 

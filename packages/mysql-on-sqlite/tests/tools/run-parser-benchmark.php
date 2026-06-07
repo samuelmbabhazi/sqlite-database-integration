@@ -27,6 +27,14 @@
  *                direct-descendant-*
  *                            Use the native parser's direct scalar row API when available,
  *                            skipping even the root PHP AST wrapper.
+ *                direct-descendant-*-stats
+ *                            Use the native parser's visitor-style stats API when available,
+ *                            keeping descendant consumption in Rust.
+ *                direct-sql-descendant-*-stats
+ *                            Use the native parser's raw-SQL stats API when available,
+ *                            keeping lexing, parsing, and descendant consumption in Rust.
+ *                direct-sql-batch-descendant-*-stats
+ *                            Use one native call for the whole SQL corpus when available.
  */
 
 // Throw exception if anything fails.
@@ -63,6 +71,15 @@ $consume_modes = array(
 	'direct-descendant-packed-ids',
 	'direct-descendant-packed-rows',
 	'direct-descendant-packed-token-bytes',
+	'direct-descendant-packed-ids-stats',
+	'direct-descendant-packed-rows-stats',
+	'direct-descendant-packed-token-bytes-stats',
+	'direct-sql-descendant-packed-ids-stats',
+	'direct-sql-descendant-packed-rows-stats',
+	'direct-sql-descendant-packed-token-bytes-stats',
+	'direct-sql-batch-descendant-packed-ids-stats',
+	'direct-sql-batch-descendant-packed-rows-stats',
+	'direct-sql-batch-descendant-packed-token-bytes-stats',
 );
 
 if ( ! in_array( $consume, $consume_modes, true ) ) {
@@ -169,6 +186,15 @@ function consume_native_descendant_packed_scalar_rows(
 	}
 }
 
+function consume_native_descendant_stats( ?array $stats, int &$descendants, int &$checksum ): bool {
+	if ( null === $stats ) {
+		return false;
+	}
+	$descendants += $stats[0];
+	$checksum    += $stats[1];
+	return true;
+}
+
 function consume_php_descendant_id_rows( WP_Parser_Node $node, int &$descendants, int &$checksum ): void {
 	foreach ( $node->get_children() as $child ) {
 		++$descendants;
@@ -224,13 +250,120 @@ function consume_php_descendant_packed_scalar_rows( WP_Parser_Node $node, string
 }
 
 function ast_consume_mode( string $consume ): string {
-	return 0 === strpos( $consume, 'direct-' )
-		? substr( $consume, strlen( 'direct-' ) )
-		: $consume;
+	if ( 0 === strpos( $consume, 'direct-sql-batch-' ) ) {
+		$consume = substr( $consume, strlen( 'direct-sql-batch-' ) );
+	} elseif ( 0 === strpos( $consume, 'direct-sql-' ) ) {
+		$consume = substr( $consume, strlen( 'direct-sql-' ) );
+	} elseif ( 0 === strpos( $consume, 'direct-' ) ) {
+		$consume = substr( $consume, strlen( 'direct-' ) );
+	}
+	if ( '-stats' === substr( $consume, -strlen( '-stats' ) ) ) {
+		$consume = substr( $consume, 0, -strlen( '-stats' ) );
+	}
+	return $consume;
+}
+
+function benchmark_api( string $consume ): string {
+	if ( ! class_exists( 'WP_MySQL_Native_Parser', false ) ) {
+		return 'parse';
+	}
+	if ( 0 === strpos( $consume, 'direct-sql-batch-' ) && '-stats' === substr( $consume, -strlen( '-stats' ) ) ) {
+		return 'direct-native-sql-batch-stats';
+	}
+	if ( 0 === strpos( $consume, 'direct-sql-' ) && '-stats' === substr( $consume, -strlen( '-stats' ) ) ) {
+		return 'direct-native-sql-stats';
+	}
+	if ( 0 === strpos( $consume, 'direct-' ) && '-stats' === substr( $consume, -strlen( '-stats' ) ) ) {
+		return 'direct-native-parser-stats';
+	}
+	if ( 0 === strpos( $consume, 'direct-' ) ) {
+		return 'direct-native-parser-rows';
+	}
+	return 'parse';
+}
+
+function consume_direct_native_stats( WP_MySQL_Parser $parser, string $consume, int &$descendants, int &$checksum ): ?bool {
+	if ( 0 !== strpos( $consume, 'direct-' ) || 0 === strpos( $consume, 'direct-sql-' ) || '-stats' !== substr( $consume, -strlen( '-stats' ) ) ) {
+		return null;
+	}
+
+	$ast_consume = ast_consume_mode( $consume );
+	if ( 'descendant-packed-ids' === $ast_consume && method_exists( $parser, 'parse_native_descendant_packed_id_stats' ) ) {
+		return consume_native_descendant_stats(
+			$parser->parse_native_descendant_packed_id_stats(),
+			$descendants,
+			$checksum
+		);
+	}
+
+	if ( ( 'descendant-packed-rows' === $ast_consume || 'descendant-packed-token-bytes' === $ast_consume ) && method_exists( $parser, 'parse_native_descendant_packed_scalar_stats' ) ) {
+		return consume_native_descendant_stats(
+			$parser->parse_native_descendant_packed_scalar_stats( 'descendant-packed-token-bytes' === $ast_consume ),
+			$descendants,
+			$checksum
+		);
+	}
+
+	return null;
+}
+
+function consume_direct_native_sql_stats( &$parser, WP_Parser_Grammar $grammar, string $consume, string $query, int &$descendants, int &$checksum ): ?bool {
+	if ( 0 !== strpos( $consume, 'direct-sql-' ) || 0 === strpos( $consume, 'direct-sql-batch-' ) || '-stats' !== substr( $consume, -strlen( '-stats' ) ) ) {
+		return null;
+	}
+
+	if ( null === $parser ) {
+		$parser = new WP_MySQL_Parser( $grammar, array() );
+	}
+
+	$ast_consume = ast_consume_mode( $consume );
+	if ( 'descendant-packed-ids' === $ast_consume && method_exists( $parser, 'parse_sql_native_descendant_packed_id_stats' ) ) {
+		return consume_native_descendant_stats(
+			$parser->parse_sql_native_descendant_packed_id_stats( $query ),
+			$descendants,
+			$checksum
+		);
+	}
+
+	if ( ( 'descendant-packed-rows' === $ast_consume || 'descendant-packed-token-bytes' === $ast_consume ) && method_exists( $parser, 'parse_sql_native_descendant_packed_scalar_stats' ) ) {
+		return consume_native_descendant_stats(
+			$parser->parse_sql_native_descendant_packed_scalar_stats( $query, 'descendant-packed-token-bytes' === $ast_consume ),
+			$descendants,
+			$checksum
+		);
+	}
+
+	return null;
+}
+
+function consume_direct_native_sql_batch_stats( &$parser, WP_Parser_Grammar $grammar, string $consume, array $queries, array &$failures, int &$descendants, int &$checksum ): ?int {
+	if ( 0 !== strpos( $consume, 'direct-sql-batch-' ) || '-stats' !== substr( $consume, -strlen( '-stats' ) ) ) {
+		return null;
+	}
+
+	if ( null === $parser ) {
+		$parser = new WP_MySQL_Parser( $grammar, array() );
+	}
+
+	$ast_consume = ast_consume_mode( $consume );
+	if ( 'descendant-packed-ids' === $ast_consume && method_exists( $parser, 'parse_sql_batch_native_descendant_packed_id_stats' ) ) {
+		$stats = $parser->parse_sql_batch_native_descendant_packed_id_stats( $queries );
+	} elseif ( ( 'descendant-packed-rows' === $ast_consume || 'descendant-packed-token-bytes' === $ast_consume ) && method_exists( $parser, 'parse_sql_batch_native_descendant_packed_scalar_stats' ) ) {
+		$stats = $parser->parse_sql_batch_native_descendant_packed_scalar_stats( $queries, 'descendant-packed-token-bytes' === $ast_consume );
+	} else {
+		return null;
+	}
+
+	for ( $i = 0; $i < $stats[1]; $i++ ) {
+		$failures[] = '';
+	}
+	$descendants += $stats[2];
+	$checksum    += $stats[3];
+	return $stats[0];
 }
 
 function consume_direct_native_rows( WP_MySQL_Parser $parser, string $consume, string $query, int &$descendants, int &$checksum ): ?bool {
-	if ( 0 !== strpos( $consume, 'direct-' ) ) {
+	if ( 0 !== strpos( $consume, 'direct-' ) || 0 === strpos( $consume, 'direct-sql-' ) || '-stats' === substr( $consume, -strlen( '-stats' ) ) ) {
 		return null;
 	}
 
@@ -314,103 +447,136 @@ $checksum    = 0;
 // Reuse a single parser across queries, mirroring the driver
 // (WP_PDO_MySQL_On_SQLite::reset_or_create_parser), which resets tokens on the
 // same instance rather than constructing a fresh parser per query.
-$parser = null;
-$start  = microtime( true );
-foreach ( $queries as $query ) {
-	try {
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
-			? $lexer->native_token_stream()
-			: $lexer->remaining_tokens();
-		if ( ( is_array( $tokens ) ? count( $tokens ) : $tokens->count() ) === 0 ) {
-			throw new Exception( 'Failed to tokenize query: ' . $query );
-		}
-
-		if ( null === $parser ) {
-			$parser = new WP_MySQL_Parser( $grammar, $tokens );
-		} else {
-			$parser->reset_tokens( $tokens );
-		}
-
-		$direct_rows_consumed = consume_direct_native_rows(
-			$parser,
-			$consume,
-			$query,
-			$descendants,
-			$checksum
-		);
-		if ( false === $direct_rows_consumed ) {
-			$failures[] = $query;
-		} elseif ( true !== $direct_rows_consumed ) {
-			$ast_consume = ast_consume_mode( $consume );
-			$ast         = $parser->parse();
-			if ( null === $ast ) {
+$parser          = null;
+$start           = microtime( true );
+$batch_processed = consume_direct_native_sql_batch_stats(
+	$parser,
+	$grammar,
+	$consume,
+	$queries,
+	$failures,
+	$descendants,
+	$checksum
+);
+if ( null !== $batch_processed ) {
+	$processed = $batch_processed;
+} else {
+	foreach ( $queries as $query ) {
+		try {
+			$direct_sql_stats_consumed = consume_direct_native_sql_stats(
+				$parser,
+				$grammar,
+				$consume,
+				$query,
+				$descendants,
+				$checksum
+			);
+			if ( false === $direct_sql_stats_consumed ) {
 				$failures[] = $query;
-			} elseif ( 'descendants' === $ast_consume ) {
-				$descendants += count( $ast->get_descendants() );
-			} elseif ( 'descendant-ids' === $ast_consume ) {
-				if (
-					class_exists( 'WP_MySQL_Native_Parser_Node', false )
-					&& $ast instanceof WP_MySQL_Native_Parser_Node
-					&& method_exists( $ast, 'get_native_descendant_id_rows' )
-				) {
-					consume_native_descendant_id_rows( $ast->get_native_descendant_id_rows(), $descendants, $checksum );
-				} else {
-					consume_php_descendant_id_rows( $ast, $descendants, $checksum );
+			} elseif ( true !== $direct_sql_stats_consumed ) {
+				$lexer  = new WP_MySQL_Lexer( $query );
+				$tokens = $lexer instanceof WP_MySQL_Native_Lexer
+					? $lexer->native_token_stream()
+					: $lexer->remaining_tokens();
+				if ( ( is_array( $tokens ) ? count( $tokens ) : $tokens->count() ) === 0 ) {
+					throw new Exception( 'Failed to tokenize query: ' . $query );
 				}
-			} elseif ( 'descendant-rows' === $ast_consume || 'descendant-token-bytes' === $ast_consume ) {
-				$consume_token_bytes = 'descendant-token-bytes' === $ast_consume;
-				if (
-					class_exists( 'WP_MySQL_Native_Parser_Node', false )
-					&& $ast instanceof WP_MySQL_Native_Parser_Node
-					&& method_exists( $ast, 'get_native_descendant_scalar_rows' )
-				) {
-					consume_native_descendant_scalar_rows(
-						$ast->get_native_descendant_scalar_rows(),
+
+				if ( null === $parser ) {
+					$parser = new WP_MySQL_Parser( $grammar, $tokens );
+				} else {
+					$parser->reset_tokens( $tokens );
+				}
+
+				$direct_stats_consumed = consume_direct_native_stats(
+					$parser,
+					$consume,
+					$descendants,
+					$checksum
+				);
+				$direct_rows_consumed  = true === $direct_stats_consumed
+					? true
+					: consume_direct_native_rows(
+						$parser,
+						$consume,
 						$query,
-						$consume_token_bytes,
 						$descendants,
 						$checksum
 					);
-				} else {
-					consume_php_descendant_scalar_rows( $ast, $query, $consume_token_bytes, $descendants, $checksum );
-				}
-			} elseif ( 'descendant-packed-ids' === $ast_consume ) {
-				if (
-					class_exists( 'WP_MySQL_Native_Parser_Node', false )
-					&& $ast instanceof WP_MySQL_Native_Parser_Node
-					&& method_exists( $ast, 'get_native_descendant_packed_id_rows' )
-				) {
-					consume_native_descendant_packed_id_rows( $ast->get_native_descendant_packed_id_rows(), $descendants, $checksum );
-				} else {
-					consume_php_descendant_packed_id_rows( $ast, $descendants, $checksum );
-				}
-			} elseif ( 'descendant-packed-rows' === $ast_consume || 'descendant-packed-token-bytes' === $ast_consume ) {
-				$consume_token_bytes = 'descendant-packed-token-bytes' === $ast_consume;
-				if (
-					class_exists( 'WP_MySQL_Native_Parser_Node', false )
-					&& $ast instanceof WP_MySQL_Native_Parser_Node
-					&& method_exists( $ast, 'get_native_descendant_packed_scalar_rows' )
-				) {
-					consume_native_descendant_packed_scalar_rows(
-						$ast->get_native_descendant_packed_scalar_rows(),
-						$query,
-						$consume_token_bytes,
-						$descendants,
-						$checksum
-					);
-				} else {
-					consume_php_descendant_packed_scalar_rows( $ast, $query, $consume_token_bytes, $descendants, $checksum );
+				if ( false === $direct_stats_consumed || false === $direct_rows_consumed ) {
+					$failures[] = $query;
+				} elseif ( true !== $direct_rows_consumed ) {
+					$ast_consume = ast_consume_mode( $consume );
+					$ast         = $parser->parse();
+					if ( null === $ast ) {
+						$failures[] = $query;
+					} elseif ( 'descendants' === $ast_consume ) {
+						$descendants += count( $ast->get_descendants() );
+					} elseif ( 'descendant-ids' === $ast_consume ) {
+						if (
+							class_exists( 'WP_MySQL_Native_Parser_Node', false )
+							&& $ast instanceof WP_MySQL_Native_Parser_Node
+							&& method_exists( $ast, 'get_native_descendant_id_rows' )
+						) {
+							consume_native_descendant_id_rows( $ast->get_native_descendant_id_rows(), $descendants, $checksum );
+						} else {
+							consume_php_descendant_id_rows( $ast, $descendants, $checksum );
+						}
+					} elseif ( 'descendant-rows' === $ast_consume || 'descendant-token-bytes' === $ast_consume ) {
+						$consume_token_bytes = 'descendant-token-bytes' === $ast_consume;
+						if (
+							class_exists( 'WP_MySQL_Native_Parser_Node', false )
+							&& $ast instanceof WP_MySQL_Native_Parser_Node
+							&& method_exists( $ast, 'get_native_descendant_scalar_rows' )
+						) {
+							consume_native_descendant_scalar_rows(
+								$ast->get_native_descendant_scalar_rows(),
+								$query,
+								$consume_token_bytes,
+								$descendants,
+								$checksum
+							);
+						} else {
+							consume_php_descendant_scalar_rows( $ast, $query, $consume_token_bytes, $descendants, $checksum );
+						}
+					} elseif ( 'descendant-packed-ids' === $ast_consume ) {
+						if (
+							class_exists( 'WP_MySQL_Native_Parser_Node', false )
+							&& $ast instanceof WP_MySQL_Native_Parser_Node
+							&& method_exists( $ast, 'get_native_descendant_packed_id_rows' )
+						) {
+							consume_native_descendant_packed_id_rows( $ast->get_native_descendant_packed_id_rows(), $descendants, $checksum );
+						} else {
+							consume_php_descendant_packed_id_rows( $ast, $descendants, $checksum );
+						}
+					} elseif ( 'descendant-packed-rows' === $ast_consume || 'descendant-packed-token-bytes' === $ast_consume ) {
+						$consume_token_bytes = 'descendant-packed-token-bytes' === $ast_consume;
+						if (
+							class_exists( 'WP_MySQL_Native_Parser_Node', false )
+							&& $ast instanceof WP_MySQL_Native_Parser_Node
+							&& method_exists( $ast, 'get_native_descendant_packed_scalar_rows' )
+						) {
+							consume_native_descendant_packed_scalar_rows(
+								$ast->get_native_descendant_packed_scalar_rows(),
+								$query,
+								$consume_token_bytes,
+								$descendants,
+								$checksum
+							);
+						} else {
+							consume_php_descendant_packed_scalar_rows( $ast, $query, $consume_token_bytes, $descendants, $checksum );
+						}
+					}
 				}
 			}
+		} catch ( Exception $e ) {
+			$exceptions[] = $query;
 		}
-	} catch ( Exception $e ) {
-		$exceptions[] = $query;
-	}
 
-	$processed += 1;
-	if ( ! $json && $processed > 0 && 0 === $processed % 1000 ) {
-		echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
+		$processed += 1;
+		if ( ! $json && $processed > 0 && 0 === $processed % 1000 ) {
+			echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
+		}
 	}
 }
 $duration = microtime( true ) - $start;
@@ -421,7 +587,7 @@ if ( $json ) {
 		array(
 			'benchmark'              => 'mysql-parser',
 			'implementation'         => class_exists( 'WP_MySQL_Native_Parser', false ) ? 'native-extension' : 'php',
-			'api'                    => 0 === strpos( $consume, 'direct-' ) && class_exists( 'WP_MySQL_Native_Parser', false ) ? 'direct-native-parser-rows' : 'parse',
+			'api'                    => benchmark_api( $consume ),
 			'extension_loaded'       => extension_loaded( 'wp_mysql_parser' ),
 			'queries'                => $processed,
 			'corpus_queries'         => $corpus_queries,

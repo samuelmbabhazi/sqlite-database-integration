@@ -68,4 +68,28 @@ trait WP_MySQL_Native_Parser_Impl {
 	public function parse_native_descendant_packed_scalar_rows(): ?array {
 		return $this->native->parse_native_descendant_packed_scalar_rows();
 	}
+
+	public function parse_native_descendant_packed_id_stats(): ?array {
+		return $this->native->parse_native_descendant_packed_id_stats();
+	}
+
+	public function parse_native_descendant_packed_scalar_stats( bool $consume_token_bytes = false ): ?array {
+		return $this->native->parse_native_descendant_packed_scalar_stats( $consume_token_bytes );
+	}
+
+	public function parse_sql_native_descendant_packed_id_stats( string $sql ): ?array {
+		return $this->native->parse_sql_native_descendant_packed_id_stats( $sql );
+	}
+
+	public function parse_sql_native_descendant_packed_scalar_stats( string $sql, bool $consume_token_bytes = false ): ?array {
+		return $this->native->parse_sql_native_descendant_packed_scalar_stats( $sql, $consume_token_bytes );
+	}
+
+	public function parse_sql_batch_native_descendant_packed_id_stats( array $queries ): array {
+		return $this->native->parse_sql_batch_native_descendant_packed_id_stats( $queries );
+	}
+
+	public function parse_sql_batch_native_descendant_packed_scalar_stats( array $queries, bool $consume_token_bytes = false ): array {
+		return $this->native->parse_sql_batch_native_descendant_packed_scalar_stats( $queries, $consume_token_bytes );
+	}
 }
