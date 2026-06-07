@@ -1753,6 +1753,42 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_id_rows(
 }
 
 #[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    let node_index = native_ast_node_index_from_handle(handle)?;
+    let node = ast.arena.node(node_index)?;
+    let mut rows = Vec::with_capacity(node.descendant_count.saturating_mul(4));
+    let mut stack = ast.arena.descendant_stack(node_index)?;
+    while let Some(child) = stack.pop() {
+        match child {
+            NativeAstChild::Node(index) => {
+                rows.push(0);
+                rows.push(ast.arena.node(index)?.rule_id);
+                // Keep the PHP and native benchmark rows directly comparable:
+                // PHP parser nodes don't store spans, so node rows carry no
+                // span data. Token rows below carry public token start/length.
+                rows.push(-1);
+                rows.push(0);
+                for child in ast.arena.node(index)?.children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            NativeAstChild::Token(index) => {
+                let token = ast.arena.token_source.token_info(index)?;
+                rows.push(1);
+                rows.push(token.id);
+                rows.push(i64::try_from(token.start).map_err(php_error)?);
+                rows.push(i64::try_from(token.end.saturating_sub(token.start)).map_err(php_error)?);
+            }
+        }
+    }
+    Ok(rows)
+}
+
+#[php_function]
 pub fn wp_sqlite_mysql_native_ast_get_native_handle_kind(
     wrapper_zval: &Zval,
     handle: i64,
@@ -2316,6 +2352,9 @@ pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
         ))
         .function(wrap_function!(
             wp_sqlite_mysql_native_ast_get_native_descendant_id_rows
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows
         ))
         .function(wrap_function!(
             wp_sqlite_mysql_native_ast_get_native_handle_kind

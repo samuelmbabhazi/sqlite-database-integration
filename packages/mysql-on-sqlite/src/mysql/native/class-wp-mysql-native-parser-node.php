@@ -175,6 +175,25 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 		);
 	}
 
+	/**
+	 * Return descendant metadata without materializing PHP node/token objects.
+	 *
+	 * The result is a flat list of `[kind, id, start, length, ...]` rows.
+	 * Kind `0` is a parser node and kind `1` is a token. Token rows carry the
+	 * token byte span. Node rows use `start = -1` and `length = 0` because the
+	 * pure-PHP parser nodes do not store spans, and the benchmark uses this API
+	 * for direct PHP/native comparisons.
+	 *
+	 * @param  int|null $handle Optional native node handle. Defaults to this node.
+	 * @return int[]
+	 */
+	public function get_native_descendant_scalar_rows( ?int $handle = null ): array {
+		return wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
+			$this,
+			$handle ?? $this->get_native_handle()
+		);
+	}
+
 	public function get_native_handle_kind( int $handle ): int {
 		return wp_sqlite_mysql_native_ast_get_native_handle_kind( $this, $handle );
 	}

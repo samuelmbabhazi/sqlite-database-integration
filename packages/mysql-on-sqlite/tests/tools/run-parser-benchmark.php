@@ -14,6 +14,10 @@
  *                descendants Walk all descendants with get_descendants().
  *                descendant-ids
  *                            Consume all descendants as scalar kind/id rows.
+ *                descendant-rows
+ *                            Consume all descendants as scalar kind/id/span rows.
+ *                descendant-token-bytes
+ *                            Consume scalar rows and read each token's raw bytes.
  */
 
 // Throw exception if anything fails.
@@ -35,7 +39,7 @@ foreach ( $argv as $arg ) {
 	}
 }
 
-if ( ! in_array( $consume, array( 'none', 'descendants', 'descendant-ids' ), true ) ) {
+if ( ! in_array( $consume, array( 'none', 'descendants', 'descendant-ids', 'descendant-rows', 'descendant-token-bytes' ), true ) ) {
 	throw new InvalidArgumentException( sprintf( 'Unsupported --consume mode: %s', $consume ) );
 }
 
@@ -52,6 +56,63 @@ function get_stats( $total, $failures, $exceptions ) {
 		$exceptions,
 		$exceptions / $total * 100
 	);
+}
+
+function checksum_bytes( string $bytes ): int {
+	$length   = strlen( $bytes );
+	$checksum = $length;
+	for ( $i = 0; $i < $length; $i++ ) {
+		$checksum += ord( $bytes[ $i ] );
+	}
+	return $checksum;
+}
+
+function consume_native_descendant_id_rows( array $rows, int &$descendants, int &$checksum ): void {
+	$descendants += intdiv( count( $rows ), 2 );
+	foreach ( $rows as $value ) {
+		$checksum += $value;
+	}
+}
+
+function consume_native_descendant_scalar_rows( array $rows, string $query, bool $consume_token_bytes, int &$descendants, int &$checksum ): void {
+	$descendants += intdiv( count( $rows ), 4 );
+	for ( $i = 0; $i < count( $rows ); $i += 4 ) {
+		$kind     = $rows[ $i ];
+		$id       = $rows[ $i + 1 ];
+		$start    = $rows[ $i + 2 ];
+		$length   = $rows[ $i + 3 ];
+		$checksum += $kind + $id + $start + $length;
+		if ( $consume_token_bytes && 1 === $kind ) {
+			$checksum += checksum_bytes( substr( $query, $start, $length ) );
+		}
+	}
+}
+
+function consume_php_descendant_id_rows( WP_Parser_Node $node, int &$descendants, int &$checksum ): void {
+	foreach ( $node->get_children() as $child ) {
+		++$descendants;
+		if ( $child instanceof WP_Parser_Node ) {
+			$checksum += $child->rule_id;
+			consume_php_descendant_id_rows( $child, $descendants, $checksum );
+		} else {
+			$checksum += 1 + $child->id;
+		}
+	}
+}
+
+function consume_php_descendant_scalar_rows( WP_Parser_Node $node, string $query, bool $consume_token_bytes, int &$descendants, int &$checksum ): void {
+	foreach ( $node->get_children() as $child ) {
+		++$descendants;
+		if ( $child instanceof WP_Parser_Node ) {
+			$checksum += $child->rule_id - 1;
+			consume_php_descendant_scalar_rows( $child, $query, $consume_token_bytes, $descendants, $checksum );
+		} else {
+			$checksum += 1 + $child->id + $child->start + $child->length;
+			if ( $consume_token_bytes ) {
+				$checksum += checksum_bytes( substr( $query, $child->start, $child->length ) );
+			}
+		}
+	}
 }
 
 // Load the MySQL grammar.
@@ -111,20 +172,26 @@ foreach ( $queries as $query ) {
 				&& $ast instanceof WP_MySQL_Native_Parser_Node
 				&& method_exists( $ast, 'get_native_descendant_id_rows' )
 			) {
-				$rows         = $ast->get_native_descendant_id_rows();
-				$descendants += intdiv( count( $rows ), 2 );
-				foreach ( $rows as $value ) {
-					$checksum += $value;
-				}
+				consume_native_descendant_id_rows( $ast->get_native_descendant_id_rows(), $descendants, $checksum );
 			} else {
-				foreach ( $ast->get_descendants() as $descendant ) {
-					++$descendants;
-					if ( $descendant instanceof WP_Parser_Node ) {
-						$checksum += $descendant->rule_id;
-					} else {
-						$checksum += 1 + $descendant->id;
-					}
-				}
+				consume_php_descendant_id_rows( $ast, $descendants, $checksum );
+			}
+		} elseif ( 'descendant-rows' === $consume || 'descendant-token-bytes' === $consume ) {
+			$consume_token_bytes = 'descendant-token-bytes' === $consume;
+			if (
+				class_exists( 'WP_MySQL_Native_Parser_Node', false )
+				&& $ast instanceof WP_MySQL_Native_Parser_Node
+				&& method_exists( $ast, 'get_native_descendant_scalar_rows' )
+			) {
+				consume_native_descendant_scalar_rows(
+					$ast->get_native_descendant_scalar_rows(),
+					$query,
+					$consume_token_bytes,
+					$descendants,
+					$checksum
+				);
+			} else {
+				consume_php_descendant_scalar_rows( $ast, $query, $consume_token_bytes, $descendants, $checksum );
 			}
 		}
 	} catch ( Exception $e ) {
@@ -162,7 +229,7 @@ if ( $json ) {
 
 echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
 printf( "AST consumption: %s", $consume );
-if ( 'descendants' === $consume || 'descendant-ids' === $consume ) {
+if ( 'descendants' === $consume || 'descendant-ids' === $consume || 'descendant-rows' === $consume || 'descendant-token-bytes' === $consume ) {
 	printf( " (%d descendants, checksum %d)", $descendants, $checksum );
 }
 echo "\n";
