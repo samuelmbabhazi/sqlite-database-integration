@@ -175,6 +175,13 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 		);
 	}
 
+	public function get_native_descendant_packed_id_rows( ?int $handle = null ): array {
+		return wp_sqlite_mysql_native_ast_get_native_descendant_packed_id_rows(
+			$this,
+			$handle ?? $this->get_native_handle()
+		);
+	}
+
 	/**
 	 * Return descendant metadata without materializing PHP node/token objects.
 	 *
@@ -189,6 +196,13 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 	 */
 	public function get_native_descendant_scalar_rows( ?int $handle = null ): array {
 		return wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
+			$this,
+			$handle ?? $this->get_native_handle()
+		);
+	}
+
+	public function get_native_descendant_packed_scalar_rows( ?int $handle = null ): array {
+		return wp_sqlite_mysql_native_ast_get_native_descendant_packed_scalar_rows(
 			$this,
 			$handle ?? $this->get_native_handle()
 		);

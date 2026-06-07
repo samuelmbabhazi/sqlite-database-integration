@@ -1122,10 +1122,12 @@ struct NativeAstState {
     /// once, walk past, walk back, the mutation is still there). Each
     /// accessor in this extension constructs a fresh wrapper unless we
     /// intern it here. Arena node indexes are dense, so a vector avoids
-    /// hashing in hot AST-walk paths. The cache intentionally stores raw
-    /// wrapper pointers, not strong PHP references, so Rust can preserve
-    /// identity without pinning wrappers after PHP drops them.
-    node_cache: RefCell<Vec<Option<usize>>>,
+    /// hashing in hot AST-walk paths. The vector is allocated lazily: parser
+    /// and scalar-row paths only create the root wrapper and never need child
+    /// identity lookups. The cache intentionally stores raw wrapper pointers,
+    /// not strong PHP references, so Rust can preserve identity without
+    /// pinning wrappers after PHP drops them.
+    node_cache: RefCell<Option<Vec<Option<usize>>>>,
 }
 
 struct NativeAstWrapperEntry {
@@ -1227,7 +1229,7 @@ impl NativeAstArena {
 
     fn descendant_stack(&self, index: usize) -> PhpResult<Vec<NativeAstChild>> {
         let node = self.node(index)?;
-        let mut stack = Vec::with_capacity(node.descendant_count);
+        let mut stack = Vec::with_capacity(node.children.len());
         stack.extend(node.children.iter().rev().copied());
         Ok(stack)
     }
@@ -1255,6 +1257,14 @@ fn native_ast_child_from_handle(handle: i64) -> PhpResult<NativeAstChild> {
     } else {
         Ok(NativeAstChild::Token(index))
     }
+}
+
+fn native_ast_pack_kind_id(kind: i64, id: i64) -> i64 {
+    id * 2 + kind
+}
+
+fn native_ast_pack_span(start: usize, length: usize) -> i64 {
+    (start as i64) * (1_i64 << 32) + length as i64
 }
 
 fn native_ast_node_index_from_handle(handle: i64) -> PhpResult<usize> {
@@ -1298,8 +1308,10 @@ fn register_native_ast_wrapper(
             },
         );
     });
-    if let Some(slot) = ast.node_cache.borrow_mut().get_mut(node_index) {
-        *slot = Some(key);
+    if let Some(cache) = ast.node_cache.borrow_mut().as_mut() {
+        if let Some(slot) = cache.get_mut(node_index) {
+            *slot = Some(key);
+        }
     }
     key
 }
@@ -1316,9 +1328,11 @@ fn release_native_ast_wrapper_key(key: usize) {
     let entry = NATIVE_AST_WRAPPERS.with(|wrappers| wrappers.borrow_mut().remove(&key));
     if let Some(entry) = entry {
         let mut cache = entry.ast.node_cache.borrow_mut();
-        if let Some(slot) = cache.get_mut(entry.node_index) {
-            if *slot == Some(key) {
-                *slot = None;
+        if let Some(cache) = cache.as_mut() {
+            if let Some(slot) = cache.get_mut(entry.node_index) {
+                if *slot == Some(key) {
+                    *slot = None;
+                }
             }
         }
     }
@@ -1348,7 +1362,7 @@ unsafe fn zval_from_cached_object(key: usize) -> Zval {
 impl NativeAstState {
     fn new(arena: Arc<NativeAstArena>) -> Rc<Self> {
         Rc::new(Self {
-            node_cache: RefCell::new(vec![None; arena.nodes.len()]),
+            node_cache: RefCell::new(None),
             arena,
         })
     }
@@ -1394,17 +1408,25 @@ impl NativeAstState {
     fn cached_node_zval(self: &Rc<Self>, index: usize, classes: &PhpClasses) -> PhpResult<Zval> {
         let cached_key = {
             let cache = self.node_cache.borrow();
-            cache.get(index).and_then(|entry| *entry)
+            cache
+                .as_ref()
+                .and_then(|cache| cache.get(index))
+                .and_then(|entry| *entry)
         };
         if let Some(key) = cached_key {
             if native_ast_wrapper_matches(key, self, index) {
                 return Ok(unsafe { zval_from_cached_object(key) });
             }
-            if let Some(slot) = self.node_cache.borrow_mut().get_mut(index) {
-                *slot = None;
+            if let Some(cache) = self.node_cache.borrow_mut().as_mut() {
+                if let Some(slot) = cache.get_mut(index) {
+                    *slot = None;
+                }
             }
         }
 
+        if self.node_cache.borrow().is_none() {
+            *self.node_cache.borrow_mut() = Some(vec![None; self.arena.nodes.len()]);
+        }
         self.create_php_node_with_classes(index, classes)
     }
 
@@ -1737,15 +1759,46 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_id_rows(
     while let Some(child) = stack.pop() {
         match child {
             NativeAstChild::Node(index) => {
+                let node = ast.arena.node(index)?;
                 rows.push(0);
-                rows.push(ast.arena.node(index)?.rule_id);
-                for child in ast.arena.node(index)?.children.iter().rev() {
+                rows.push(node.rule_id);
+                for child in node.children.iter().rev() {
                     stack.push(*child);
                 }
             }
             NativeAstChild::Token(index) => {
                 rows.push(1);
                 rows.push(ast.arena.token_source.token_info(index)?.id);
+            }
+        }
+    }
+    Ok(rows)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_id_rows(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    let node_index = native_ast_node_index_from_handle(handle)?;
+    let node = ast.arena.node(node_index)?;
+    let mut rows = Vec::with_capacity(node.descendant_count);
+    let mut stack = ast.arena.descendant_stack(node_index)?;
+    while let Some(child) = stack.pop() {
+        match child {
+            NativeAstChild::Node(index) => {
+                let node = ast.arena.node(index)?;
+                rows.push(native_ast_pack_kind_id(0, node.rule_id));
+                for child in node.children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            NativeAstChild::Token(index) => {
+                rows.push(native_ast_pack_kind_id(
+                    1,
+                    ast.arena.token_source.token_info(index)?.id,
+                ));
             }
         }
     }
@@ -1765,14 +1818,15 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
     while let Some(child) = stack.pop() {
         match child {
             NativeAstChild::Node(index) => {
+                let node = ast.arena.node(index)?;
                 rows.push(0);
-                rows.push(ast.arena.node(index)?.rule_id);
+                rows.push(node.rule_id);
                 // Keep the PHP and native benchmark rows directly comparable:
                 // PHP parser nodes don't store spans, so node rows carry no
                 // span data. Token rows below carry public token start/length.
                 rows.push(-1);
                 rows.push(0);
-                for child in ast.arena.node(index)?.children.iter().rev() {
+                for child in node.children.iter().rev() {
                     stack.push(*child);
                 }
             }
@@ -1780,8 +1834,41 @@ pub fn wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows(
                 let token = ast.arena.token_source.token_info(index)?;
                 rows.push(1);
                 rows.push(token.id);
-                rows.push(i64::try_from(token.start).map_err(php_error)?);
-                rows.push(i64::try_from(token.end.saturating_sub(token.start)).map_err(php_error)?);
+                rows.push(token.start as i64);
+                rows.push(token.end.saturating_sub(token.start) as i64);
+            }
+        }
+    }
+    Ok(rows)
+}
+
+#[php_function]
+pub fn wp_sqlite_mysql_native_ast_get_native_descendant_packed_scalar_rows(
+    wrapper_zval: &Zval,
+    handle: i64,
+) -> PhpResult<Vec<i64>> {
+    let (ast, _node_index) = native_ast_from_wrapper(wrapper_zval)?;
+    let node_index = native_ast_node_index_from_handle(handle)?;
+    let node = ast.arena.node(node_index)?;
+    let mut rows = Vec::with_capacity(node.descendant_count.saturating_mul(2));
+    let mut stack = ast.arena.descendant_stack(node_index)?;
+    while let Some(child) = stack.pop() {
+        match child {
+            NativeAstChild::Node(index) => {
+                let node = ast.arena.node(index)?;
+                rows.push(native_ast_pack_kind_id(0, node.rule_id));
+                rows.push(-1);
+                for child in node.children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            NativeAstChild::Token(index) => {
+                let token = ast.arena.token_source.token_info(index)?;
+                rows.push(native_ast_pack_kind_id(1, token.id));
+                rows.push(native_ast_pack_span(
+                    token.start,
+                    token.end.saturating_sub(token.start),
+                ));
             }
         }
     }
@@ -2354,7 +2441,13 @@ pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
             wp_sqlite_mysql_native_ast_get_native_descendant_id_rows
         ))
         .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_native_descendant_packed_id_rows
+        ))
+        .function(wrap_function!(
             wp_sqlite_mysql_native_ast_get_native_descendant_scalar_rows
+        ))
+        .function(wrap_function!(
+            wp_sqlite_mysql_native_ast_get_native_descendant_packed_scalar_rows
         ))
         .function(wrap_function!(
             wp_sqlite_mysql_native_ast_get_native_handle_kind

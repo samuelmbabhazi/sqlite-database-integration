@@ -18,6 +18,12 @@
  *                            Consume all descendants as scalar kind/id/span rows.
  *                descendant-token-bytes
  *                            Consume scalar rows and read each token's raw bytes.
+ *                descendant-packed-ids
+ *                            Consume all descendants as one packed kind/id int per descendant.
+ *                descendant-packed-rows
+ *                            Consume all descendants as packed kind/id/span rows.
+ *                descendant-packed-token-bytes
+ *                            Consume packed rows and read each token's raw bytes.
  */
 
 // Throw exception if anything fails.
@@ -39,7 +45,7 @@ foreach ( $argv as $arg ) {
 	}
 }
 
-if ( ! in_array( $consume, array( 'none', 'descendants', 'descendant-ids', 'descendant-rows', 'descendant-token-bytes' ), true ) ) {
+if ( ! in_array( $consume, array( 'none', 'descendants', 'descendant-ids', 'descendant-rows', 'descendant-token-bytes', 'descendant-packed-ids', 'descendant-packed-rows', 'descendant-packed-token-bytes' ), true ) ) {
 	throw new InvalidArgumentException( sprintf( 'Unsupported --consume mode: %s', $consume ) );
 }
 
@@ -74,15 +80,58 @@ function consume_native_descendant_id_rows( array $rows, int &$descendants, int 
 	}
 }
 
+function pack_kind_id( int $kind, int $id ): int {
+	return $id * 2 + $kind;
+}
+
+function pack_span( int $start, int $length ): int {
+	return $start * 4294967296 + $length;
+}
+
+function unpack_span_start( int $span ): int {
+	return intdiv( $span, 4294967296 );
+}
+
+function unpack_span_length( int $span ): int {
+	return $span & 0xffffffff;
+}
+
+function consume_native_descendant_packed_id_rows( array $rows, int &$descendants, int &$checksum ): void {
+	$descendants += count( $rows );
+	foreach ( $rows as $value ) {
+		$checksum += $value;
+	}
+}
+
 function consume_native_descendant_scalar_rows( array $rows, string $query, bool $consume_token_bytes, int &$descendants, int &$checksum ): void {
-	$descendants += intdiv( count( $rows ), 4 );
-	for ( $i = 0; $i < count( $rows ); $i += 4 ) {
+	$row_count    = count( $rows );
+	$descendants += intdiv( $row_count, 4 );
+	for ( $i = 0; $i < $row_count; $i += 4 ) {
 		$kind     = $rows[ $i ];
 		$id       = $rows[ $i + 1 ];
 		$start    = $rows[ $i + 2 ];
 		$length   = $rows[ $i + 3 ];
 		$checksum += $kind + $id + $start + $length;
 		if ( $consume_token_bytes && 1 === $kind ) {
+			$checksum += checksum_bytes( substr( $query, $start, $length ) );
+		}
+	}
+}
+
+function consume_native_descendant_packed_scalar_rows( array $rows, string $query, bool $consume_token_bytes, int &$descendants, int &$checksum ): void {
+	$row_count    = count( $rows );
+	$descendants += intdiv( $row_count, 2 );
+	for ( $i = 0; $i < $row_count; $i += 2 ) {
+		$kind_id  = $rows[ $i ];
+		$span     = $rows[ $i + 1 ];
+		if ( $span < 0 ) {
+			$checksum += $kind_id - 1;
+		} else {
+			$start     = unpack_span_start( $span );
+			$length    = unpack_span_length( $span );
+			$checksum += $kind_id + $start + $length;
+		}
+		if ( $consume_token_bytes && ( $kind_id & 1 ) === 1 ) {
 			$checksum += checksum_bytes( substr( $query, $start, $length ) );
 		}
 	}
@@ -100,6 +149,18 @@ function consume_php_descendant_id_rows( WP_Parser_Node $node, int &$descendants
 	}
 }
 
+function consume_php_descendant_packed_id_rows( WP_Parser_Node $node, int &$descendants, int &$checksum ): void {
+	foreach ( $node->get_children() as $child ) {
+		++$descendants;
+		if ( $child instanceof WP_Parser_Node ) {
+			$checksum += pack_kind_id( 0, $child->rule_id );
+			consume_php_descendant_packed_id_rows( $child, $descendants, $checksum );
+		} else {
+			$checksum += pack_kind_id( 1, $child->id );
+		}
+	}
+}
+
 function consume_php_descendant_scalar_rows( WP_Parser_Node $node, string $query, bool $consume_token_bytes, int &$descendants, int &$checksum ): void {
 	foreach ( $node->get_children() as $child ) {
 		++$descendants;
@@ -108,6 +169,21 @@ function consume_php_descendant_scalar_rows( WP_Parser_Node $node, string $query
 			consume_php_descendant_scalar_rows( $child, $query, $consume_token_bytes, $descendants, $checksum );
 		} else {
 			$checksum += 1 + $child->id + $child->start + $child->length;
+			if ( $consume_token_bytes ) {
+				$checksum += checksum_bytes( substr( $query, $child->start, $child->length ) );
+			}
+		}
+	}
+}
+
+function consume_php_descendant_packed_scalar_rows( WP_Parser_Node $node, string $query, bool $consume_token_bytes, int &$descendants, int &$checksum ): void {
+	foreach ( $node->get_children() as $child ) {
+		++$descendants;
+		if ( $child instanceof WP_Parser_Node ) {
+			$checksum += pack_kind_id( 0, $child->rule_id ) - 1;
+			consume_php_descendant_packed_scalar_rows( $child, $query, $consume_token_bytes, $descendants, $checksum );
+		} else {
+			$checksum += pack_kind_id( 1, $child->id ) + $child->start + $child->length;
 			if ( $consume_token_bytes ) {
 				$checksum += checksum_bytes( substr( $query, $child->start, $child->length ) );
 			}
@@ -193,6 +269,33 @@ foreach ( $queries as $query ) {
 			} else {
 				consume_php_descendant_scalar_rows( $ast, $query, $consume_token_bytes, $descendants, $checksum );
 			}
+		} elseif ( 'descendant-packed-ids' === $consume ) {
+			if (
+				class_exists( 'WP_MySQL_Native_Parser_Node', false )
+				&& $ast instanceof WP_MySQL_Native_Parser_Node
+				&& method_exists( $ast, 'get_native_descendant_packed_id_rows' )
+			) {
+				consume_native_descendant_packed_id_rows( $ast->get_native_descendant_packed_id_rows(), $descendants, $checksum );
+			} else {
+				consume_php_descendant_packed_id_rows( $ast, $descendants, $checksum );
+			}
+		} elseif ( 'descendant-packed-rows' === $consume || 'descendant-packed-token-bytes' === $consume ) {
+			$consume_token_bytes = 'descendant-packed-token-bytes' === $consume;
+			if (
+				class_exists( 'WP_MySQL_Native_Parser_Node', false )
+				&& $ast instanceof WP_MySQL_Native_Parser_Node
+				&& method_exists( $ast, 'get_native_descendant_packed_scalar_rows' )
+			) {
+				consume_native_descendant_packed_scalar_rows(
+					$ast->get_native_descendant_packed_scalar_rows(),
+					$query,
+					$consume_token_bytes,
+					$descendants,
+					$checksum
+				);
+			} else {
+				consume_php_descendant_packed_scalar_rows( $ast, $query, $consume_token_bytes, $descendants, $checksum );
+			}
 		}
 	} catch ( Exception $e ) {
 		$exceptions[] = $query;
@@ -229,7 +332,7 @@ if ( $json ) {
 
 echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
 printf( "AST consumption: %s", $consume );
-if ( 'descendants' === $consume || 'descendant-ids' === $consume || 'descendant-rows' === $consume || 'descendant-token-bytes' === $consume ) {
+if ( 'descendants' === $consume || 'descendant-ids' === $consume || 'descendant-rows' === $consume || 'descendant-token-bytes' === $consume || 'descendant-packed-ids' === $consume || 'descendant-packed-rows' === $consume || 'descendant-packed-token-bytes' === $consume ) {
 	printf( " (%d descendants, checksum %d)", $descendants, $checksum );
 }
 echo "\n";

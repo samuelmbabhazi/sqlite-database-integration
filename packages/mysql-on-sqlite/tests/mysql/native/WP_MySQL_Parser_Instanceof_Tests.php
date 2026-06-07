@@ -116,4 +116,34 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 
 		$this->assertSame( $expected, $ast->get_native_descendant_scalar_rows() );
 	}
+
+	public function test_native_ast_descendant_packed_rows_match_materialized_descendants(): void {
+		if ( ! class_exists( 'WP_MySQL_Native_Parser_Node', false ) ) {
+			$this->markTestSkipped( 'Native parser extension is not active.' );
+		}
+
+		$grammar = new WP_Parser_Grammar( include __DIR__ . '/../../../src/mysql/mysql-grammar.php' );
+		$lexer   = new WP_MySQL_Lexer( 'SELECT 1 + 2' );
+		$parser  = new WP_MySQL_Parser( $grammar, $lexer->native_token_stream() );
+
+		$ast = $parser->parse();
+		$this->assertInstanceOf( WP_MySQL_Native_Parser_Node::class, $ast );
+
+		$expected_id_rows     = array();
+		$expected_scalar_rows = array();
+		foreach ( $ast->get_descendants() as $descendant ) {
+			if ( $descendant instanceof WP_Parser_Node ) {
+				$expected_id_rows[]     = $descendant->rule_id * 2;
+				$expected_scalar_rows[] = $descendant->rule_id * 2;
+				$expected_scalar_rows[] = -1;
+			} else {
+				$expected_id_rows[]     = $descendant->id * 2 + 1;
+				$expected_scalar_rows[] = $descendant->id * 2 + 1;
+				$expected_scalar_rows[] = $descendant->start * 4294967296 + $descendant->length;
+			}
+		}
+
+		$this->assertSame( $expected_id_rows, $ast->get_native_descendant_packed_id_rows() );
+		$this->assertSame( $expected_scalar_rows, $ast->get_native_descendant_packed_scalar_rows() );
+	}
 }
