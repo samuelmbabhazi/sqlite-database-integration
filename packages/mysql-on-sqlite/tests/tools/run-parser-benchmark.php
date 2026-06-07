@@ -268,16 +268,27 @@ $grammar      = new WP_Parser_Grammar( $grammar_data );
 
 // Load the bounded checked-in corpus before timing so file IO is excluded
 // from the benchmark.
-$data_dir = __DIR__ . '/../mysql/data';
-$handle   = fopen( "$data_dir/mysql-server-tests-queries.csv", 'r' );
-$queries  = array();
+$data_dir               = __DIR__ . '/../mysql/data';
+$known_parser_failures  = include "$data_dir/mysql-server-tests-known-parser-failures.php";
+$handle                 = fopen( "$data_dir/mysql-server-tests-queries.csv", 'r' );
+$queries                = array();
+$corpus_queries         = 0;
+$skipped_known_failures = 0;
 while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 	$query = $record[0] ?? null;
 	if ( null === $query || '' === $query ) {
 		continue;
 	}
+	++$corpus_queries;
+	if ( $known_parser_failures[ $query ] ?? false ) {
+		++$skipped_known_failures;
+		if ( null !== $limit && $corpus_queries >= $limit ) {
+			break;
+		}
+		continue;
+	}
 	$queries[] = $query;
-	if ( null !== $limit && count( $queries ) >= $limit ) {
+	if ( null !== $limit && $corpus_queries >= $limit ) {
 		break;
 	}
 }
@@ -395,6 +406,8 @@ if ( $json ) {
 			'api'              => 0 === strpos( $consume, 'direct-' ) && class_exists( 'WP_MySQL_Native_Parser', false ) ? 'direct-native-parser-rows' : 'parse',
 			'extension_loaded' => extension_loaded( 'wp_mysql_parser' ),
 			'queries'          => $processed,
+			'corpus_queries'   => $corpus_queries,
+			'skipped_known_failures' => $skipped_known_failures,
 			'consume'          => $consume,
 			'descendants'      => $descendants,
 			'checksum'         => $checksum,
@@ -416,6 +429,9 @@ if ( 'descendants' === $ast_consume || 'descendant-ids' === $ast_consume || 'des
 	printf( " (%d descendants, checksum %d)", $descendants, $checksum );
 }
 echo "\n";
+if ( $skipped_known_failures > 0 ) {
+	printf( "Skipped known parser corpus failures: %d / %d\n", $skipped_known_failures, $corpus_queries );
+}
 
 // Print the results.
 printf( "\nParsed %d queries in %.5fs @ %d QPS.\n", $processed, $duration, $qps );

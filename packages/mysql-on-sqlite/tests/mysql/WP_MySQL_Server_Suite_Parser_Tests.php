@@ -10,28 +10,21 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	const GRAMMAR_PATH   = __DIR__ . '/../../src/mysql/mysql-grammar.php';
 
 	/**
-	 * Some of the queries in the test suite are known to fail parsing.
-	 * We'll skip them in the tests now, gradually fixing these cases.
-	 */
-	const KNOWN_FAILURES = array(
-		'SELECT 1 /*!99999 /* */ */'                       => true,
-		'select 1ea10.1a20,1e+ 1e+10 from 1ea10'           => true,
-		"聠聡聢聣聤聬聭聮聯聰聲聽隆垄拢陇楼卤潞禄录陆戮 聶職聳聴\n0聲5\n1聲5\n2聲5\n3聲5\n4\n\nSET NAMES gb18030" => true,
-		"alter user mysqltest_7@ identified by 'systpass'" => true,
-		"SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!' || '%' ESCAPE '!'" => true,
-		"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!' || '%' ESCAPE '!'" => true,
-		"SELECT 'a%' LIKE 'a!%' ESCAPE '$', 'a%' LIKE 'a!' || '%' ESCAPE '$'" => true,
-		"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '$', 'a%' NOT LIKE 'a!' || '%' ESCAPE '$'" => true,
-		'ALTER SCHEMA s1 READ ONLY DEFAULT'                => true,
-	);
-
-	/**
 	 * @var WP_Parser_Grammar
 	 */
 	private static $grammar;
 
+	/**
+	 * Some of the queries in the test suite are known to fail parsing.
+	 * We'll skip them in the tests now, gradually fixing these cases.
+	 *
+	 * @var array<string,true>
+	 */
+	private static $known_failures;
+
 	public static function setUpBeforeClass(): void {
-		self::$grammar = new WP_Parser_Grammar( include self::GRAMMAR_PATH );
+		self::$grammar        = new WP_Parser_Grammar( include self::GRAMMAR_PATH );
+		self::$known_failures = include __DIR__ . '/data/mysql-server-tests-known-parser-failures.php';
 	}
 
 	/**
@@ -54,7 +47,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			$parser = new WP_MySQL_Parser( self::$grammar, $tokens );
 			$ast    = $parser->parse();
 
-			if ( self::KNOWN_FAILURES[ $query ] ?? false ) {
+			if ( self::$known_failures[ $query ] ?? false ) {
 				if ( null !== $ast ) {
 					$this->assertNull( $ast, "Parsing succeeded, but was expected to fail for query: $query" );
 				}
