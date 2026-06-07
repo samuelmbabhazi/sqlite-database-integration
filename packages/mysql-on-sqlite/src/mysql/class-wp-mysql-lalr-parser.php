@@ -29,12 +29,14 @@ class WP_MySQL_LALR_Parser {
 	private $a_len;
 	private $conflicts;   // conflict index => list of action codes
 
-	// GOTO comb vector.
+	// GOTO comb vector (per-column default + sparse exceptions).
 	private $g_col;       // nonterminal id => dense column
-	private $g_row;       // state => row id (or -1)
+	private $g_default;   // column => default target state
+	private $g_row;       // state => exception row id (or -1)
 	private $g_base;
 	private $g_check;
 	private $g_value;
+	private $g_len;
 
 	// Productions.
 	private $plhs;
@@ -83,10 +85,12 @@ class WP_MySQL_LALR_Parser {
 			$this->conflicts[] = $list;
 		}
 		$this->g_col     = array_flip( $dec( $table['g_col'] ) );
+		$this->g_default = $dec( $table['g_default'] );
 		$this->g_row     = $dec( $table['g_row'] );
 		$this->g_base    = $dec( $table['g_base'] );
 		$this->g_check   = $dec( $table['g_check'] );
 		$this->g_value   = $dec( $table['g_value'] );
+		$this->g_len     = count( $this->g_check );
 		$this->plhs      = $dec( $table['plhs'] );
 		$this->plen      = $dec( $table['plen'] );
 		$this->pnameidx  = $dec( $table['pnameidx'] );
@@ -230,9 +234,18 @@ class WP_MySQL_LALR_Parser {
 			$nstack[] = $node;
 		}
 
-		// GOTO on the production's lhs from the new stack top.
-		$top      = $sstack[ count( $sstack ) - 1 ];
-		$gid      = $this->g_row[ $top ];
-		$sstack[] = $this->g_value[ $this->g_base[ $gid ] + $this->g_col[ $this->plhs[ $p ] ] ];
+		// GOTO on the production's lhs from the new stack top: a sparse exception
+		// in the comb vector, otherwise the per-column default.
+		$top = $sstack[ count( $sstack ) - 1 ];
+		$col = $this->g_col[ $this->plhs[ $p ] ];
+		$gid = $this->g_row[ $top ];
+		if ( $gid >= 0 ) {
+			$idx = $this->g_base[ $gid ] + $col;
+			if ( $idx >= 0 && $idx < $this->g_len && $this->g_check[ $idx ] === $gid ) {
+				$sstack[] = $this->g_value[ $idx ];
+				return;
+			}
+		}
+		$sstack[] = $this->g_default[ $col ];
 	}
 }

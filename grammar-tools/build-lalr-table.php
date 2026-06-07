@@ -920,20 +920,46 @@ for ( $st = 0; $st < $NS; $st++ ) {
 	$a_default[ $st ] = $def;
 }
 
-// Row sharing for GOTO.
-$g_row  = array_fill( 0, $NS, -1 );
-$grow_key = array();
-$g_rows = array();
+// GOTO: per-nonterminal (column) default + row sharing of the exceptions.
+// Most states GOTO the same target for a given nonterminal, so store that
+// default once per column and keep only the exceptions in the comb vector.
+$g_by_col = array();   // nonterminal id => [state => target]
 for ( $st = 0; $st < $NS; $st++ ) {
-	$row = $GOTO_T[ $st ] ?? array();
-	if ( ! $row ) {
+	foreach ( $GOTO_T[ $st ] ?? array() as $nt => $tgt ) {
+		$g_by_col[ $nt ][ $st ] = $tgt;
+	}
+}
+$g_col     = array();   // nonterminal id => dense column (every goto-able nt)
+$g_default = array();   // column => most common target
+foreach ( $g_by_col as $nt => $m ) {
+	$col            = count( $g_col );
+	$g_col[ $nt ]   = $col;
+	$freq           = array();
+	foreach ( $m as $tgt ) {
+		$freq[ $tgt ] = ( $freq[ $tgt ] ?? 0 ) + 1;
+	}
+	arsort( $freq );
+	$g_default[ $col ] = array_key_first( $freq );
+}
+
+$g_row    = array_fill( 0, $NS, -1 );
+$grow_key = array();
+$g_rows   = array();
+for ( $st = 0; $st < $NS; $st++ ) {
+	$ex = array();
+	foreach ( $GOTO_T[ $st ] ?? array() as $nt => $tgt ) {
+		if ( $tgt !== $g_default[ $g_col[ $nt ] ] ) {
+			$ex[ $nt ] = $tgt;
+		}
+	}
+	if ( ! $ex ) {
 		continue;
 	}
-	ksort( $row );
-	$key = implode( ';', array_map( fn( $n, $t ) => "$n:$t", array_keys( $row ), $row ) );
+	ksort( $ex );
+	$key = implode( ';', array_map( fn( $n, $t ) => "$n:$t", array_keys( $ex ), $ex ) );
 	if ( ! isset( $grow_key[ $key ] ) ) {
 		$grow_key[ $key ] = count( $g_rows );
-		$g_rows[]         = $row;
+		$g_rows[]         = $ex;
 	}
 	$g_row[ $st ] = $grow_key[ $key ];
 }
@@ -951,7 +977,7 @@ $dense_cols = function ( array $rows ) {
 	return $col;
 };
 $a_col = $dense_cols( $a_rows );
-$g_col = $dense_cols( $g_rows );
+// $g_col is built together with the per-column GOTO defaults above.
 
 // Displacement packing (comb vector): place every row's (col => value) into a
 // single value[] array so row r's entry for column c lives at base[r]+c, with
@@ -1062,6 +1088,7 @@ $table = array(
 	'a_value'  => $enc_ints( $a_value ),
 	'conflicts' => $enc_ints( $conflict_stream ),
 	'g_col'    => $enc_ints( array_keys( $g_col ) ),
+	'g_default' => $enc_ints( $g_default ),
 	'g_row'    => $enc_ints( $g_row ),
 	'g_base'   => $enc_ints( $g_base ),
 	'g_check'  => $enc_ints( $g_check ),
