@@ -3,34 +3,46 @@
 /**
  * Experimental LALR(1) shift-reduce parser for the MySQL grammar.
  *
- * This is a table-driven bottom-up parser that consumes the ACTION/GOTO tables
- * produced by grammar-tools/build-lalr-table.php. It is an experiment to compare
- * a bottom-up parser against the backtracking LL parser in WP_Parser.
+ * Table-driven bottom-up parser consuming the comb-vector (displacement-packed)
+ * ACTION/GOTO tables produced by grammar-tools/build-lalr-table.php. It is an
+ * experiment to compare a bottom-up parser against the backtracking LL parser
+ * in WP_Parser.
  *
- * The MySQL grammar is not LALR(1): a number of decisions (e.g. INSERT ...
- * VALUES vs. a VALUES table-value-constructor) need more than one token of
- * lookahead. The generator therefore keeps every candidate action in a cell;
- * deterministic cells hold a single integer action, while conflicted cells hold
- * a preference-ordered list. This parser follows the deterministic fast path and
- * only forks (GLR/Tomita-style, here as bounded depth-first backtracking) at
- * conflicted cells, which guarantees full grammar coverage.
+ * Action codes (int): 0 = error; 1..NS-1 = shift to that state; NS = accept;
+ * > NS = conflict (index code-NS-1 into the conflicts table); < 0 = reduce by
+ * production -code.
  *
- * Action encoding: > 0 shift to that state; < 0 reduce by production (-id);
- * 0 accept. A cell that is an array lists alternative actions in preference
- * order.
- *
- * The produced AST mirrors WP_Parser_Node: intermediate "%" fragment rules are
- * inlined into their parent, so only original grammar rules appear as nodes.
+ * The grammar is not LALR(1) (e.g. INSERT ... VALUES vs a VALUES table-value-
+ * constructor needs two tokens of lookahead), so conflicted cells keep all
+ * candidate actions and the parser forks GLR-style, with failed-configuration
+ * memoization to keep the backtracking tractable. It builds a WP_Parser_Node
+ * AST with fragment inlining.
  */
 class WP_MySQL_LALR_Parser {
-	/** @var array<int,array<int,int|int[]>> state => token id => action or action list */
-	private $action;
-	/** @var array<int,array<int,int>> state => nonterminal id => goto state */
-	private $goto;
+	// ACTION comb vector.
+	private $a_col;       // token id => dense column
+	private $a_row;       // state => row id
+	private $a_default;   // state => default reduce code (<=0)
+	private $a_base;      // row id => displacement base
+	private $a_check;     // slot => owning row id (or -1)
+	private $a_value;     // slot => action code
+	private $a_len;
+	private $conflicts;   // conflict index => list of action codes
+
+	// GOTO comb vector.
+	private $g_col;       // nonterminal id => dense column
+	private $g_row;       // state => row id (or -1)
+	private $g_base;
+	private $g_check;
+	private $g_value;
+
+	// Productions.
 	private $plhs;
 	private $plen;
-	private $pname;
-	private $pfrag;
+	private $pnameidx;
+	private $names;
+
+	private $ns;
 	private $start;
 	private $dollar;
 
@@ -38,45 +50,46 @@ class WP_MySQL_LALR_Parser {
 	private $budget = 2000000;
 	private $steps  = 0;
 
-	/**
-	 * When true, accept the longest input prefix that forms a complete query
-	 * (like the LL parser's single parse(), and the MySQL "next statement"
-	 * semantics), instead of requiring the whole token stream to be consumed.
-	 */
+	/** Accept the longest leading statement instead of requiring full consumption. */
 	private $prefix_mode = false;
 
-	/**
-	 * Memoizes parser configurations (state stack + input position) already
-	 * proven to fail, so different fork orderings that reach the same
-	 * configuration are not re-explored. This shares work the way a
-	 * graph-structured stack would, turning the backtracking GLR fallback from
-	 * exponential into tractable on highly ambiguous queries.
-	 *
-	 * @var array<string,true>
-	 */
+	/** Memoizes failed (state stack, position) configurations across forks. */
 	private $fail_memo = array();
 
 	public function __construct( array $table ) {
-		$this->action = $table['action'];
-		$this->goto   = $table['goto'];
-		$this->plhs   = $table['plhs'];
-		$this->plen   = $table['plen'];
-		$this->pname  = $table['pname'];
-		$this->pfrag  = $table['pfrag'];
-		$this->start  = $table['start'];
-		$this->dollar = $table['dollar'];
+		$dec = function ( $s ) {
+			return '' === $s ? array() : array_values( unpack( 'l*', gzinflate( base64_decode( $s ) ) ) );
+		};
+		$this->ns        = $table['ns'];
+		$this->start     = $table['start'];
+		$this->dollar    = $table['dollar'];
+		$this->a_col     = $table['a_col'];
+		$this->a_row     = $dec( $table['a_row'] );
+		$this->a_default = $dec( $table['a_default'] );
+		$this->a_base    = $dec( $table['a_base'] );
+		$this->a_check   = $dec( $table['a_check'] );
+		$this->a_value   = $dec( $table['a_value'] );
+		$this->a_len     = count( $this->a_check );
+		$this->conflicts = $table['conflicts'];
+		$this->g_col     = $table['g_col'];
+		$this->g_row     = $dec( $table['g_row'] );
+		$this->g_base    = $dec( $table['g_base'] );
+		$this->g_check   = $dec( $table['g_check'] );
+		$this->g_value   = $dec( $table['g_value'] );
+		$this->plhs      = $dec( $table['plhs'] );
+		$this->plen      = $dec( $table['plen'] );
+		$this->pnameidx  = $dec( $table['pnameidx'] );
+		$this->names     = $table['names'];
 	}
 
-	/**
-	 * Parse a token stream into an AST.
-	 *
-	 * @param array<WP_Parser_Token> $tokens Tokens from the lexer (ending with EOF).
-	 * @return WP_Parser_Node|null The AST, or null on a syntax error.
-	 */
 	public function set_prefix_mode( bool $on ): void {
 		$this->prefix_mode = $on;
 	}
 
+	/**
+	 * @param array<WP_Parser_Token> $tokens Tokens from the lexer (ending with EOF).
+	 * @return WP_Parser_Node|null The AST, or null on a syntax error.
+	 */
 	public function parse( array $tokens ) {
 		$this->steps     = 0;
 		$this->fail_memo = array();
@@ -84,14 +97,19 @@ class WP_MySQL_LALR_Parser {
 		return false === $res ? null : $res;
 	}
 
+	/** Look up the action code for (state, token), honouring the per-state default. */
+	private function action( $state, $token ) {
+		if ( isset( $this->a_col[ $token ] ) ) {
+			$rid = $this->a_row[ $state ];
+			$idx = $this->a_base[ $rid ] + $this->a_col[ $token ];
+			if ( $idx >= 0 && $idx < $this->a_len && $this->a_check[ $idx ] === $rid ) {
+				return $this->a_value[ $idx ];
+			}
+		}
+		return $this->a_default[ $state ];
+	}
+
 	/**
-	 * Drive the automaton from a given configuration. Runs deterministically
-	 * until a conflicted cell is reached, then tries each candidate in order,
-	 * recursing on copies of the stacks.
-	 *
-	 * The failure sentinel is `false`; a successful parse returns a
-	 * WP_Parser_Node.
-	 *
 	 * @return WP_Parser_Node|false Node on accept, false on syntax error.
 	 */
 	private function run( array $sstack, array $nstack, $i, array $tokens, $n ) {
@@ -101,78 +119,70 @@ class WP_MySQL_LALR_Parser {
 			}
 			$state = $sstack[ count( $sstack ) - 1 ];
 			$la    = $i < $n ? $tokens[ $i ]->id : $this->dollar;
-			$cell  = $this->action[ $state ][ $la ] ?? null;
-			if ( null === $cell ) {
-				// Prefix mode: treat the current position as end-of-input and try
-				// to complete a query, ignoring any trailing tokens (matches the
-				// LL parser's single-statement parse() and "next statement").
+			$code  = $this->action( $state, $la );
+
+			if ( 0 === $code ) {
+				// Prefix mode: treat the current position as end-of-input.
 				if ( $this->prefix_mode && $i < $n ) {
 					$i    = $n;
-					$la   = $this->dollar;
-					$cell = $this->action[ $state ][ $la ] ?? null;
+					$code = $this->action( $state, $this->dollar );
 				}
-				if ( null === $cell ) {
-					return false;   // syntax error
+				if ( 0 === $code ) {
+					return false;
 				}
 			}
 
-			if ( is_array( $cell ) ) {
-				// Conflicted cell: try each candidate on a copy of the stacks.
-				// Memoize failed configurations to avoid re-exploring the same
-				// (state stack, position) reached via a different fork ordering.
-				$key = implode( ',', $sstack ) . '#' . $i;
-				if ( isset( $this->fail_memo[ $key ] ) ) {
+			if ( $code > $this->ns ) {
+				// Conflicted cell: try each candidate; memoize failed configurations.
+				$mkey = implode( ',', $sstack ) . '#' . $i;
+				if ( isset( $this->fail_memo[ $mkey ] ) ) {
 					return false;
 				}
-				foreach ( $cell as $act ) {
-					$res = $this->apply( $act, $sstack, $nstack, $i, $tokens, $n );
+				foreach ( $this->conflicts[ $code - $this->ns - 1 ] as $c ) {
+					$res = $this->apply( $c, $sstack, $nstack, $i, $tokens, $n );
 					if ( false !== $res ) {
 						return $res;
 					}
 				}
 				if ( count( $this->fail_memo ) < 2000000 ) {
-					$this->fail_memo[ $key ] = true;
+					$this->fail_memo[ $mkey ] = true;
 				}
 				return false;
 			}
 
-			// Deterministic cell.
-			if ( $cell > 0 ) {
-				$nstack[] = $tokens[ $i ];
-				$sstack[] = $cell;
-				++$i;
-				continue;
+			if ( $code > 0 ) {
+				if ( $code < $this->ns ) {
+					$nstack[] = $tokens[ $i ];   // shift
+					$sstack[] = $code;
+					++$i;
+					continue;
+				}
+				return $nstack ? $nstack[ count( $nstack ) - 1 ] : false;   // accept
 			}
-			if ( 0 === $cell ) {
-				return $nstack ? $nstack[ count( $nstack ) - 1 ] : false;
-			}
-			$this->reduce( -$cell, $sstack, $nstack );
+
+			$this->reduce( -$code, $sstack, $nstack );
 		}
 	}
 
 	/**
-	 * Apply a single action to (copies of) the stacks, then continue parsing.
-	 * Stacks are passed by value, so each branch explores an isolated copy.
+	 * Apply a single (non-conflict) action to copies of the stacks, then continue.
 	 *
 	 * @return WP_Parser_Node|false
 	 */
-	private function apply( $act, array $sstack, array $nstack, $i, array $tokens, $n ) {
-		if ( $act > 0 ) {
-			$nstack[] = $tokens[ $i ];
-			$sstack[] = $act;
-			return $this->run( $sstack, $nstack, $i + 1, $tokens, $n );
+	private function apply( $code, array $sstack, array $nstack, $i, array $tokens, $n ) {
+		if ( $code > 0 ) {
+			if ( $code < $this->ns ) {
+				$nstack[] = $tokens[ $i ];
+				$sstack[] = $code;
+				return $this->run( $sstack, $nstack, $i + 1, $tokens, $n );
+			}
+			return $nstack ? $nstack[ count( $nstack ) - 1 ] : false;   // accept
 		}
-		if ( 0 === $act ) {
-			return $nstack ? $nstack[ count( $nstack ) - 1 ] : false;
-		}
-		$this->reduce( -$act, $sstack, $nstack );
+		$this->reduce( -$code, $sstack, $nstack );
 		return $this->run( $sstack, $nstack, $i, $tokens, $n );
 	}
 
-	/**
-	 * Perform a reduction by production $p, building the AST node and pushing the
-	 * GOTO state.
-	 */
+	/** Reduce by production $p, building the AST node and pushing the GOTO state. */
 	private function reduce( $p, array &$sstack, array &$nstack ) {
 		$len = $this->plen[ $p ];
 		if ( $len > 0 ) {
@@ -182,7 +192,8 @@ class WP_MySQL_LALR_Parser {
 			$children = array();
 		}
 
-		if ( $this->pfrag[ $p ] ) {
+		$name = $this->names[ $this->pnameidx[ $p ] ];
+		if ( '%' === $name[0] ) {
 			$payload = array();
 			foreach ( $children as $c ) {
 				if ( is_array( $c ) ) {
@@ -195,7 +206,7 @@ class WP_MySQL_LALR_Parser {
 			}
 			$nstack[] = $payload;
 		} else {
-			$node = new WP_Parser_Node( $this->plhs[ $p ], $this->pname[ $p ] );
+			$node = new WP_Parser_Node( $this->plhs[ $p ], $name );
 			foreach ( $children as $c ) {
 				if ( is_array( $c ) ) {
 					foreach ( $c as $cc ) {
@@ -208,6 +219,9 @@ class WP_MySQL_LALR_Parser {
 			$nstack[] = $node;
 		}
 
-		$sstack[] = $this->goto[ $sstack[ count( $sstack ) - 1 ] ][ $this->plhs[ $p ] ];
+		// GOTO on the production's lhs from the new stack top.
+		$top      = $sstack[ count( $sstack ) - 1 ];
+		$gid      = $this->g_row[ $top ];
+		$sstack[] = $this->g_value[ $this->g_base[ $gid ] + $this->g_col[ $this->plhs[ $p ] ] ];
 	}
 }

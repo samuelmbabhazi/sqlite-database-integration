@@ -838,70 +838,228 @@ if ( 'lalr' === $STAGE ) {
 }
 
 /* ---------------------------------------------------------------------------
- * 6. Serialize the parsing tables to a compressed PHP file.
+ * 6. Serialize the parsing tables in a compact comb-vector (displacement)
+ *    layout: default-reduction + row sharing + displacement packing.
  *
- * Action encoding (int): > 0 shift to that state; < 0 reduce by production
- * (-prod_id); 0 accept.
+ * Action codes (int): 0 = error; 1..NS-1 = shift to that state; NS = accept;
+ * > NS = conflict (index NS+1+k into the conflicts table); < 0 = reduce -code.
  * ------------------------------------------------------------------------- */
-$encode_act = function ( $act ) {
+$NS = $num_states;
+$encode_act = function ( $act ) use ( $NS ) {
 	if ( 's' === $act[0] ) {
-		return $act[1];        // shift -> state (>0)
+		if ( $act[1] < 1 || $act[1] >= $NS ) {
+			throw new Exception( 'unexpected shift target ' . $act[1] );
+		}
+		return $act[1];        // shift -> state (1..NS-1)
 	}
 	if ( 'r' === $act[0] ) {
 		return -$act[1];       // reduce -> -prod_id (<0)
 	}
-	return 0;                  // accept
+	return $NS;                // accept
 };
-$action_out   = array();
+
+// Encode each state's row to integer action codes; dedupe conflict action lists.
+$conflicts     = array();   // index => list of codes
+$conflict_key  = array();   // serialized list => index
 $conflict_cells = 0;
+$code_rows     = array();   // state => [token => code]
 foreach ( $ACTION as $st => $row ) {
-	if ( ! $row ) {
-		continue;
-	}
-	$enc = array();
+	$cr = array();
 	foreach ( $row as $tok => $acts ) {
 		if ( 1 === count( $acts ) ) {
-			$enc[ $tok ] = $encode_act( $acts[0] );        // deterministic: int
+			$cr[ $tok ] = $encode_act( $acts[0] );
 		} else {
-			$enc[ $tok ] = array_map( $encode_act, $acts ); // conflict: list of ints
+			$codes = array_map( $encode_act, $acts );
+			$key   = implode( ',', $codes );
+			if ( ! isset( $conflict_key[ $key ] ) ) {
+				$conflict_key[ $key ] = count( $conflicts );
+				$conflicts[]          = $codes;
+			}
+			$cr[ $tok ] = $NS + 1 + $conflict_key[ $key ];
 			++$conflict_cells;
 		}
 	}
-	$action_out[ $st ] = $enc;
+	$code_rows[ $st ] = $cr;
 }
 
-$goto_out = array();
-foreach ( $GOTO_T as $st => $row ) {
-	if ( $row ) {
-		$goto_out[ $st ] = $row;
+// Default-reduction + row sharing for ACTION.
+$a_default = array_fill( 0, $NS, 0 );
+$a_row     = array_fill( 0, $NS, 0 );
+$row_key   = array();
+$a_rows    = array();   // rowid => [token => code]
+for ( $st = 0; $st < $NS; $st++ ) {
+	$cr = $code_rows[ $st ] ?? array();
+	// pick the most frequent reduce (negative code) appearing >1 as the default.
+	$freq = array();
+	foreach ( $cr as $code ) {
+		if ( $code < 0 ) {
+			$freq[ $code ] = ( $freq[ $code ] ?? 0 ) + 1;
+		}
 	}
+	$def = 0;
+	if ( $freq ) {
+		arsort( $freq );
+		$top = array_key_first( $freq );
+		if ( $freq[ $top ] > 1 ) {
+			$def = $top;
+		}
+	}
+	$entries = array();
+	foreach ( $cr as $tok => $code ) {
+		if ( $code !== $def ) {
+			$entries[ $tok ] = $code;
+		}
+	}
+	ksort( $entries );
+	$key = implode( ';', array_map( fn( $t, $c ) => "$t:$c", array_keys( $entries ), $entries ) );
+	if ( ! isset( $row_key[ $key ] ) ) {
+		$row_key[ $key ] = count( $a_rows );
+		$a_rows[]        = $entries;
+	}
+	$a_row[ $st ]     = $row_key[ $key ];
+	$a_default[ $st ] = $def;
 }
 
-// Production metadata for reductions / AST building.
-$plhs  = array();
-$plen  = array();
-$pname = array();
-$pfrag = array();
-foreach ( $prods as $pi => $p ) {
-	$lhs        = $p[0];
-	$name       = $rule_names[ $lhs - $OFFSET ];
-	$plhs[ $pi ]  = $lhs;
-	$plen[ $pi ]  = count( $p[1] );
-	$pname[ $pi ] = $name;
-	$pfrag[ $pi ] = ( '%' === $name[0] ) ? 1 : 0;
+// Row sharing for GOTO.
+$g_row  = array_fill( 0, $NS, -1 );
+$grow_key = array();
+$g_rows = array();
+for ( $st = 0; $st < $NS; $st++ ) {
+	$row = $GOTO_T[ $st ] ?? array();
+	if ( ! $row ) {
+		continue;
+	}
+	ksort( $row );
+	$key = implode( ';', array_map( fn( $n, $t ) => "$n:$t", array_keys( $row ), $row ) );
+	if ( ! isset( $grow_key[ $key ] ) ) {
+		$grow_key[ $key ] = count( $g_rows );
+		$g_rows[]         = $row;
+	}
+	$g_row[ $st ] = $grow_key[ $key ];
 }
+
+// Map symbol ids (tokens / nonterminals) to dense column indices.
+$dense_cols = function ( array $rows ) {
+	$col = array();
+	foreach ( $rows as $r ) {
+		foreach ( $r as $sym => $_ ) {
+			if ( ! isset( $col[ $sym ] ) ) {
+				$col[ $sym ] = count( $col );
+			}
+		}
+	}
+	return $col;
+};
+$a_col = $dense_cols( $a_rows );
+$g_col = $dense_cols( $g_rows );
+
+// Displacement packing (comb vector): place every row's (col => value) into a
+// single value[] array so row r's entry for column c lives at base[r]+c, with
+// check[base[r]+c] === r distinguishing real entries from overlapped neighbours.
+$comb_pack = function ( array $rows, array $col_map ) {
+	$base  = array_fill( 0, count( $rows ), 0 );
+	$check = array();   // sparse during packing
+	$value = array();
+	$len   = 0;
+	$first_free = 0;
+	// Pack densest rows first to reduce fragmentation.
+	$order = array_keys( $rows );
+	usort( $order, fn( $a, $b ) => count( $rows[ $b ] ) <=> count( $rows[ $a ] ) );
+	foreach ( $order as $rid ) {
+		$cells = array();
+		foreach ( $rows[ $rid ] as $sym => $val ) {
+			$cells[ $col_map[ $sym ] ] = $val;
+		}
+		if ( ! $cells ) {
+			continue;
+		}
+		$min_col = min( array_keys( $cells ) );
+		$b       = max( 0, $first_free - $min_col );
+		while ( true ) {
+			$ok = true;
+			foreach ( $cells as $c => $_ ) {
+				if ( isset( $check[ $b + $c ] ) ) {
+					$ok = false;
+					break;
+				}
+			}
+			if ( $ok ) {
+				break;
+			}
+			++$b;
+		}
+		foreach ( $cells as $c => $val ) {
+			$idx           = $b + $c;
+			$value[ $idx ] = $val;
+			$check[ $idx ] = $rid;
+			if ( $idx + 1 > $len ) {
+				$len = $idx + 1;
+			}
+		}
+		$base[ $rid ] = $b;
+		while ( isset( $check[ $first_free ] ) ) {
+			++$first_free;
+		}
+	}
+	$C = array_fill( 0, $len, -1 );
+	$V = array_fill( 0, $len, 0 );
+	foreach ( $check as $i => $r ) {
+		$C[ $i ] = $r;
+		$V[ $i ] = $value[ $i ];
+	}
+	return array( $base, $C, $V );
+};
+
+list( $a_base, $a_check, $a_value ) = $comb_pack( $a_rows, $a_col );
+list( $g_base, $g_check, $g_value ) = $comb_pack( $g_rows, $g_col );
+
+// Production metadata: dedupe rule names, store an index per production.
+$name_idx  = array();
+$names     = array();
+$pnameidx  = array();
+$plhs      = array();
+$plen      = array();
+foreach ( $prods as $pi => $p ) {
+	$nm = $rule_names[ $p[0] - $OFFSET ];
+	if ( ! isset( $name_idx[ $nm ] ) ) {
+		$name_idx[ $nm ] = count( $names );
+		$names[]         = $nm;
+	}
+	$pnameidx[ $pi ] = $name_idx[ $nm ];
+	$plhs[ $pi ]     = $p[0];
+	$plen[ $pi ]     = count( $p[1] );
+}
+
+// Big integer arrays are stored as base64(gzdeflate(pack 'l*')): compact on disk
+// and decoded once into memory-efficient packed PHP arrays at load time.
+$enc_ints = function ( array $a ) {
+	$bin = '';
+	foreach ( array_chunk( $a, 2000 ) as $chunk ) {
+		$bin .= pack( 'l*', ...$chunk );
+	}
+	return base64_encode( gzdeflate( $bin, 9 ) );
+};
 
 $table = array(
-	'start'  => $s0,
-	'accept' => 0,           // production id of START -> query
-	'dollar' => $DOLLAR,
-	'eof'    => $EOF,
-	'action' => $action_out,
-	'goto'   => $goto_out,
-	'plhs'   => $plhs,
-	'plen'   => $plen,
-	'pname'  => $pname,
-	'pfrag'  => $pfrag,
+	'start'    => $s0,
+	'dollar'   => $DOLLAR,
+	'ns'       => $NS,
+	'a_col'    => $a_col,
+	'a_row'    => $enc_ints( $a_row ),
+	'a_default' => $enc_ints( $a_default ),
+	'a_base'   => $enc_ints( $a_base ),
+	'a_check'  => $enc_ints( $a_check ),
+	'a_value'  => $enc_ints( $a_value ),
+	'conflicts' => $conflicts,
+	'g_col'    => $g_col,
+	'g_row'    => $enc_ints( $g_row ),
+	'g_base'   => $enc_ints( $g_base ),
+	'g_check'  => $enc_ints( $g_check ),
+	'g_value'  => $enc_ints( $g_value ),
+	'plhs'     => $enc_ints( $plhs ),
+	'plen'     => $enc_ints( $plen ),
+	'pnameidx' => $enc_ints( $pnameidx ),
+	'names'    => $names,
 );
 
 $out_file = $ROOT . '/packages/mysql-on-sqlite/src/mysql/mysql-lalr-table.php';
@@ -910,4 +1068,5 @@ file_put_contents( $out_file, $php );
 
 $bytes = filesize( $out_file );
 logln( 'Wrote ' . $out_file . ' (' . round( $bytes / 1024 ) . ' KB).' );
-fwrite( STDERR, "\nTable summary: states=$num_states productions=$num_prods action_rows=" . count( $action_out ) . " goto_rows=" . count( $goto_out ) . " conflict_cells=$conflict_cells\n" );
+fwrite( STDERR, "\nTable summary: states=$num_states productions=$num_prods action_rows=" . count( $a_rows ) . " goto_rows=" . count( $g_rows ) . " conflict_lists=" . count( $conflicts ) . " conflict_cells=$conflict_cells\n" );
+fwrite( STDERR, "Comb arrays: a_value=" . count( $a_value ) . " a_cols=" . count( $a_col ) . " g_value=" . count( $g_value ) . " g_cols=" . count( $g_col ) . "\n" );
