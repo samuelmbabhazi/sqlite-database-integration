@@ -444,6 +444,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $connection;
 
 	/**
+	 * Native SQLite connection used for direct hot-path execution.
+	 *
+	 * @var object|null
+	 */
+	private $native_sqlite_connection;
+
+	/**
 	 * User-defined functions registered on the SQLite connection.
 	 *
 	 * @var WP_SQLite_PDO_User_Defined_Functions
@@ -472,9 +479,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $last_sqlite_queries = array();
 
 	/**
-	 * A PDO SQLite statement that represents the result of the last emulated query.
+	 * A statement that represents the result of the last emulated query.
 	 *
-	 * @var PDOStatement|null
+	 * @var object|null
 	 */
 	private $last_result_statement;
 
@@ -873,7 +880,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		try {
 			if (
-				$this->execute_native_sqlite_plan( $query )
+				$this->execute_native_sqlite_plan( $query, $fetch_mode, $fetch_mode_args )
 				|| ( ! $this->has_native_sqlite_plan_translator() && $this->execute_fast_query( $query ) )
 			) {
 				$stmt = new WP_PDO_Proxy_Statement( $this->last_result_statement, $this->last_affected_rows );
@@ -1387,15 +1394,40 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Execute a compact SQLite plan returned by the native Rust extension.
 	 *
-	 * @param  string $query Full SQL statement string.
-	 * @return bool         Whether the query was handled.
+	 * @param  string $query           Full SQL statement string.
+	 * @param  int    $fetch_mode      PDO fetch mode.
+	 * @param  array  $fetch_mode_args Additional fetch mode arguments.
+	 * @return bool                    Whether the query was handled.
 	 */
-	private function execute_native_sqlite_plan( string $query ): bool {
+	private function execute_native_sqlite_plan( string $query, int $fetch_mode, array $fetch_mode_args ): bool {
 		if ( ! $this->has_native_sqlite_plan_translator() ) {
 			return false;
 		}
 
-		switch ( WP_MySQL_Native_Lexer::translate_sqlite_plan_code( $query ) ) {
+		$can_execute_directly = $this->can_execute_native_sqlite_directly( $fetch_mode, $fetch_mode_args );
+		$plan_code            = WP_MySQL_Native_Lexer::translate_sqlite_plan_code( $query );
+		if (
+			$can_execute_directly
+			&& (
+				2 === $plan_code
+				|| ( 0 === $plan_code && false !== stripos( $query, 'sql_calc_found_rows' ) )
+			)
+		) {
+			$stmt = $this->execute_native_mysql_plan( $query );
+			if ( $stmt ) {
+				$this->last_result_statement = $stmt;
+				$this->last_affected_rows    = $stmt->rowCount();
+				$native_found_rows           = method_exists( $stmt, 'foundRows' ) ? $stmt->foundRows() : -1;
+				if ( $native_found_rows >= 0 ) {
+					$this->found_rows  = $native_found_rows;
+					$this->is_readonly = true;
+					$this->store_last_column_meta_from_statement( $stmt );
+				}
+				return true;
+			}
+		}
+
+		switch ( $plan_code ) {
 			case 1:
 				$this->found_rows            = $query;
 				$stmt                        = $this->execute_sqlite_query( $query );
@@ -1469,6 +1501,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				} else {
 					$this->found_rows = $sqlite_query;
 				}
+
 				$stmt                        = $this->execute_sqlite_query( $sqlite_query );
 				$this->is_readonly           = true;
 				$this->last_result_statement = $stmt;
@@ -1483,6 +1516,91 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Translate and execute a hot-path MySQL query entirely in the native Rust SQLite path.
+	 *
+	 * @param  string $query MySQL query.
+	 * @return object|null Native statement, or null when native execution is unavailable.
+	 */
+	private function execute_native_mysql_plan( string $query ): ?object {
+		$connection = $this->get_native_sqlite_connection();
+		if ( ! $connection || ! method_exists( $connection, 'queryMysql' ) ) {
+			return null;
+		}
+
+		try {
+			$stmt = $connection->queryMysql( $query );
+		} catch ( Throwable $e ) {
+			return null;
+		}
+		if ( ! $stmt ) {
+			return null;
+		}
+
+		if ( method_exists( $stmt, 'sqliteQueries' ) ) {
+			foreach ( $stmt->sqliteQueries() as $sql ) {
+				$this->last_sqlite_queries[] = array(
+					'sql'    => $sql,
+					'params' => array(),
+				);
+			}
+		}
+
+		return $stmt;
+	}
+
+	/**
+	 * Get a native Rust SQLite connection for direct execution.
+	 *
+	 * @return object|null Native connection, or null when unsafe/unavailable.
+	 */
+	private function get_native_sqlite_connection(): ?object {
+		if (
+			$this->in_transaction
+			|| ! class_exists( 'WP_SQLite_Native_Connection', false )
+		) {
+			return null;
+		}
+
+		$path = $this->connection->get_path();
+		if ( ! is_string( $path ) || ':memory:' === $path ) {
+			return null;
+		}
+
+		if ( null === $this->native_sqlite_connection ) {
+			$this->native_sqlite_connection = new WP_SQLite_Native_Connection( $path );
+		}
+
+		return $this->native_sqlite_connection;
+	}
+
+	/**
+	 * Check whether direct native execution can preserve the requested fetch mode.
+	 *
+	 * @param  int   $fetch_mode      PDO fetch mode.
+	 * @param  array $fetch_mode_args Additional fetch mode arguments.
+	 * @return bool                   Whether direct native execution can be used.
+	 */
+	private function can_execute_native_sqlite_directly( int $fetch_mode, array $fetch_mode_args ): bool {
+		if ( count( $fetch_mode_args ) > 0 ) {
+			return false;
+		}
+
+		return in_array(
+			$fetch_mode,
+			array(
+				PDO::FETCH_DEFAULT,
+				PDO::FETCH_ASSOC,
+				PDO::FETCH_NUM,
+				PDO::FETCH_BOTH,
+				PDO::FETCH_OBJ,
+				PDO::FETCH_COLUMN,
+				PDO::FETCH_NAMED,
+			),
+			true
+		);
 	}
 
 	/**
@@ -6002,9 +6120,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * This function stores the original SQLite column metadata as-is, without
 	 * converting it into MySQL column metadata. That is done only when needed.
 	 *
-	 * @param PDOStatement $stmt The PDOStatement object containing the SQLite column metadata.
+	 * @param object $stmt The statement object containing the SQLite column metadata.
 	 */
-	private function store_last_column_meta_from_statement( PDOStatement $stmt ): void {
+	private function store_last_column_meta_from_statement( object $stmt ): void {
 		$this->last_column_meta = array();
 		for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
 			/*

@@ -41,6 +41,13 @@ class WP_SQLite_Connection {
 	private $pdo;
 
 	/**
+	 * SQLite database path, when known.
+	 *
+	 * @var string|null
+	 */
+	private $path;
+
+	/**
 	 * A query logger callback.
 	 *
 	 * @var callable(string, array): void
@@ -70,14 +77,15 @@ class WP_SQLite_Connection {
 	 */
 	public function __construct( array $options ) {
 		// Setup PDO connection.
+		$this->path = isset( $options['path'] ) && is_string( $options['path'] ) ? $options['path'] : null;
 		if ( isset( $options['pdo'] ) && $options['pdo'] instanceof PDO ) {
 			$this->pdo = $options['pdo'];
 		} else {
-			if ( ! isset( $options['path'] ) || ! is_string( $options['path'] ) ) {
+			if ( null === $this->path ) {
 				throw new InvalidArgumentException( 'Option "path" is required when "connection" is not provided.' );
 			}
 			$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
-			$this->pdo = new $pdo_class( 'sqlite:' . $options['path'] );
+			$this->pdo = new $pdo_class( 'sqlite:' . $this->path );
 		}
 
 		// Throw exceptions on error.
@@ -197,6 +205,15 @@ class WP_SQLite_Connection {
 	 */
 	public function get_pdo(): PDO {
 		return $this->pdo;
+	}
+
+	/**
+	 * Get the SQLite database path, when known.
+	 *
+	 * @return string|null SQLite database path.
+	 */
+	public function get_path(): ?string {
+		return $this->path;
 	}
 
 	/**

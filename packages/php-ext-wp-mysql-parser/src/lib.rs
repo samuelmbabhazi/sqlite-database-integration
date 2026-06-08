@@ -19,9 +19,11 @@ use ext_php_rs::{info_table_end, info_table_row, info_table_start};
 #[rustfmt::skip]
 mod compiled_packed_id_parser;
 mod lexer_constants;
+mod native_sqlite_connection;
 mod native_sqlite_translator;
 use lexer_constants as lex;
 use lexer_constants::register_lexer_constants;
+use native_sqlite_connection::{WpSqliteNativeConnection, WpSqliteNativeStatement};
 
 const SQL_MODE_HIGH_NOT_PRECEDENCE: i64 = 1;
 const SQL_MODE_PIPES_AS_CONCAT: i64 = 2;
@@ -3332,6 +3334,8 @@ pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
         .class::<WpMySqlNativeTokenStream>()
         .class::<WpMySqlNativeLexer>()
         .class::<WpMySqlNativeParser>()
+        .class::<WpSqliteNativeConnection>()
+        .class::<WpSqliteNativeStatement>()
         .function(wrap_function!(wp_sqlite_mysql_native_ast_release_wrapper))
         .function(wrap_function!(
             wp_sqlite_mysql_native_ast_materialize_wrapper

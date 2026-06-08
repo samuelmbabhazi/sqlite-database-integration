@@ -1,13 +1,13 @@
-const SELECT_PASSTHROUGH: &str = "select_passthrough";
-const UPDATE_PASSTHROUGH: &str = "update_passthrough";
+pub(crate) const SELECT_PASSTHROUGH: &str = "select_passthrough";
+pub(crate) const UPDATE_PASSTHROUGH: &str = "update_passthrough";
 const SELECT_FOUND_ROWS: &str = "select_found_rows";
 const SELECT_SESSION_SQL_MODE: &str = "select_session_sql_mode";
 const SET_SESSION_SQL_MODE: &str = "set_session_sql_mode";
 
 const PLAN_UNSUPPORTED: i64 = 0;
-const PLAN_SELECT_ORIGINAL: i64 = 1;
-const PLAN_UPDATE_ORIGINAL: i64 = 2;
-const PLAN_SELECT_FOUND_ROWS_CODE: i64 = 3;
+pub(crate) const PLAN_SELECT_ORIGINAL: i64 = 1;
+pub(crate) const PLAN_UPDATE_ORIGINAL: i64 = 2;
+pub(crate) const PLAN_SELECT_FOUND_ROWS_CODE: i64 = 3;
 
 const ALLOWED_TABLE_SUFFIXES: &[&str] = &[
     "actionscheduler_actions",
@@ -462,7 +462,7 @@ fn contains_cast_as_signed(lower: &str) -> bool {
         && (lower.contains(" as unsigned") || lower.contains(" as signed"))
 }
 
-fn contains_sql_calc_found_rows(sql: &str) -> bool {
+pub(crate) fn contains_sql_calc_found_rows(sql: &str) -> bool {
     const NEEDLE: &[u8] = b"sql_calc_found_rows";
     sql.as_bytes()
         .windows(NEEDLE.len())

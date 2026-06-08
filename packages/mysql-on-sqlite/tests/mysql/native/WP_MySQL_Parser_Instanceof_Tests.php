@@ -377,4 +377,57 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 			WP_MySQL_Native_Lexer::translate_sqlite_plan( 'SELECT CAST (meta_value AS UNSIGNED) FROM wp_postmeta' )
 		);
 	}
+
+	public function test_native_sqlite_connection_fetches_rows_from_file_database(): void {
+		if ( ! class_exists( 'WP_SQLite_Native_Connection', false ) ) {
+			$this->markTestSkipped( 'Native SQLite connection is not active.' );
+		}
+
+		$db_path = tempnam( sys_get_temp_dir(), 'wp-sqlite-native-' );
+		$this->assertIsString( $db_path );
+
+		try {
+			$pdo = new PDO( 'sqlite:' . $db_path );
+			$pdo->exec( 'CREATE TABLE wp_posts (ID INTEGER PRIMARY KEY, post_title TEXT)' );
+			$pdo->exec( "INSERT INTO wp_posts VALUES (1, 'Hello'), (2, 'World')" );
+
+			$connection = new WP_SQLite_Native_Connection( $db_path );
+			$stmt       = $connection->query( 'SELECT ID, post_title FROM wp_posts ORDER BY ID' );
+			$this->assertSame( 2, $stmt->columnCount() );
+			$this->assertSame(
+				array(
+					array(
+						'ID'         => '1',
+						'post_title' => 'Hello',
+					),
+					array(
+						'ID'         => '2',
+						'post_title' => 'World',
+					),
+				),
+				$stmt->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$mysql_stmt = $connection->queryMysql( 'SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts ORDER BY ID LIMIT 1' );
+			$this->assertNotNull( $mysql_stmt );
+			$this->assertSame( 2, $mysql_stmt->foundRows() );
+			$this->assertCount( 2, $mysql_stmt->sqliteQueries() );
+			$this->assertSame(
+				array(
+					array(
+						'ID' => '1',
+					),
+				),
+				$mysql_stmt->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$column_stmt = $connection->queryMysql( 'SELECT SQL_CALC_FOUND_ROWS ID, post_title FROM wp_posts ORDER BY ID LIMIT 1' );
+			$this->assertSame( array( 'Hello' ), $column_stmt->fetchAll( PDO::FETCH_COLUMN, 1 ) );
+
+			$update = $connection->executeStatement( "UPDATE wp_posts SET post_title = 'Changed' WHERE ID = 1" );
+			$this->assertSame( 1, $update->rowCount() );
+		} finally {
+			unlink( $db_path );
+		}
+	}
 }

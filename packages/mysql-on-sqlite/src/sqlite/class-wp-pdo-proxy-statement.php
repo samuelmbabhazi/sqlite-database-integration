@@ -114,7 +114,7 @@ class WP_PDO_Proxy_Statement extends PDOStatement {
 	/**
 	 * The original PDO statement.
 	 *
-	 * @var PDOStatement
+	 * @var object
 	 */
 	private $statement;
 
@@ -128,11 +128,11 @@ class WP_PDO_Proxy_Statement extends PDOStatement {
 	/**
 	 * Constructor.
 	 *
-	 * @param PDOStatement $statement     The original PDO statement.
-	 * @param int          $affected_rows The number of affected rows.
+	 * @param object $statement     The original statement.
+	 * @param int    $affected_rows The number of affected rows.
 	 */
 	public function __construct(
-		PDOStatement $statement,
+		object $statement,
 		?int $affected_rows = null
 	) {
 		$this->statement     = $statement;
