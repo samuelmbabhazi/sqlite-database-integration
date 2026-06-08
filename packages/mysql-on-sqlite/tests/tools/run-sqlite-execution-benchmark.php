@@ -156,7 +156,7 @@ function sqlite_execution_benchmark_packed_select_found_rows(
 			throw new RuntimeException( 'Unexpected native packed result shape.' );
 		}
 
-		$packed_rows = $result->packedRows();
+		$packed_rows = method_exists( $result, 'takePackedRows' ) ? $result->takePackedRows() : $result->packedRows();
 		return $result->checksum() + strlen( $packed_rows );
 	}
 

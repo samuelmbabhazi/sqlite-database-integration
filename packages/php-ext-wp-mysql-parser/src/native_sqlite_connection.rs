@@ -344,6 +344,12 @@ impl WpSqliteNativePackedResult {
             .map_err(php_error)
     }
 
+    pub fn take_packed_rows(&mut self) -> PhpResult<Zval> {
+        BinaryString(std::mem::take(&mut self.rows))
+            .into_zval(false)
+            .map_err(php_error)
+    }
+
     pub fn sqlite_queries(&self) -> Vec<String> {
         self.sqlite_queries.clone()
     }
@@ -497,7 +503,8 @@ fn append_packed_sqlite_value(value: ValueRef<'_>, output: &mut Vec<u8>, checksu
     match value {
         ValueRef::Null => append_packed_bytes(None, output, checksum),
         ValueRef::Integer(value) => {
-            append_packed_bytes(Some(value.to_string().as_bytes()), output, checksum)
+            let mut buffer = itoa::Buffer::new();
+            append_packed_bytes(Some(buffer.format(value).as_bytes()), output, checksum)
         }
         ValueRef::Real(value) => {
             append_packed_bytes(Some(value.to_string().as_bytes()), output, checksum)

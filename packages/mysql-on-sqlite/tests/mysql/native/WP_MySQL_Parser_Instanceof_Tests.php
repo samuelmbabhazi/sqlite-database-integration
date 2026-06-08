@@ -431,6 +431,8 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 			$this->assertSame( 2, $packed_result->columnCount() );
 			$this->assertSame( array( 'ID', 'post_title' ), $packed_result->columns() );
 			$this->assertSame( pack( 'V', 1 ) . '1' . pack( 'V', 5 ) . 'Hello', $packed_result->packedRows() );
+			$this->assertSame( pack( 'V', 1 ) . '1' . pack( 'V', 5 ) . 'Hello', $packed_result->takePackedRows() );
+			$this->assertSame( '', $packed_result->packedRows() );
 
 			$update = $connection->executeStatement( "UPDATE wp_posts SET post_title = 'Changed' WHERE ID = 1" );
 			$this->assertSame( 1, $update->rowCount() );

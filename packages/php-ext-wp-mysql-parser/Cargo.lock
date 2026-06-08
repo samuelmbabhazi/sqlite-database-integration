@@ -1692,6 +1692,7 @@ name = "wp_mysql_parser"
 version = "0.2.0"
 dependencies = [
  "ext-php-rs",
+ "itoa",
  "libc",
  "rusqlite",
  "stacker",

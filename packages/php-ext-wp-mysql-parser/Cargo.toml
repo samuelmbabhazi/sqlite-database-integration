@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ext-php-rs = { version = "0.15.12", default-features = false, features = ["runtime"] }
+itoa = "1"
 libc = "0.2"
 rusqlite = { version = "0.39", default-features = false }
 stacker = "0.1"
