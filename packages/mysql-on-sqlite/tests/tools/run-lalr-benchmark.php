@@ -10,6 +10,28 @@
  *   --show=N       Print the first N failing queries (to stderr).
  */
 
+// The table loads into ~13-18 MB and the GLR fallback can fork heavily on a few
+// queries (peak ~450 MB over the corpus), so give it room over PHP's conservative
+// 128M CLI default. Only raise (never lower) the limit, and leave -1 alone.
+$mem_limit = ini_get( 'memory_limit' );
+if ( '-1' !== $mem_limit ) {
+	$mem_bytes = (int) $mem_limit;
+	switch ( strtolower( substr( $mem_limit, -1 ) ) ) {
+		case 'g':
+			$mem_bytes *= 1024 * 1024 * 1024;
+			break;
+		case 'm':
+			$mem_bytes *= 1024 * 1024;
+			break;
+		case 'k':
+			$mem_bytes *= 1024;
+			break;
+	}
+	if ( $mem_bytes < 1024 * 1024 * 1024 ) {
+		ini_set( 'memory_limit', '1024M' );
+	}
+}
+
 set_error_handler(
 	function ( $severity, $message, $file, $line ) {
 		throw new ErrorException( $message, 0, $severity, $file, $line );

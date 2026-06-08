@@ -58,6 +58,9 @@ class WP_MySQL_LALR_Parser {
 	/** Memoizes failed (state stack, position) configurations across forks. */
 	private $fail_memo = array();
 
+	/** Cap on memoized configurations per query (bounds memory on heavy forking). */
+	const FAIL_MEMO_CAP = 200000;
+
 	public function __construct( array $table ) {
 		$dec = function ( $s ) {
 			return '' === $s ? array() : array_values( unpack( 'l*', gzinflate( base64_decode( $s ) ) ) );
@@ -159,7 +162,7 @@ class WP_MySQL_LALR_Parser {
 						return $res;
 					}
 				}
-				if ( count( $this->fail_memo ) < 2000000 ) {
+				if ( count( $this->fail_memo ) < self::FAIL_MEMO_CAP ) {
 					$this->fail_memo[ $mkey ] = true;
 				}
 				return false;
