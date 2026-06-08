@@ -23,7 +23,9 @@ mod native_sqlite_connection;
 mod native_sqlite_translator;
 use lexer_constants as lex;
 use lexer_constants::register_lexer_constants;
-use native_sqlite_connection::{WpSqliteNativeConnection, WpSqliteNativeStatement};
+use native_sqlite_connection::{
+    WpSqliteNativeConnection, WpSqliteNativePackedResult, WpSqliteNativeStatement,
+};
 
 const SQL_MODE_HIGH_NOT_PRECEDENCE: i64 = 1;
 const SQL_MODE_PIPES_AS_CONCAT: i64 = 2;
@@ -3335,6 +3337,7 @@ pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
         .class::<WpMySqlNativeLexer>()
         .class::<WpMySqlNativeParser>()
         .class::<WpSqliteNativeConnection>()
+        .class::<WpSqliteNativePackedResult>()
         .class::<WpSqliteNativeStatement>()
         .function(wrap_function!(wp_sqlite_mysql_native_ast_release_wrapper))
         .function(wrap_function!(

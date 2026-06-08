@@ -121,6 +121,53 @@ impl WpSqliteNativeConnection {
         }
     }
 
+    pub fn query_mysql_packed_rows(
+        &self,
+        sql: String,
+    ) -> PhpResult<Option<WpSqliteNativePackedResult>> {
+        match native_sqlite_translator::translate_sqlite_plan_code(sql.as_bytes()) {
+            native_sqlite_translator::PLAN_SELECT_ORIGINAL => {
+                return self
+                    .execute_packed_query_statement(sql.clone(), -1, vec![sql])
+                    .map(Some);
+            }
+            native_sqlite_translator::PLAN_SELECT_FOUND_ROWS_CODE
+            | native_sqlite_translator::PLAN_UPDATE_ORIGINAL => return Ok(None),
+            _ => {
+                if !native_sqlite_translator::contains_sql_calc_found_rows(&sql) {
+                    return Ok(None);
+                }
+            }
+        }
+
+        let Some(plan) = native_sqlite_translator::translate_sqlite_plan(sql.as_bytes()) else {
+            return Ok(None);
+        };
+
+        let Some(native_sqlite_translator::SELECT_PASSTHROUGH) = plan.first().map(String::as_str)
+        else {
+            return Ok(None);
+        };
+        let Some(sqlite_query) = plan.get(1) else {
+            return Ok(None);
+        };
+        let Some(count_source_query) = plan.get(2).filter(|query| !query.is_empty()) else {
+            return Ok(None);
+        };
+
+        let count_query = format!("SELECT COUNT(*) AS cnt FROM ({count_source_query})");
+        let found_rows = self
+            .connection
+            .query_row(&count_query, [], |row| row.get::<_, i64>(0))
+            .map_err(php_error)?;
+        self.execute_packed_query_statement(
+            sqlite_query.clone(),
+            found_rows,
+            vec![count_query, sqlite_query.clone()],
+        )
+        .map(Some)
+    }
+
     pub fn execute(&self, sql: String) -> PhpResult<i64> {
         let affected_rows = self.connection.execute(&sql, []).map_err(php_error)?;
         i64::try_from(affected_rows).map_err(php_error)
@@ -201,6 +248,45 @@ impl WpSqliteNativeConnection {
         })
     }
 
+    fn execute_packed_query_statement(
+        &self,
+        sql: String,
+        found_rows: i64,
+        sqlite_queries: Vec<String>,
+    ) -> PhpResult<WpSqliteNativePackedResult> {
+        let mut statement = self.connection.prepare(&sql).map_err(php_error)?;
+        let columns = statement
+            .column_names()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let column_count = columns.len();
+        let mut packed_rows = Vec::new();
+        let mut checksum = 0i64;
+        let mut row_count = 0i64;
+        let mut rows = statement.query([]).map_err(php_error)?;
+        while let Some(row) = rows.next().map_err(php_error)? {
+            row_count += 1;
+            for index in 0..column_count {
+                append_packed_sqlite_value(
+                    row.get_ref(index).map_err(php_error)?,
+                    &mut packed_rows,
+                    &mut checksum,
+                );
+            }
+        }
+
+        checksum += found_rows + row_count + i64::try_from(column_count).map_err(php_error)?;
+        Ok(WpSqliteNativePackedResult {
+            columns,
+            rows: packed_rows,
+            row_count,
+            found_rows,
+            checksum,
+            sqlite_queries,
+        })
+    }
+
     fn prepare_execute_statement(&self, sql: String) -> PhpResult<WpSqliteNativeStatement> {
         let affected_rows = self.execute(sql.clone())?;
         Ok(WpSqliteNativeStatement {
@@ -216,6 +302,50 @@ impl WpSqliteNativeConnection {
             found_rows: -1,
             sqlite_queries: vec![sql],
         })
+    }
+}
+
+#[php_class]
+#[php(name = "WP_SQLite_Native_Packed_Result")]
+pub struct WpSqliteNativePackedResult {
+    columns: Vec<String>,
+    rows: Vec<u8>,
+    row_count: i64,
+    found_rows: i64,
+    checksum: i64,
+    sqlite_queries: Vec<String>,
+}
+
+#[php_impl]
+impl WpSqliteNativePackedResult {
+    pub fn column_count(&self) -> usize {
+        self.columns.len()
+    }
+
+    pub fn columns(&self) -> Vec<String> {
+        self.columns.clone()
+    }
+
+    pub fn row_count(&self) -> i64 {
+        self.row_count
+    }
+
+    pub fn found_rows(&self) -> i64 {
+        self.found_rows
+    }
+
+    pub fn checksum(&self) -> i64 {
+        self.checksum
+    }
+
+    pub fn packed_rows(&self) -> PhpResult<Zval> {
+        BinaryString(self.rows.clone())
+            .into_zval(false)
+            .map_err(php_error)
+    }
+
+    pub fn sqlite_queries(&self) -> Vec<String> {
+        self.sqlite_queries.clone()
     }
 }
 
@@ -360,6 +490,37 @@ impl WpSqliteNativeStatement {
     pub fn set_fetch_mode(&mut self, mode: i64) -> bool {
         self.default_fetch_mode = mode;
         true
+    }
+}
+
+fn append_packed_sqlite_value(value: ValueRef<'_>, output: &mut Vec<u8>, checksum: &mut i64) {
+    match value {
+        ValueRef::Null => append_packed_bytes(None, output, checksum),
+        ValueRef::Integer(value) => {
+            append_packed_bytes(Some(value.to_string().as_bytes()), output, checksum)
+        }
+        ValueRef::Real(value) => {
+            append_packed_bytes(Some(value.to_string().as_bytes()), output, checksum)
+        }
+        ValueRef::Text(value) | ValueRef::Blob(value) => {
+            append_packed_bytes(Some(value), output, checksum)
+        }
+    }
+}
+
+fn append_packed_bytes(value: Option<&[u8]>, output: &mut Vec<u8>, checksum: &mut i64) {
+    let length = value
+        .map(|bytes| u32::try_from(bytes.len()).unwrap_or(u32::MAX - 1))
+        .unwrap_or(u32::MAX);
+    for byte in length.to_le_bytes() {
+        output.push(byte);
+        *checksum += i64::from(byte);
+    }
+    if let Some(bytes) = value {
+        output.extend_from_slice(bytes);
+        for byte in bytes {
+            *checksum += i64::from(*byte);
+        }
     }
 }
 

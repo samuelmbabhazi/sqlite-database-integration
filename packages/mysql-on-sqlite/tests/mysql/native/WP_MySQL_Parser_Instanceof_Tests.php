@@ -424,6 +424,14 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 			$column_stmt = $connection->queryMysql( 'SELECT SQL_CALC_FOUND_ROWS ID, post_title FROM wp_posts ORDER BY ID LIMIT 1' );
 			$this->assertSame( array( 'Hello' ), $column_stmt->fetchAll( PDO::FETCH_COLUMN, 1 ) );
 
+			$packed_result = $connection->queryMysqlPackedRows( 'SELECT SQL_CALC_FOUND_ROWS ID, post_title FROM wp_posts ORDER BY ID LIMIT 1' );
+			$this->assertNotNull( $packed_result );
+			$this->assertSame( 2, $packed_result->foundRows() );
+			$this->assertSame( 1, $packed_result->rowCount() );
+			$this->assertSame( 2, $packed_result->columnCount() );
+			$this->assertSame( array( 'ID', 'post_title' ), $packed_result->columns() );
+			$this->assertSame( pack( 'V', 1 ) . '1' . pack( 'V', 5 ) . 'Hello', $packed_result->packedRows() );
+
 			$update = $connection->executeStatement( "UPDATE wp_posts SET post_title = 'Changed' WHERE ID = 1" );
 			$this->assertSame( 1, $update->rowCount() );
 		} finally {
