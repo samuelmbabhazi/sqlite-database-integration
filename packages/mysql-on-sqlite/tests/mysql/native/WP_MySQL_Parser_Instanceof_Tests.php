@@ -298,4 +298,83 @@ class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 			$sql_parser->parse_sql_batch_native_descendant_packed_scalar_stats( $queries, true )
 		);
 	}
+
+	public function test_native_sqlite_plan_translates_common_wordpress_queries(): void {
+		if (
+			! class_exists( 'WP_MySQL_Native_Lexer', false )
+			|| ! method_exists( 'WP_MySQL_Native_Lexer', 'translate_sqlite_plan' )
+			|| ! method_exists( 'WP_MySQL_Native_Lexer', 'translate_sqlite_plan_code' )
+		) {
+			$this->markTestSkipped( 'Native SQLite plan translator is not active.' );
+		}
+
+		$this->assertSame(
+			1,
+			WP_MySQL_Native_Lexer::translate_sqlite_plan_code(
+				"SELECT ID FROM wp_posts WHERE post_status = 'publish' ORDER BY ID LIMIT 0, 2"
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'select_passthrough',
+				"SELECT ID FROM wp_posts WHERE post_status = 'publish' ORDER BY ID LIMIT 0, 2",
+				"SELECT ID FROM wp_posts WHERE post_status = 'publish' ORDER BY ID",
+			),
+			WP_MySQL_Native_Lexer::translate_sqlite_plan(
+				"SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts WHERE post_status = 'publish' ORDER BY ID LIMIT 0, 2"
+			)
+		);
+		$this->assertSame(
+			0,
+			WP_MySQL_Native_Lexer::translate_sqlite_plan_code(
+				"SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts WHERE post_status = 'publish' ORDER BY ID LIMIT 0, 2"
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'update_passthrough',
+				"UPDATE `wp_options` SET `option_value` = '1' WHERE `option_name` = 'x'",
+			),
+			WP_MySQL_Native_Lexer::translate_sqlite_plan(
+				"UPDATE `wp_options` SET `option_value` = '1' WHERE `option_name` = 'x'"
+			)
+		);
+		$this->assertSame(
+			2,
+			WP_MySQL_Native_Lexer::translate_sqlite_plan_code(
+				"UPDATE `wp_options` SET `option_value` = '1' WHERE `option_name` = 'x'"
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'select_session_sql_mode',
+				'@@session.SQL_mode',
+			),
+			WP_MySQL_Native_Lexer::translate_sqlite_plan( 'SELECT @@session.SQL_mode' )
+		);
+	}
+
+	public function test_native_sqlite_plan_rejects_queries_that_need_mysql_translation(): void {
+		if (
+			! class_exists( 'WP_MySQL_Native_Lexer', false )
+			|| ! method_exists( 'WP_MySQL_Native_Lexer', 'translate_sqlite_plan' )
+			|| ! method_exists( 'WP_MySQL_Native_Lexer', 'translate_sqlite_plan_code' )
+		) {
+			$this->markTestSkipped( 'Native SQLite plan translator is not active.' );
+		}
+
+		$this->assertNull(
+			WP_MySQL_Native_Lexer::translate_sqlite_plan( 'SELECT * FROM information_schema.tables' )
+		);
+		$this->assertSame(
+			0,
+			WP_MySQL_Native_Lexer::translate_sqlite_plan_code( 'SELECT * FROM information_schema.tables' )
+		);
+		$this->assertNull(
+			WP_MySQL_Native_Lexer::translate_sqlite_plan( 'SELECT CAST (meta_value AS UNSIGNED) FROM wp_postmeta' )
+		);
+	}
 }

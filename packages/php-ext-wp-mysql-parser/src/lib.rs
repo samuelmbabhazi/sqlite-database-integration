@@ -19,6 +19,7 @@ use ext_php_rs::{info_table_end, info_table_row, info_table_start};
 #[rustfmt::skip]
 mod compiled_packed_id_parser;
 mod lexer_constants;
+mod native_sqlite_translator;
 use lexer_constants as lex;
 use lexer_constants::register_lexer_constants;
 
@@ -344,6 +345,18 @@ impl WpMySqlNativeLexer {
 
     pub fn get_token_name(token_id: i64) -> Option<String> {
         lex::token_name(token_id).map(ToOwned::to_owned)
+    }
+
+    pub fn translate_sqlite_plan(sql: &Zval) -> PhpResult<Option<Vec<String>>> {
+        Ok(native_sqlite_translator::translate_sqlite_plan(
+            &zval_to_weak_string_bytes(sql)?,
+        ))
+    }
+
+    pub fn translate_sqlite_plan_code(sql: &Zval) -> PhpResult<i64> {
+        Ok(native_sqlite_translator::translate_sqlite_plan_code(
+            &zval_to_weak_string_bytes(sql)?,
+        ))
     }
 }
 

@@ -872,7 +872,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->last_mysql_query = $query;
 
 		try {
-			if ( $this->execute_fast_query( $query ) ) {
+			if (
+				$this->execute_native_sqlite_plan( $query )
+				|| ( ! $this->has_native_sqlite_plan_translator() && $this->execute_fast_query( $query ) )
+			) {
 				$stmt = new WP_PDO_Proxy_Statement( $this->last_result_statement, $this->last_affected_rows );
 				$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
 				return $stmt;
@@ -1382,11 +1385,131 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Execute a compact SQLite plan returned by the native Rust extension.
+	 *
+	 * @param  string $query Full SQL statement string.
+	 * @return bool         Whether the query was handled.
+	 */
+	private function execute_native_sqlite_plan( string $query ): bool {
+		if ( ! $this->has_native_sqlite_plan_translator() ) {
+			return false;
+		}
+
+		switch ( WP_MySQL_Native_Lexer::translate_sqlite_plan_code( $query ) ) {
+			case 1:
+				$this->found_rows            = $query;
+				$stmt                        = $this->execute_sqlite_query( $query );
+				$this->is_readonly           = true;
+				$this->last_result_statement = $stmt;
+				$this->store_last_column_meta_from_statement( $stmt );
+				return true;
+
+			case 2:
+				$stmt                        = $this->execute_sqlite_query( $query );
+				$this->last_result_statement = $stmt;
+				$this->last_affected_rows    = $stmt->rowCount();
+				return true;
+
+			case 3:
+				$count                       = $this->get_found_rows_count();
+				$sqlite_query                = sprintf(
+					'SELECT %d AS %s',
+					$count,
+					$this->quote_sqlite_identifier( 'FOUND_ROWS()' )
+				);
+				$this->is_readonly           = true;
+				$this->last_result_statement = $this->execute_sqlite_query( $sqlite_query );
+				$this->store_last_column_meta_from_statement( $this->last_result_statement );
+				return true;
+		}
+
+		$plan = WP_MySQL_Native_Lexer::translate_sqlite_plan( $query );
+		if ( ! is_array( $plan ) || ! isset( $plan[0] ) ) {
+			return false;
+		}
+
+		switch ( $plan[0] ) {
+			case 'set_session_sql_mode':
+				$modes                       = '' === $plan[1] ? array() : explode( ',', $plan[1] );
+				$this->active_sql_modes      = array_map( 'strtoupper', $modes );
+				$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
+				$this->last_affected_rows    = 0;
+				return true;
+
+			case 'select_session_sql_mode':
+				$value                       = implode( ',', $this->active_sql_modes );
+				$sqlite_query                = sprintf(
+					'SELECT %s AS %s',
+					$this->connection->get_pdo()->quote( $value ),
+					$this->quote_sqlite_identifier( $plan[1] )
+				);
+				$this->is_readonly           = true;
+				$this->last_result_statement = $this->execute_sqlite_query( $sqlite_query );
+				$this->store_last_column_meta_from_statement( $this->last_result_statement );
+				return true;
+
+			case 'select_found_rows':
+				$count                       = $this->get_found_rows_count();
+				$sqlite_query                = sprintf(
+					'SELECT %d AS %s',
+					$count,
+					$this->quote_sqlite_identifier( 'FOUND_ROWS()' )
+				);
+				$this->is_readonly           = true;
+				$this->last_result_statement = $this->execute_sqlite_query( $sqlite_query );
+				$this->store_last_column_meta_from_statement( $this->last_result_statement );
+				return true;
+
+			case 'select_passthrough':
+				$sqlite_query = $plan[1];
+				if ( isset( $plan[2] ) && '' !== $plan[2] ) {
+					$this->found_rows = (int) $this->execute_sqlite_query(
+						sprintf( 'SELECT COUNT(*) AS cnt FROM (%s)', $plan[2] )
+					)->fetchColumn();
+				} else {
+					$this->found_rows = $sqlite_query;
+				}
+				$stmt                        = $this->execute_sqlite_query( $sqlite_query );
+				$this->is_readonly           = true;
+				$this->last_result_statement = $stmt;
+				$this->store_last_column_meta_from_statement( $stmt );
+				return true;
+
+			case 'update_passthrough':
+				$stmt                        = $this->execute_sqlite_query( $plan[1] );
+				$this->last_result_statement = $stmt;
+				$this->last_affected_rows    = $stmt->rowCount();
+				return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether the loaded native extension can translate common SQL shapes.
+	 *
+	 * @return bool Whether the native SQLite plan translator is available.
+	 */
+	private function has_native_sqlite_plan_translator(): bool {
+		static $available = null;
+
+		if ( null === $available ) {
+			$available =
+				class_exists( 'WP_MySQL_Native_Lexer', false )
+				&& method_exists( 'WP_MySQL_Native_Lexer', 'translate_sqlite_plan' )
+				&& method_exists( 'WP_MySQL_Native_Lexer', 'translate_sqlite_plan_code' );
+		}
+
+		return $available;
+	}
+
+	/**
 	 * Execute common WordPress queries directly in SQLite.
 	 *
 	 * Most frontend requests issue many read-only queries that are already valid
-	 * SQLite. Avoiding the MySQL parser/translator for those queries improves
-	 * both the pure-PHP path and the native-parser path.
+	 * SQLite. Avoiding the MySQL parser/translator for those queries improves the
+	 * pure-PHP path. When the native extension is loaded, the equivalent shortcut
+	 * is handled by execute_native_sqlite_plan().
 	 *
 	 * @param  string $query Full SQL statement string.
 	 * @return bool         Whether the query was handled.
@@ -1424,22 +1547,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		if ( preg_match( '/^SELECT\s+FOUND_ROWS\s*\(\s*\)\s*$/i', $sql ) ) {
-			$found_rows = $this->found_rows;
-			if ( is_int( $found_rows ) ) {
-				$count = $found_rows;
-			} elseif ( is_string( $found_rows ) ) {
-				$count = (int) $this->execute_sqlite_query(
-					sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows )
-				)->fetchColumn();
-			} elseif ( is_array( $found_rows ) && isset( $found_rows[0] ) ) {
-				$count = (int) $this->execute_sqlite_query(
-					sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows[0] ),
-					$found_rows[1] ?? array()
-				)->fetchColumn();
-			} else {
-				$count = 0;
-			}
-
+			$count                       = $this->get_found_rows_count();
 			$sqlite_query                = sprintf(
 				'SELECT %d AS %s',
 				$count,
@@ -1479,6 +1587,29 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->is_readonly           = true;
 		$this->last_result_statement = $stmt;
 		return true;
+	}
+
+	/**
+	 * Get the value for a "FOUND_ROWS()" emulation query.
+	 *
+	 * @return int Found rows count.
+	 */
+	private function get_found_rows_count(): int {
+		$found_rows = $this->found_rows;
+		if ( is_int( $found_rows ) ) {
+			return $found_rows;
+		} elseif ( is_string( $found_rows ) ) {
+			return (int) $this->execute_sqlite_query(
+				sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows )
+			)->fetchColumn();
+		} elseif ( is_array( $found_rows ) && isset( $found_rows[0] ) ) {
+			return (int) $this->execute_sqlite_query(
+				sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows[0] ),
+				$found_rows[1] ?? array()
+			)->fetchColumn();
+		}
+
+		return 0;
 	}
 
 	/**
