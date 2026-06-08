@@ -1403,6 +1403,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			return true;
 		}
 
+		if ( $this->is_fast_update_passthrough_candidate( $sql ) ) {
+			$stmt                        = $this->execute_sqlite_query( $sql );
+			$this->last_result_statement = $stmt;
+			$this->last_affected_rows    = $stmt->rowCount();
+			return true;
+		}
+
 		if ( preg_match( '/^SELECT\s+(@@SESSION\.sql_mode)\s*$/i', $sql, $matches ) ) {
 			$value                       = implode( ',', $this->active_sql_modes );
 			$sqlite_query                = sprintf(
@@ -1454,14 +1461,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			: $sql;
 
 		if ( $has_sql_calc_found_rows ) {
-			$count_query = preg_replace(
+			$count_query      = preg_replace(
 				'/\s+LIMIT\s+\d+\s*(?:,\s*\d+|OFFSET\s+\d+)?\s*$/i',
 				'',
 				$sqlite_query
 			);
-			if ( $count_query === $sqlite_query ) {
-				return false;
-			}
 			$this->found_rows = (int) $this->execute_sqlite_query(
 				sprintf( 'SELECT COUNT(*) AS cnt FROM (%s)', $count_query )
 			)->fetchColumn();
@@ -1496,8 +1500,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			return false;
 		}
 
-		$wp_table_pattern = '`?(?:[a-z0-9]+_)*(?:blogmeta|blogs|commentmeta|comments|links|options|postmeta|posts|registration_log|signups|site|sitemeta|term_relationships|term_taxonomy|termmeta|terms|usermeta|users)`?';
-		if ( ! preg_match( '/\b(?:FROM|JOIN)\s+(?:`?[a-z0-9_]+`?\.)?' . $wp_table_pattern . '\b/i', $sql ) ) {
+		if ( ! preg_match( '/\b(?:FROM|JOIN)\s+(?:`?[a-z0-9_]+`?\.)?' . $this->get_fast_query_table_pattern() . '\b/i', $sql ) ) {
 			return false;
 		}
 
@@ -1542,6 +1545,65 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Check if an UPDATE can bypass the MySQL parser/translator.
+	 *
+	 * @param  string $sql SQL statement without trailing semicolon.
+	 * @return bool       Whether the query can be passed through to SQLite.
+	 */
+	private function is_fast_update_passthrough_candidate( string $sql ): bool {
+		if ( ! preg_match( '/^UPDATE\s+(?:`?[a-z0-9_]+`?\.)?' . $this->get_fast_query_table_pattern() . '\s+SET\s+/i', $sql ) ) {
+			return false;
+		}
+
+		if (
+			strpos( $sql, ';' ) !== false
+			|| strpos( $sql, '\\' ) !== false
+			|| strpos( $sql, '@' ) !== false
+			|| strpos( $sql, '--' ) !== false
+			|| strpos( $sql, '/*' ) !== false
+			|| strpos( $sql, '#' ) !== false
+			|| strpos( $sql, '->' ) !== false
+			|| preg_match( '/\b0x[0-9a-f]/i', $sql )
+			|| preg_match( '/\b_[a-z0-9]+\s*\'/i', $sql )
+		) {
+			return false;
+		}
+
+		if (
+			preg_match(
+				'/\b(?:LOW_PRIORITY|IGNORE|JOIN|ORDER\s+BY|LIMIT|MATCH|AGAINST|COLLATE|INTERVAL|RLIKE|BINARY)\b/i',
+				$sql
+			)
+		) {
+			return false;
+		}
+
+		if (
+			preg_match(
+				'/\b(?:IF|CONCAT|CHAR_LENGTH|DATE_ADD|DATE_SUB|DATE_FORMAT|STR_TO_DATE|RAND|REGEXP|FOUND_ROWS|DATABASE|VERSION|LAST_INSERT_ID|ROW_COUNT|GROUP_CONCAT)\s*\(/i',
+				$sql
+			)
+		) {
+			return false;
+		}
+
+		if ( preg_match( '/\bCAST\s*\([^)]*\s+AS\s+(?:UNSIGNED|SIGNED)\b/i', $sql ) ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Table names that are safe to pass through when the SQL itself is SQLite-compatible.
+	 *
+	 * @return string Regular-expression fragment.
+	 */
+	private function get_fast_query_table_pattern(): string {
+		return '`?(?:[a-z0-9]+_)*(?:actionscheduler_actions|actionscheduler_claims|actionscheduler_groups|actionscheduler_logs|blogmeta|blogs|commentmeta|comments|links|options|postmeta|posts|registration_log|signups|site|sitemeta|term_relationships|term_taxonomy|termmeta|terms|usermeta|users|wc_admin_note_actions|wc_admin_notes|wc_category_lookup|wc_customer_lookup|wc_download_log|wc_order_addresses|wc_order_coupon_lookup|wc_order_operational_data|wc_order_product_lookup|wc_order_stats|wc_order_tax_lookup|wc_orders|wc_orders_meta|wc_product_attributes_lookup|wc_product_download_directories|wc_product_meta_lookup|wc_rate_limits|wc_reserved_stock|wc_tax_rate_classes|wc_webhooks|woocommerce_api_keys|woocommerce_attribute_taxonomies|woocommerce_downloadable_product_permissions|woocommerce_log|woocommerce_order_itemmeta|woocommerce_order_items|woocommerce_payment_tokenmeta|woocommerce_payment_tokens|woocommerce_sessions|woocommerce_shipping_zone_locations|woocommerce_shipping_zone_methods|woocommerce_shipping_zones|woocommerce_tax_rate_locations|woocommerce_tax_rates)`?';
 	}
 
 	/**
