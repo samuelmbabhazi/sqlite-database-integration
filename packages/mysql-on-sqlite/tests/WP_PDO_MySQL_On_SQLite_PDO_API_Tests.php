@@ -93,6 +93,45 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		}
 	}
 
+	public function test_query_preserves_session_sql_mode_case(): void {
+		$this->driver->query( "SET SESSION sql_mode = 'no_zero_date,strict_trans_tables'" );
+
+		$result = $this->driver->query( 'SELECT @@session.SQL_mode', PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'@@session.SQL_mode' => 'NO_ZERO_DATE,STRICT_TRANS_TABLES',
+			),
+			$result->fetch()
+		);
+	}
+
+	public function test_query_emulates_found_rows_for_simple_selects(): void {
+		$this->driver->query( 'CREATE TABLE wp_posts (ID INTEGER PRIMARY KEY, post_status TEXT)' );
+		$this->driver->query( "INSERT INTO wp_posts (ID, post_status) VALUES (1, 'publish'), (2, 'draft'), (3, 'publish'), (4, 'publish')" );
+
+		$posts = $this->driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts WHERE post_status = 'publish' ORDER BY ID ASC LIMIT 0, 2",
+			PDO::FETCH_ASSOC
+		);
+		$this->assertSame(
+			array(
+				array( 'ID' => '1' ),
+				array( 'ID' => '3' ),
+			),
+			$posts->fetchAll()
+		);
+
+		$found_rows = $this->driver->query( 'SELECT FOUND_ROWS()', PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'FOUND_ROWS()' => '3',
+			),
+			$found_rows->fetch()
+		);
+	}
+
 	/**
 	 * @dataProvider data_pdo_fetch_methods
 	 */

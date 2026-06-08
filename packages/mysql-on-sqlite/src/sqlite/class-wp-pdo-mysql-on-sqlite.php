@@ -872,6 +872,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->last_mysql_query = $query;
 
 		try {
+			if ( $this->execute_fast_query( $query ) ) {
+				$stmt = new WP_PDO_Proxy_Statement( $this->last_result_statement, $this->last_affected_rows );
+				$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
+				return $stmt;
+			}
+
 			// Parse the MySQL query.
 			$parser = $this->create_parser( $query );
 			$parser->next_query();
@@ -883,7 +889,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			if ( $parser->next_query() ) {
 				throw $this->new_driver_exception( 'Multi-query is not supported.' );
 			}
-
 			/*
 			 * Determine if we need to wrap the translated queries in a transaction.
 			 *
@@ -1374,6 +1379,169 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	public function execute_sqlite_query( string $sql, array $params = array() ): PDOStatement {
 		return $this->connection->query( $sql, $params );
+	}
+
+	/**
+	 * Execute common WordPress queries directly in SQLite.
+	 *
+	 * Most frontend requests issue many read-only queries that are already valid
+	 * SQLite. Avoiding the MySQL parser/translator for those queries improves
+	 * both the pure-PHP path and the native-parser path.
+	 *
+	 * @param  string $query Full SQL statement string.
+	 * @return bool         Whether the query was handled.
+	 */
+	private function execute_fast_query( string $query ): bool {
+		$sql = trim( $query );
+		$sql = rtrim( $sql, " \t\r\n;" );
+
+		if ( preg_match( '/^SET\s+SESSION\s+sql_mode\s*=\s*([\'"])(.*?)\1\s*$/i', $sql, $matches ) ) {
+			$modes                       = '' === $matches[2] ? array() : explode( ',', $matches[2] );
+			$this->active_sql_modes      = array_map( 'strtoupper', $modes );
+			$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
+			$this->last_affected_rows    = 0;
+			return true;
+		}
+
+		if ( preg_match( '/^SELECT\s+(@@SESSION\.sql_mode)\s*$/i', $sql, $matches ) ) {
+			$value                       = implode( ',', $this->active_sql_modes );
+			$sqlite_query                = sprintf(
+				'SELECT %s AS %s',
+				$this->connection->get_pdo()->quote( $value ),
+				$this->quote_sqlite_identifier( $matches[1] )
+			);
+			$this->is_readonly           = true;
+			$this->last_result_statement = $this->execute_sqlite_query( $sqlite_query );
+			$this->store_last_column_meta_from_statement( $this->last_result_statement );
+			return true;
+		}
+
+		if ( preg_match( '/^SELECT\s+FOUND_ROWS\s*\(\s*\)\s*$/i', $sql ) ) {
+			$found_rows = $this->found_rows;
+			if ( is_int( $found_rows ) ) {
+				$count = $found_rows;
+			} elseif ( is_string( $found_rows ) ) {
+				$count = (int) $this->execute_sqlite_query(
+					sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows )
+				)->fetchColumn();
+			} elseif ( is_array( $found_rows ) && isset( $found_rows[0] ) ) {
+				$count = (int) $this->execute_sqlite_query(
+					sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows[0] ),
+					$found_rows[1] ?? array()
+				)->fetchColumn();
+			} else {
+				$count = 0;
+			}
+
+			$sqlite_query                = sprintf(
+				'SELECT %d AS %s',
+				$count,
+				$this->quote_sqlite_identifier( 'FOUND_ROWS()' )
+			);
+			$this->is_readonly           = true;
+			$this->last_result_statement = $this->execute_sqlite_query( $sqlite_query );
+			$this->store_last_column_meta_from_statement( $this->last_result_statement );
+			return true;
+		}
+
+		if ( ! $this->is_fast_select_passthrough_candidate( $sql ) ) {
+			return false;
+		}
+
+		$has_sql_calc_found_rows = preg_match( '/^SELECT\s+SQL_CALC_FOUND_ROWS\s+/i', $sql );
+		$sqlite_query            = $has_sql_calc_found_rows
+			? preg_replace( '/^SELECT\s+SQL_CALC_FOUND_ROWS\s+/i', 'SELECT ', $sql )
+			: $sql;
+
+		if ( $has_sql_calc_found_rows ) {
+			$count_query = preg_replace(
+				'/\s+LIMIT\s+\d+\s*(?:,\s*\d+|OFFSET\s+\d+)?\s*$/i',
+				'',
+				$sqlite_query
+			);
+			if ( $count_query === $sqlite_query ) {
+				return false;
+			}
+			$this->found_rows = (int) $this->execute_sqlite_query(
+				sprintf( 'SELECT COUNT(*) AS cnt FROM (%s)', $count_query )
+			)->fetchColumn();
+		} else {
+			$this->found_rows = $sqlite_query;
+		}
+
+		$stmt = $this->execute_sqlite_query( $sqlite_query );
+		$this->store_last_column_meta_from_statement( $stmt );
+
+		$this->is_readonly           = true;
+		$this->last_result_statement = $stmt;
+		return true;
+	}
+
+	/**
+	 * Check if a SELECT can bypass the MySQL parser/translator.
+	 *
+	 * @param  string $sql SQL statement without trailing semicolon.
+	 * @return bool       Whether the query can be passed through to SQLite.
+	 */
+	private function is_fast_select_passthrough_candidate( string $sql ): bool {
+		if ( ! preg_match( '/^SELECT\s+/i', $sql ) ) {
+			return false;
+		}
+
+		if ( ! preg_match( '/\bFROM\b/i', $sql ) ) {
+			return false;
+		}
+
+		if ( preg_match( '/\binformation_schema\b|_wp_sqlite_/i', $sql ) ) {
+			return false;
+		}
+
+		$wp_table_pattern = '`?(?:[a-z0-9]+_)*(?:blogmeta|blogs|commentmeta|comments|links|options|postmeta|posts|registration_log|signups|site|sitemeta|term_relationships|term_taxonomy|termmeta|terms|usermeta|users)`?';
+		if ( ! preg_match( '/\b(?:FROM|JOIN)\s+(?:`?[a-z0-9_]+`?\.)?' . $wp_table_pattern . '\b/i', $sql ) ) {
+			return false;
+		}
+
+		if (
+			strpos( $sql, ';' ) !== false
+			|| strpos( $sql, '\\' ) !== false
+			|| strpos( $sql, '@' ) !== false
+			|| strpos( $sql, '--' ) !== false
+			|| strpos( $sql, '/*' ) !== false
+			|| strpos( $sql, '#' ) !== false
+			|| strpos( $sql, '->' ) !== false
+			|| preg_match( '/\b0x[0-9a-f]/i', $sql )
+			|| preg_match( '/\b_[a-z0-9]+\s*\'/i', $sql )
+		) {
+			return false;
+		}
+
+		if (
+			preg_match(
+				'/\b(?:UNION|INTERSECT|EXCEPT|MATCH|AGAINST|COLLATE|INTERVAL|RLIKE|BINARY|FOR\s+UPDATE|LOCK\s+IN\s+SHARE\s+MODE|USE\s+(?:INDEX|KEY)|FORCE\s+(?:INDEX|KEY)|IGNORE\s+(?:INDEX|KEY))\b/i',
+				$sql
+			)
+		) {
+			return false;
+		}
+
+		if (
+			preg_match(
+				'/\b(?:IF|CONCAT|CHAR_LENGTH|DATE_ADD|DATE_SUB|DATE_FORMAT|STR_TO_DATE|RAND|REGEXP|FOUND_ROWS|DATABASE|VERSION|LAST_INSERT_ID|ROW_COUNT|GROUP_CONCAT)\s*\(/i',
+				$sql
+			)
+		) {
+			return false;
+		}
+
+		if ( preg_match( '/\bCAST\s*\([^)]*\s+AS\s+(?:UNSIGNED|SIGNED)\b/i', $sql ) ) {
+			return false;
+		}
+
+		if ( preg_match( '/\bSQL_CALC_FOUND_ROWS\b/i', $sql ) && ! preg_match( '/^SELECT\s+SQL_CALC_FOUND_ROWS\s+/i', $sql ) ) {
+			return false;
+		}
+
+		return true;
 	}
 
 	/**
