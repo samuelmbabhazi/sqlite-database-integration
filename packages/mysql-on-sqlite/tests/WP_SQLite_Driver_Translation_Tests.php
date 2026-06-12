@@ -88,6 +88,17 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'SELECT * FROM `t1` LEFT JOIN `t2` ON `t1`.`id` = `t2`.`t1_id` WHERE `t1`.`name` = \'abc\'',
 			"SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id WHERE t1.name = 'abc'"
 		);
+
+		// A string SELECT alias must stay quoted (used by WP_Site_Health).
+		$this->assertQuery(
+			"SELECT `c` AS 'table' FROM `t`",
+			"SELECT c AS 'table' FROM t"
+		);
+
+		$this->assertQuery(
+			"SELECT `c` 'a ''quoted'' alias' FROM `t`",
+			"SELECT c 'a ''quoted'' alias' FROM t"
+		);
 	}
 
 	public function testConvert(): void {
