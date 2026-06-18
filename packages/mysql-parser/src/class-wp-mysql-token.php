@@ -72,11 +72,15 @@ final class WP_MySQL_Token extends WP_Parser_Token {
 			$value = substr( $value, 1, -1 );
 
 			/*
-			 * When the NO_BACKSLASH_ESCAPES SQL mode is enabled, we only need to
-			 * handle escaped bounding quotes, as the other characters preserve
-			 * their literal values.
+			 * Backtick-quoted identifiers never use backslash escaping; only a doubled
+			 * backtick is an escape. The same is true of any literal under the
+			 * NO_BACKSLASH_ESCAPES SQL mode. In both cases only the doubled bounding
+			 * quote is unescaped; every other byte keeps its literal value.
 			 */
-			if ( $this->sql_mode_no_backslash_escapes_enabled ) {
+			if (
+				WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $this->id
+				|| $this->sql_mode_no_backslash_escapes_enabled
+			) {
 				return str_replace( $quote . $quote, $quote, $value );
 			}
 
