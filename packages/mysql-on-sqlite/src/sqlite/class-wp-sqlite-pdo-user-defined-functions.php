@@ -123,6 +123,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/** @var string|null Match type used by the cached regex. */
 	private $regexp_cached_match_type = null;
 
+	/** @var bool|null Whether the cached regex uses byte-oriented matching. */
+	private $regexp_cached_binary = null;
+
 	/** @var string|null Last compiled PCRE pattern. */
 	private $regexp_cached_compiled = null;
 
@@ -622,12 +625,20 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to emulate MySQL REGEXP() function.
 	 *
-	 * @param string $pattern Regular expression to match.
-	 * @param string $field   Haystack.
+	 * @param string|null $pattern Regular expression to match.
+	 * @param string|null $field   Haystack.
 	 *
-	 * @return integer 1 if matched, 0 if not matched.
+	 * @throws Exception If the pattern is not a valid regular expression.
+	 * @return int|null 1 if matched, 0 if not matched, or NULL for NULL input.
 	 */
 	public function regexp( $pattern, $field ) {
+		if ( null === $pattern || null === $field ) {
+			return null;
+		}
+
+		$pattern = $this->regexp_string_arg( $pattern );
+		$field   = $this->regexp_string_arg( $field );
+
 		/*
 		 * If the original query says REGEXP BINARY
 		 * the comparison is byte-by-byte and letter casing now
@@ -642,17 +653,21 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * be reasonably safe since PHP does not allow null bytes in
 		 * regular expressions anyway.
 		 */
-		if ( "\x00" === $pattern[0] ) {
+		$is_binary = '' !== $pattern && "\x00" === $pattern[0];
+		if ( $is_binary ) {
 			$pattern = substr( $pattern, 1 );
-			$flags   = '';
-		} else {
-			// Otherwise, the search is case-insensitive.
-			$flags = 'i';
 		}
-		$pattern = str_replace( '/', '\/', $pattern );
-		$pattern = '/' . $pattern . '/' . $flags;
 
-		return preg_match( $pattern, $field );
+		$compiled = $this->regexp_compile( $pattern, $is_binary ? 'c' : '', $is_binary );
+		$result   = $this->regexp_run(
+			function () use ( $compiled, $field ) {
+				return preg_match( $compiled, $field );
+			}
+		);
+		if ( false === $result ) {
+			$this->regexp_fail( $pattern );
+		}
+		return $result;
 	}
 
 	/**
@@ -1271,9 +1286,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Compile a MySQL-style regex into a PCRE pattern string.
 	 *
-	 * Translates MySQL match_type flags (c/i/m/n/u) to PCRE modifiers and always
-	 * appends the u (UTF-8) modifier. Case-insensitive is the default, matching
-	 * the existing REGEXP operator.
+	 * Translates MySQL match_type flags (c/i/m/n/u) to PCRE modifiers. The u
+	 * (UTF-8) modifier is applied unless byte-oriented matching is requested.
+	 * Case-insensitive is the default.
 	 *
 	 * MySQL's native engine is ICU; we use PHP's PCRE. The two diverge in a
 	 * few corners:
@@ -1290,20 +1305,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *   `utf8mb4_0900_ai_ci` collation; callers that rely on a `_bin` or
 	 *   `_cs` collation must pass an explicit `c` match_type because this
 	 *   helper has no access to the session collation.
-	 * - The `u` (UTF-8) PCRE modifier is always applied. Binary data with
-	 *   invalid UTF-8 bytes that matches fine under the legacy `REGEXP`
-	 *   operator raises "Invalid UTF-8 data in regular expression input."
-	 *   when routed through REGEXP_LIKE / _REPLACE / _SUBSTR / _INSTR.
+	 * - The `u` (UTF-8) PCRE modifier is applied to REGEXP_* functions and
+	 *   nonbinary REGEXP operators. REGEXP BINARY remains byte-oriented.
 	 *
-	 * @param string|null $pattern    The MySQL regex pattern.
-	 * @param string      $match_type MySQL match_type flag string.
+	 * @param string|null $pattern     The MySQL regex pattern.
+	 * @param string      $match_type  MySQL match_type flag string.
+	 * @param bool        $binary_mode Whether to match bytes instead of UTF-8 characters.
 	 *
 	 * @throws Exception If the pattern is empty or the match_type string
 	 *                   contains an unrecognized flag.
 	 * @return string|null PCRE-ready pattern with delimiter and modifiers, or
 	 *                     NULL when the pattern is NULL.
 	 */
-	private function regexp_compile( $pattern, $match_type ) {
+	private function regexp_compile( $pattern, $match_type, $binary_mode = false ) {
 		$match_type = $this->regexp_string_arg( $match_type );
 		if ( null !== $pattern ) {
 			$pattern = $this->regexp_string_arg( $pattern );
@@ -1315,6 +1329,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			null !== $pattern
 			&& $pattern === $this->regexp_cached_pattern
 			&& $match_type === $this->regexp_cached_match_type
+			&& $binary_mode === $this->regexp_cached_binary
 		) {
 			return $this->regexp_cached_compiled;
 		}
@@ -1341,7 +1356,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			}
 		}
 
-		$modifiers = 'u';
+		$modifiers = $binary_mode ? '' : 'u';
 		if ( ! $case_sensitive ) {
 			$modifiers .= 'i';
 		}
@@ -1367,6 +1382,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 		$this->regexp_cached_pattern    = $pattern;
 		$this->regexp_cached_match_type = $match_type;
+		$this->regexp_cached_binary     = $binary_mode;
 		$this->regexp_cached_compiled   = $compiled;
 		return $compiled;
 	}

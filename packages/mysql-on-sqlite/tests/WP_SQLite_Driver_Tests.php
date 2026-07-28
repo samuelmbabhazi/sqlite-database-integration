@@ -287,6 +287,47 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertSame( '0', $this->engine->get_query_results()[0]->r );
 	}
 
+	public function testRegexpLegacyOperatorNullPropagation() {
+		$this->assertQuery( "SELECT NULL REGEXP 'a' AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT 'a' RLIKE NULL AS r" );
+		$this->assertNull( $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorInvalidPattern() {
+		$this->assertQueryError(
+			"SELECT 'abc' REGEXP '(abc'",
+			'Invalid regular expression: (abc.'
+		);
+		$this->assertQueryError(
+			"SELECT 'abc' RLIKE ''",
+			'Illegal argument to a regular expression.'
+		);
+	}
+
+	public function testRegexpLegacyOperatorEscapedDelimiter() {
+		$this->assertQuery( "SELECT '/' REGEXP '\\\\/' AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT '/' REGEXP '\\\\Q/\\\\E' AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorNumericOperands() {
+		$this->assertQuery( "SELECT 1.2300 REGEXP '00\$' AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( 'SELECT 1.23 NOT REGEXP 1.2300 AS r' );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorUtf8Handling() {
+		$this->assertQueryError(
+			"SELECT CAST(X'FF' AS CHAR) REGEXP 'a'",
+			'Invalid UTF-8 data in regular expression input.'
+		);
+		$this->assertQuery( "SELECT CAST(X'FF' AS CHAR) REGEXP BINARY CAST(X'FF' AS CHAR) AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+	}
+
 	public function testRegexpLikeEscapedDelimiter() {
 		$this->assertQuery( "SELECT REGEXP_LIKE('/', '\\\\/') AS r" );
 		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );

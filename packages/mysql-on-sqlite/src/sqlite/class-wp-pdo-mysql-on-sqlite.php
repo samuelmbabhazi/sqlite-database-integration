@@ -3837,12 +3837,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				return $this->translate_sequence( $node->get_children() );
 			case 'simpleExprBody':
 				return $this->translate_simple_expr_body( $node );
+			case 'predicate':
+				$operations = $node->get_first_child_node( 'predicateOperations' );
+				$token      = null === $operations ? null : $operations->get_first_child_token();
+				if ( null !== $token && WP_MySQL_Lexer::REGEXP_SYMBOL === $token->id ) {
+					return $this->translate_regexp_predicate( $node, $operations );
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'predicateOperations':
 				$token = $node->get_first_child_token();
 				if ( WP_MySQL_Lexer::LIKE_SYMBOL === $token->id ) {
 					return $this->translate_like( $node );
-				} elseif ( WP_MySQL_Lexer::REGEXP_SYMBOL === $token->id ) {
-					return $this->translate_regexp_functions( $node );
 				}
 				return $this->translate_sequence( $node->get_children() );
 			case 'runtimeFunctionCall':
@@ -4478,13 +4483,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate MySQL REGEXP expression to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node       The "predicateOperations" AST node.
+	 * @param  WP_Parser_Node $node       The "predicate" AST node.
+	 * @param  WP_Parser_Node $operations The "predicateOperations" AST node.
 	 * @return string                     The translated value.
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
-	private function translate_regexp_functions( WP_Parser_Node $node ): string {
-		$tokens    = $node->get_descendant_tokens();
+	private function translate_regexp_predicate( WP_Parser_Node $node, WP_Parser_Node $operations ): string {
+		$tokens    = $operations->get_descendant_tokens();
 		$is_binary = isset( $tokens[1] ) && WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[1]->id;
+		$subject   = $this->translate_regexp_string_arg( $node->get_first_child_node() );
+		$pattern   = $this->translate_regexp_string_arg( $operations->get_first_child_node() );
 
 		/*
 		 * If the query says REGEXP BINARY, the comparison is byte-by-byte
@@ -4500,9 +4508,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * regular expressions anyway.
 		 */
 		if ( true === $is_binary ) {
-			return 'REGEXP CHAR(0) || ' . $this->translate( $node->get_first_child_node() );
+			$pattern = 'CHAR(0) || ' . $pattern;
 		}
-		return 'REGEXP ' . $this->translate( $node->get_first_child_node() );
+
+		$operator = null === $node->get_first_child_node( 'notRule' ) ? 'REGEXP' : 'NOT REGEXP';
+		return "$subject $operator $pattern";
 	}
 
 	/**
@@ -4699,15 +4709,27 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		$args = array();
 		foreach ( $arg_nodes as $index => $arg_node ) {
-			$numeric_literal = null;
 			if ( in_array( $index, $string_arg_indexes[ $name ], true ) ) {
-				$numeric_literal = $this->get_regexp_numeric_literal_string( $arg_node );
+				$args[] = $this->translate_regexp_string_arg( $arg_node );
+			} else {
+				$args[] = $this->translate( $arg_node );
 			}
-			$args[] = null === $numeric_literal
-				? $this->translate( $arg_node )
-				: $this->quote_sqlite_value( $numeric_literal );
 		}
 		return $args;
+	}
+
+	/**
+	 * Translate a REGEXP string-domain argument while preserving numeric literal text.
+	 *
+	 * @param WP_Parser_Node $node Function argument or operator operand.
+	 *
+	 * @return string Translated argument.
+	 */
+	private function translate_regexp_string_arg( WP_Parser_Node $node ): string {
+		$numeric_literal = $this->get_regexp_numeric_literal_string( $node );
+		return null === $numeric_literal
+			? $this->translate( $node )
+			: $this->quote_sqlite_value( $numeric_literal );
 	}
 
 	/**
@@ -4723,6 +4745,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		foreach ( $node->get_descendant_tokens() as $token ) {
 			$value = $token->get_value();
 			if ( '(' === $value || ')' === $value ) {
+				continue;
+			}
+			if ( WP_MySQL_Lexer::BINARY_SYMBOL === $token->id ) {
 				continue;
 			}
 			if ( ( '+' === $value || '-' === $value ) && null === $number && '' === $sign ) {
