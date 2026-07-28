@@ -1012,6 +1012,113 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider existingUserDefinedFunctionUnsupportedArgumentCounts
+	 */
+	public function testExistingUserDefinedFunctionsRejectUnsupportedArgumentCounts( $function_name, $argument_count ) {
+		$args      = implode( ', ', array_fill( 0, $argument_count, 'NULL' ) );
+		$exception = null;
+		try {
+			$this->sqlite->query( "SELECT `$function_name`($args)" );
+		} catch ( PDOException $e ) {
+			$exception = $e;
+		}
+
+		$this->assertNotNull( $exception, 'An exception was expected, but none was thrown.' );
+		$this->assertStringContainsString(
+			"wrong number of arguments to function $function_name()",
+			$exception->getMessage()
+		);
+	}
+
+	public static function existingUserDefinedFunctionUnsupportedArgumentCounts() {
+		return array(
+			'throw'                        => array( 'throw', 2 ),
+			'month'                        => array( 'month', 2 ),
+			'monthnum'                     => array( 'monthnum', 2 ),
+			'year'                         => array( 'year', 2 ),
+			'day'                          => array( 'day', 2 ),
+			'hour'                         => array( 'hour', 2 ),
+			'minute'                       => array( 'minute', 2 ),
+			'second'                       => array( 'second', 2 ),
+			'week'                         => array( 'week', 3 ),
+			'weekday'                      => array( 'weekday', 2 ),
+			'dayofweek'                    => array( 'dayofweek', 2 ),
+			'dayofmonth'                   => array( 'dayofmonth', 2 ),
+			'unix_timestamp'               => array( 'unix_timestamp', 2 ),
+			'now'                          => array( 'now', 2 ),
+			'md5'                          => array( 'md5', 2 ),
+			'curdate'                      => array( 'curdate', 1 ),
+			'rand'                         => array( 'rand', 2 ),
+			'from_unixtime'                => array( 'from_unixtime', 3 ),
+			'localtime'                    => array( 'localtime', 2 ),
+			'localtimestamp'               => array( 'localtimestamp', 2 ),
+			'isnull'                       => array( 'isnull', 2 ),
+			'regexp'                       => array( 'regexp', 3 ),
+			'log'                          => array( 'log', 3 ),
+			'get_lock'                     => array( 'get_lock', 3 ),
+			'release_lock'                 => array( 'release_lock', 2 ),
+			'ucase'                        => array( 'ucase', 2 ),
+			'lcase'                        => array( 'lcase', 2 ),
+			'from_base64'                  => array( 'from_base64', 2 ),
+			'to_base64'                    => array( 'to_base64', 2 ),
+			'inet_ntoa'                    => array( 'inet_ntoa', 2 ),
+			'inet_aton'                    => array( 'inet_aton', 2 ),
+			'datediff'                     => array( 'datediff', 3 ),
+			'locate'                       => array( 'locate', 4 ),
+			'utc_date'                     => array( 'utc_date', 1 ),
+			'utc_time'                     => array( 'utc_time', 2 ),
+			'utc_timestamp'                => array( 'utc_timestamp', 2 ),
+			'version'                      => array( 'version', 1 ),
+			'reverse'                      => array( 'reverse', 2 ),
+			'_helper_like_to_glob_pattern' => array( '_helper_like_to_glob_pattern', 2 ),
+		);
+	}
+
+	public function testSqliteBuiltInOverloadsDoNotBypassArgumentValidation() {
+		$this->assertQueryError(
+			"SELECT UNHEX('41', 'ignored')",
+			"Incorrect parameter count in the call to native function 'UNHEX'"
+		);
+
+		$exception = null;
+		try {
+			$this->sqlite->query( 'SELECT `if`(1, 2, 3, 4)' );
+		} catch ( Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception, 'An exception was expected, but none was thrown.' );
+		$this->assertSame(
+			"Incorrect parameter count in the call to native function 'IF'",
+			$exception->getMessage()
+		);
+	}
+
+	public function testWeekSupportsOptionalModeArgument() {
+		$this->assertQuery( "SELECT WEEK('2000-05-27') AS implicit_mode, WEEK('2000-05-27', 1) AS explicit_mode" );
+		$result = $this->engine->get_query_results()[0];
+		$this->assertSame( '21', $result->implicit_mode );
+		$this->assertSame( '21', $result->explicit_mode );
+	}
+
+	/**
+	 * @dataProvider variadicUserDefinedFunctions
+	 */
+	public function testVariadicUserDefinedFunctionsRequireTwoArguments( $function_name ) {
+		$this->assertQueryError(
+			"SELECT $function_name('value')",
+			"Incorrect parameter count in the call to native function '$function_name'"
+		);
+	}
+
+	public static function variadicUserDefinedFunctions() {
+		return array(
+			'field'    => array( 'FIELD' ),
+			'least'    => array( 'LEAST' ),
+			'greatest' => array( 'GREATEST' ),
+		);
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"

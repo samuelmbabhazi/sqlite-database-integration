@@ -30,14 +30,30 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public static function register_for( $pdo ): self {
 		$instance = new self();
+		$register = static function ( $function_name, $callback, $arity ) use ( $pdo ) {
+			if ( $pdo instanceof PDO\SQLite ) {
+				$pdo->createFunction( $function_name, $callback, $arity );
+			} else {
+				$pdo->sqliteCreateFunction( $function_name, $callback, $arity );
+			}
+		};
+
 		foreach ( $instance->functions as $f => $t ) {
-			$arities = $instance->function_arities[ $f ] ?? array( -1 );
+			foreach ( $instance->function_arities[ $f ] as $arity ) {
+				$register( $f, array( $instance, $t ), $arity );
+			}
+		}
+		foreach ( $instance->unsupported_function_arities as $f => $arities ) {
+			$reject = static function () use ( $f ) {
+				throw new Exception(
+					sprintf(
+						"Incorrect parameter count in the call to native function '%s'",
+						strtoupper( $f )
+					)
+				);
+			};
 			foreach ( $arities as $arity ) {
-				if ( $pdo instanceof PDO\SQLite ) {
-					$pdo->createFunction( $f, array( $instance, $t ), $arity );
-				} else {
-					$pdo->sqliteCreateFunction( $f, array( $instance, $t ), $arity );
-				}
+				$register( $f, $reject, $arity );
 			}
 		}
 		return $instance;
@@ -104,17 +120,75 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	);
 
 	/**
-	 * Exact argument counts for functions with optional arguments.
+	 * Supported argument counts for each registered function.
 	 *
-	 * Functions absent from this array are registered as variadic.
+	 * An argument count of -1 registers a variadic function.
 	 *
 	 * @var array
 	 */
 	private $function_arities = array(
-		'regexp_like'    => array( 2, 3 ),
-		'regexp_replace' => array( 3, 4, 5, 6 ),
-		'regexp_substr'  => array( 2, 3, 4, 5 ),
-		'regexp_instr'   => array( 2, 3, 4, 5, 6 ),
+		'throw'                        => array( 1 ),
+		'month'                        => array( 1 ),
+		'monthnum'                     => array( 1 ),
+		'year'                         => array( 1 ),
+		'day'                          => array( 1 ),
+		'hour'                         => array( 1 ),
+		'minute'                       => array( 1 ),
+		'second'                       => array( 1 ),
+		'week'                         => array( 1, 2 ),
+		'weekday'                      => array( 1 ),
+		'dayofweek'                    => array( 1 ),
+		'dayofmonth'                   => array( 1 ),
+		'unix_timestamp'               => array( 0, 1 ),
+		'now'                          => array( 0, 1 ),
+		'md5'                          => array( 1 ),
+		'curdate'                      => array( 0 ),
+		'rand'                         => array( 1 ),
+		'from_unixtime'                => array( 1, 2 ),
+		'localtime'                    => array( 0, 1 ),
+		'localtimestamp'               => array( 0, 1 ),
+		'isnull'                       => array( 1 ),
+		'if'                           => array( 3 ),
+		'regexp'                       => array( 2 ),
+		'regexp_like'                  => array( 2, 3 ),
+		'regexp_replace'               => array( 3, 4, 5, 6 ),
+		'regexp_substr'                => array( 2, 3, 4, 5 ),
+		'regexp_instr'                 => array( 2, 3, 4, 5, 6 ),
+		'field'                        => array( -1 ),
+		'log'                          => array( 1, 2 ),
+		'least'                        => array( -1 ),
+		'greatest'                     => array( -1 ),
+		'get_lock'                     => array( 2 ),
+		'release_lock'                 => array( 1 ),
+		'ucase'                        => array( 1 ),
+		'lcase'                        => array( 1 ),
+		'unhex'                        => array( 1 ),
+		'from_base64'                  => array( 1 ),
+		'to_base64'                    => array( 1 ),
+		'inet_ntoa'                    => array( 1 ),
+		'inet_aton'                    => array( 1 ),
+		'datediff'                     => array( 2 ),
+		'locate'                       => array( 2, 3 ),
+		'utc_date'                     => array( 0 ),
+		'utc_time'                     => array( 0, 1 ),
+		'utc_timestamp'                => array( 0, 1 ),
+		'version'                      => array( 0 ),
+		'reverse'                      => array( 1 ),
+		'_helper_like_to_glob_pattern' => array( 1 ),
+	);
+
+	/**
+	 * Variadic registrations that shadow incompatible SQLite built-in overloads.
+	 *
+	 * SQLite has variadic IF() and two-argument UNHEX() implementations. These
+	 * catch-all registrations prevent unsupported MySQL calls from falling
+	 * through to those built-ins.
+	 *
+	 * @var array
+	 */
+	private $unsupported_function_arities = array(
+		'if'    => array( -1 ),
+		'unhex' => array( -1 ),
 	);
 
 	/** @var string|null Last validated regex pattern. */
@@ -510,7 +584,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @param string $field Representing the date.
 	 * @param int    $mode  The mode argument.
 	 */
-	public function week( $field, $mode ) {
+	public function week( $field, $mode = 1 ) {
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
@@ -917,7 +991,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function field() {
 		$num_args = func_num_args();
-		if ( $num_args < 2 || is_null( func_get_arg( 0 ) ) ) {
+		$this->require_minimum_argument_count( 'FIELD', $num_args, 2 );
+		if ( is_null( func_get_arg( 0 ) ) ) {
 			return 0;
 		}
 		$arg_list      = func_get_args();
@@ -974,6 +1049,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return mixed
 	 */
 	public function least() {
+		$this->require_minimum_argument_count( 'LEAST', func_num_args(), 2 );
 		$arg_list = func_get_args();
 
 		return min( $arg_list );
@@ -987,6 +1063,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return mixed
 	 */
 	public function greatest() {
+		$this->require_minimum_argument_count( 'GREATEST', func_num_args(), 2 );
 		$arg_list = func_get_args();
 
 		return max( $arg_list );
@@ -1281,6 +1358,27 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$pattern = preg_replace( '/\\\\(.)/u', '$1', $pattern );
 
 		return $pattern;
+	}
+
+	/**
+	 * Reject a variadic function call with too few arguments.
+	 *
+	 * @param string $function_name Function name used in the error message.
+	 * @param int    $actual        Actual argument count.
+	 * @param int    $minimum       Minimum supported argument count.
+	 *
+	 * @throws Exception If the argument count is too low.
+	 * @return void
+	 */
+	private function require_minimum_argument_count( $function_name, $actual, $minimum ): void {
+		if ( $actual < $minimum ) {
+			throw new Exception(
+				sprintf(
+					"Incorrect parameter count in the call to native function '%s'",
+					$function_name
+				)
+			);
+		}
 	}
 
 	/**
