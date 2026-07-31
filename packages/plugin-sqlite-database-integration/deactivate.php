@@ -12,7 +12,7 @@
  * When the plugin gets merged in wp-core, this is not to be ported.
  */
 function sqlite_plugin_remove_db_file() {
-	if ( ! defined( 'SQLITE_DB_DROPIN_VERSION' ) || ! file_exists( WP_CONTENT_DIR . '/db.php' ) ) {
+	if ( ! sqlite_plugin_has_active_dropin() ) {
 		return;
 	}
 

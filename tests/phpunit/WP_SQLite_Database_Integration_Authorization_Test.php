@@ -261,6 +261,62 @@ class WP_SQLite_Database_Integration_Authorization_Tests extends WP_UnitTestCase
 		$this->assert_valid_nonce_install_is_denied();
 	}
 
+	/**
+	 * @group ms-excluded
+	 */
+	public function test_single_site_administrator_can_deactivate_sqlite() {
+		$this->set_single_site_user( 'administrator' );
+
+		$this->assertTrue( current_user_can( 'deactivate_plugin', plugin_basename( SQLITE_MAIN_FILE ) ) );
+		$this->assert_deactivation_removes_dropin();
+	}
+
+	/**
+	 * @group ms-excluded
+	 */
+	public function test_single_site_plugin_manager_can_only_deactivate_sqlite_without_dropin() {
+		$this->set_single_site_user( 'administrator' );
+		wp_get_current_user()->add_cap( 'manage_options', false );
+
+		$this->assertFalse( current_user_can( 'manage_options' ) );
+		$this->assertTrue( current_user_can( 'deactivate_plugin', 'another-plugin/plugin.php' ) );
+		$this->assertFalse( current_user_can( 'deactivate_plugin', plugin_basename( SQLITE_MAIN_FILE ) ) );
+
+		$this->run_without_dropin(
+			function () {
+				$this->assertTrue( current_user_can( 'deactivate_plugin', plugin_basename( SQLITE_MAIN_FILE ) ) );
+			}
+		);
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_super_admin_can_deactivate_sqlite() {
+		$this->set_multisite_user( true );
+
+		$this->assertTrue( current_user_can( 'deactivate_plugin', plugin_basename( SQLITE_MAIN_FILE ) ) );
+		$this->assert_deactivation_removes_dropin();
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_delegated_network_plugin_manager_can_only_deactivate_sqlite_without_dropin() {
+		$this->run_as_delegated_network_plugin_manager(
+			function () {
+				$this->assertTrue( current_user_can( 'deactivate_plugin', 'another-plugin/plugin.php' ) );
+				$this->assertFalse( current_user_can( 'deactivate_plugin', plugin_basename( SQLITE_MAIN_FILE ) ) );
+
+				$this->run_without_dropin(
+					function () {
+						$this->assertTrue( current_user_can( 'deactivate_plugin', plugin_basename( SQLITE_MAIN_FILE ) ) );
+					}
+				);
+			}
+		);
+	}
+
 	private function set_single_site_user( $role ) {
 		$user_id = self::factory()->user->create( array( 'role' => $role ) );
 
@@ -272,9 +328,62 @@ class WP_SQLite_Database_Integration_Authorization_Tests extends WP_UnitTestCase
 
 		switch_to_blog( self::$site_id );
 		wp_set_current_user( $user_id );
+	}
 
-		$this->assertTrue( current_user_can( 'manage_options' ) );
-		$this->assertSame( $is_super_admin, current_user_can( 'manage_network_options' ) );
+	private function run_as_delegated_network_plugin_manager( $callback ) {
+		$this->set_multisite_user( false );
+
+		$user         = wp_get_current_user();
+		$capabilities = array( 'activate_plugins', 'manage_network_plugins' );
+
+		foreach ( $capabilities as $capability ) {
+			$user->add_cap( $capability );
+		}
+
+		try {
+			return call_user_func( $callback );
+		} finally {
+			foreach ( $capabilities as $capability ) {
+				$user->remove_cap( $capability );
+			}
+		}
+	}
+
+	private function assert_deactivation_removes_dropin() {
+		$filesystem = $this->run_with_deactivation_filesystem( 'sqlite_plugin_remove_db_file' );
+
+		$this->assertSame( WP_CONTENT_DIR . '/db.php', $filesystem->deleted_path );
+		$this->assertFileExists( WP_CONTENT_DIR . '/db.php' );
+	}
+
+	private function run_with_deactivation_filesystem( $callback ) {
+		$wp_filesystem_was_set = array_key_exists( 'wp_filesystem', $GLOBALS );
+		$wp_filesystem_before  = $wp_filesystem_was_set ? $GLOBALS['wp_filesystem'] : null;
+		$filesystem            = new class() {
+			/**
+			 * @var string|null
+			 */
+			public $deleted_path;
+
+			public function delete( $path ) {
+				$this->deleted_path = $path;
+				return true;
+			}
+		};
+
+		$GLOBALS['wp_filesystem'] = $filesystem;
+
+		try {
+			call_user_func( $callback );
+		} finally {
+			if ( $wp_filesystem_was_set ) {
+				$GLOBALS['wp_filesystem'] = $wp_filesystem_before;
+			} else {
+				unset( $GLOBALS['wp_filesystem'] );
+			}
+		}
+
+		return $filesystem;
 	}
 
 	private function reset_admin_menu() {
