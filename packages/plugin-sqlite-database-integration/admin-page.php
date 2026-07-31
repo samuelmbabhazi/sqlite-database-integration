@@ -17,7 +17,7 @@ function sqlite_add_admin_menu() {
 			'settings.php',
 			__( 'SQLite integration', 'sqlite-database-integration' ),
 			__( 'SQLite integration', 'sqlite-database-integration' ),
-			'manage_network_options',
+			sqlite_plugin_get_manage_capability(),
 			'sqlite-integration',
 			'sqlite_integration_admin_screen'
 		);
@@ -25,7 +25,7 @@ function sqlite_add_admin_menu() {
 		add_options_page(
 			__( 'SQLite integration', 'sqlite-database-integration' ),
 			__( 'SQLite integration', 'sqlite-database-integration' ),
-			'manage_options',
+			sqlite_plugin_get_manage_capability(),
 			'sqlite-integration',
 			'sqlite_integration_admin_screen'
 		);
@@ -37,6 +37,13 @@ add_action( is_multisite() ? 'network_admin_menu' : 'admin_menu', 'sqlite_add_ad
  * The admin page contents.
  */
 function sqlite_integration_admin_screen() {
+	if ( ! current_user_can( sqlite_plugin_get_manage_capability() ) ) {
+		wp_die(
+			esc_html__( 'Sorry, you are not allowed to access the SQLite integration settings.', 'sqlite-database-integration' ),
+			403
+		);
+	}
+
 	$db_dropin_path = WP_CONTENT_DIR . '/db.php';
 
 	/*
@@ -172,6 +179,10 @@ function sqlite_integration_admin_screen() {
  * @param WP_Admin_Bar $admin_bar The admin bar object.
  */
 function sqlite_plugin_adminbar_item( $admin_bar ) {
+	if ( ! current_user_can( sqlite_plugin_get_manage_capability() ) ) {
+		return;
+	}
+
 	global $wpdb;
 
 	if ( defined( 'SQLITE_DB_DROPIN_VERSION' ) && defined( 'DB_ENGINE' ) && 'sqlite' === DB_ENGINE ) {
