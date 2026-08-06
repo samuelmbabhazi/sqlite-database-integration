@@ -28,7 +28,10 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 			WP_SQLite_Driver::class
 		);
 
-		$this->assertInstanceOf( WP_MySQL_On_SQLite::class, $get_driver() );
+		$mysql_on_sqlite_driver = $get_driver();
+
+		$this->assertInstanceOf( WP_MySQL_On_SQLite::class, $mysql_on_sqlite_driver );
+		$this->assertTrue( $mysql_on_sqlite_driver->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
 		$this->assertSame( $this->sqlite, $this->driver->get_connection()->get_pdo() );
 		$this->assertSame( $this->driver->get_sqlite_version(), $this->driver->client_info );
 		$this->assertSame( SQLITE_DRIVER_VERSION, $this->driver->get_saved_driver_version() );
@@ -52,7 +55,9 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 		$this->assertSame( $result, $this->driver->get_query_results() );
 		$this->assertSame( $result, $this->driver->get_last_return_value() );
 		$this->assertSame( 2, $this->driver->get_last_column_count() );
-		$this->assertCount( 2, $this->driver->get_last_column_meta() );
+		$this->assertSame( array( 'id', 'value' ), array_column( $this->driver->get_last_column_meta(), 'name' ) );
+		$this->assertFalse( method_exists( WP_MySQL_On_SQLite::class, 'get_last_column_count' ) );
+		$this->assertFalse( method_exists( WP_MySQL_On_SQLite::class, 'get_last_column_meta' ) );
 	}
 
 	public function test_delegates_diagnostics_and_native_queries(): void {

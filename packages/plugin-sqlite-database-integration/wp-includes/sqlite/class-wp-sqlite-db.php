@@ -617,7 +617,7 @@ class WP_SQLite_DB extends wpdb {
 
 			// Take note of the insert_id.
 			if ( preg_match( '/^\s*(insert|replace)\s/i', $query ) ) {
-				$this->insert_id = $this->dbh->get_insert_id();
+				$this->insert_id = (int) $this->dbh->lastInsertId();
 			}
 
 			// Return number of rows affected.
@@ -708,7 +708,11 @@ class WP_SQLite_DB extends wpdb {
 			return;
 		}
 		$this->col_info = array();
-		foreach ( $this->dbh->get_last_column_meta() as $column ) {
+		if ( null === $this->result ) {
+			return;
+		}
+		for ( $i = 0; $i < $this->result->columnCount(); $i++ ) {
+			$column           = $this->result->getColumnMeta( $i );
 			$this->col_info[] = (object) array(
 				'name'       => $column['name'],
 				'orgname'    => $column['mysqli:orgname'],
