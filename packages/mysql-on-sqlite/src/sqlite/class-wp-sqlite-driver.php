@@ -10,13 +10,15 @@
  * (e.g., WP CLI SQLite Command), ensure the PDO-based classes are loaded.
  */
 require_once __DIR__ . '/class-wp-mysql-on-sqlite.php';
-require_once __DIR__ . '/class-wp-pdo-proxy-statement.php';
+require_once __DIR__ . '/class-wp-mysql-on-sqlite-statement.php';
 
 /**
  * Deprecated: A proxy of the WP_MySQL_On_SQLite class preserving the legacy API.
  *
  * This class temporarily preserves the legacy constructor and result API while
  * consumers transition to the PDO-based WP_MySQL_On_SQLite API.
+ *
+ * @deprecated 3.0.0 Use WP_MySQL_On_SQLite instead.
  */
 class WP_SQLite_Driver {
 	/**
@@ -54,10 +56,11 @@ class WP_SQLite_Driver {
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
 	 *
-	 * @param WP_SQLite_Connection $connection A SQLite database connection.
-	 * @param string               $database   The database name.
+	 * @param WP_SQLite_Connection $connection    A SQLite database connection.
+	 * @param string               $database      The database name.
+	 * @param int                  $mysql_version The emulated MySQL version as an integer.
 	 *
-	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the driver initialization fails.
 	 */
 	public function __construct(
 		WP_SQLite_Connection $connection,
@@ -65,7 +68,7 @@ class WP_SQLite_Driver {
 		int $mysql_version = 80038
 	) {
 		$this->mysql_on_sqlite_driver = new WP_MySQL_On_SQLite(
-			sprintf( 'mysql-on-sqlite:dbname=%s', $database ),
+			sprintf( 'mysql-on-sqlite:dbname=%s', str_replace( ';', ';;', $database ) ),
 			null,
 			null,
 			array(
@@ -74,7 +77,6 @@ class WP_SQLite_Driver {
 				'journal_mode'  => $connection->query( 'PRAGMA journal_mode' )->fetchColumn(),
 			)
 		);
-		$this->main_db_name           = $database;
 		$this->client_info            = $this->mysql_on_sqlite_driver->client_info;
 
 		$connection->get_pdo()->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
@@ -155,7 +157,7 @@ class WP_SQLite_Driver {
 	 *
 	 * @return mixed Return value, depending on the query type.
 	 *
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
 		$stmt = $this->mysql_on_sqlite_driver->query( $query, $fetch_mode, ...$fetch_mode_args );
@@ -254,27 +256,5 @@ class WP_SQLite_Driver {
 	 */
 	public function rollback(): void {
 		$this->mysql_on_sqlite_driver->rollback();
-	}
-
-	/**
-	 * Proxy also the private property "$main_db_name", as it is used in tests.
-	 */
-	public function __set( string $name, $value ): void {
-		if ( 'main_db_name' === $name ) {
-			$closure = function ( string $value ) {
-				$this->main_db_name = $value;
-			};
-			$closure->call( $this->mysql_on_sqlite_driver, $value );
-		}
-	}
-
-	/**
-	 * Proxy also this private method, as it is used in tests.
-	 */
-	private function quote_mysql_utf8_string_literal( string $utf8_literal ): string {
-		$closure = function ( string $utf8_literal ) {
-			return $this->quote_mysql_utf8_string_literal( $utf8_literal );
-		};
-		return $closure->call( $this->mysql_on_sqlite_driver, $utf8_literal );
 	}
 }

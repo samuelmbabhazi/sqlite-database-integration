@@ -14,6 +14,8 @@
  * Currently, it reconstructs schema infromation for missing tables, and removes
  * stale data for tables that no longer exist. When used with WordPress, it uses
  * the "wp_get_db_schema()" function to reconstruct WordPress table information.
+ *
+ * @access private
  */
 class WP_SQLite_Information_Schema_Reconstructor {
 	/**
@@ -76,7 +78,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 					$sql = $this->generate_create_table_statement( $table );
 					$ast = $this->driver->create_parser( $sql )->parse();
 					if ( null === $ast ) {
-						throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+						throw new WP_MySQL_On_SQLite_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 					}
 				}
 
@@ -111,7 +113,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		$sql = sprintf( 'DROP TABLE %s', $this->connection->quote_identifier( $table_name ) ); // TODO: mysql quote
 		$ast = $this->driver->create_parser( $sql )->parse();
 		if ( null === $ast ) {
-			throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+			throw new WP_MySQL_On_SQLite_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 		}
 		$this->schema_builder->record_drop_table(
 			$ast->get_first_descendant_node( 'dropStatement' )
@@ -233,7 +235,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		while ( $parser->next_query() ) {
 			$ast = $parser->get_query_ast();
 			if ( null === $ast ) {
-				throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+				throw new WP_MySQL_On_SQLite_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 			}
 
 			$create_node = $ast->get_first_descendant_node( 'createStatement' );
