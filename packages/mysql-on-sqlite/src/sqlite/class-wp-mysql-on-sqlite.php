@@ -58,6 +58,69 @@ class WP_MySQL_On_SQLite extends PDO {
 	const DRIVER_VERSION_VARIABLE_NAME = self::RESERVED_PREFIX . 'driver_version';
 
 	/**
+	 * MySQL SQL modes mapped to their bitmask values.
+	 *
+	 * The modes are ordered by their bit position, matching MySQL's canonical
+	 * serialization order.
+	 *
+	 * See:
+	 *   https://github.com/mysql/mysql-server/blob/8.4/sql/system_variables.h
+	 *   https://github.com/mysql/mysql-server/blob/5.7/sql/sys_vars.cc
+	 */
+	private const SQL_MODES = array(
+		'REAL_AS_FLOAT'              => 1 << 0,
+		'PIPES_AS_CONCAT'            => 1 << 1,
+		'ANSI_QUOTES'                => 1 << 2,
+		'IGNORE_SPACE'               => 1 << 3,
+		'NOT_USED'                   => 1 << 4,
+		'ONLY_FULL_GROUP_BY'         => 1 << 5,
+		'NO_UNSIGNED_SUBTRACTION'    => 1 << 6,
+		'NO_DIR_IN_CREATE'           => 1 << 7,
+		'POSTGRESQL'                 => 1 << 8,
+		'ORACLE'                     => 1 << 9,
+		'MSSQL'                      => 1 << 10,
+		'DB2'                        => 1 << 11,
+		'MAXDB'                      => 1 << 12,
+		'NO_KEY_OPTIONS'             => 1 << 13,
+		'NO_TABLE_OPTIONS'           => 1 << 14,
+		'NO_FIELD_OPTIONS'           => 1 << 15,
+		'MYSQL323'                   => 1 << 16,
+		'MYSQL40'                    => 1 << 17,
+		'ANSI'                       => 1 << 18,
+		'NO_AUTO_VALUE_ON_ZERO'      => 1 << 19,
+		'NO_BACKSLASH_ESCAPES'       => 1 << 20,
+		'STRICT_TRANS_TABLES'        => 1 << 21,
+		'STRICT_ALL_TABLES'          => 1 << 22,
+		'NO_ZERO_IN_DATE'            => 1 << 23,
+		'NO_ZERO_DATE'               => 1 << 24,
+		'ALLOW_INVALID_DATES'        => 1 << 25,
+		'ERROR_FOR_DIVISION_BY_ZERO' => 1 << 26,
+		'TRADITIONAL'                => 1 << 27,
+		'NO_AUTO_CREATE_USER'        => 1 << 28,
+		'HIGH_NOT_PRECEDENCE'        => 1 << 29,
+		'NO_ENGINE_SUBSTITUTION'     => 1 << 30,
+		'PAD_CHAR_TO_FULL_LENGTH'    => 1 << 31,
+
+		// Modes below require 64-bit PHP.
+		// TODO: Consider supporting these values on 32-bit PHP as well.
+		'TIME_TRUNCATE_FRACTIONAL'   => 1 << 32,
+	);
+
+	/**
+	 * The default SQL modes shared by MySQL 5.7 and 8.0.
+	 *
+	 * MySQL 5.7 additionally enables NO_AUTO_CREATE_USER.
+	 */
+	private const DEFAULT_SQL_MODES = array(
+		'ERROR_FOR_DIVISION_BY_ZERO',
+		'NO_ENGINE_SUBSTITUTION',
+		'NO_ZERO_DATE',
+		'NO_ZERO_IN_DATE',
+		'ONLY_FULL_GROUP_BY',
+		'STRICT_TRANS_TABLES',
+	);
+
+	/**
 	 * A map of MySQL tokens to SQLite data types.
 	 *
 	 * This is used to translate a MySQL data type to an SQLite data type.
@@ -591,16 +654,9 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * TODO: This may be represented using a temporary table in the future,
 	 *       together with GLOBAL SQL mode (a non-temporary table).
 	 *
-	 * @var string[]
+	 * @var int
 	 */
-	private $active_sql_modes = array(
-		'ERROR_FOR_DIVISION_BY_ZERO',
-		'NO_ENGINE_SUBSTITUTION',
-		'NO_ZERO_DATE',
-		'NO_ZERO_IN_DATE',
-		'ONLY_FULL_GROUP_BY',
-		'STRICT_TRANS_TABLES',
-	);
+	private $active_sql_modes;
 
 	/**
 	 * A name-to-value map of MySQL system variables for the current session.
@@ -706,6 +762,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		$this->mysql_version = $options['mysql_version'] ?? 80038;
 		$this->main_db_name  = $db_name;
 		$this->db_name       = $db_name;
+		$this->set_sql_modes( $this->get_default_sql_modes() );
 
 		// Check the database name.
 		if ( '' === $this->db_name ) {
@@ -1221,7 +1278,12 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @return bool         True if the SQL mode is active, false otherwise.
 	 */
 	public function is_sql_mode_active( string $mode ): bool {
-		return in_array( strtoupper( $mode ), $this->active_sql_modes, true );
+		$mode = strtoupper( $mode );
+		if ( 'NOT_USED' === $mode && $this->mysql_version < 80000 ) {
+			return false;
+		}
+		return isset( self::SQL_MODES[ $mode ] )
+			&& ( $this->active_sql_modes & self::SQL_MODES[ $mode ] ) !== 0;
 	}
 
 	/**
@@ -1265,7 +1327,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		$lexer  = new WP_MySQL_Lexer(
 			$query,
 			80038,
-			$this->active_sql_modes
+			$this->get_active_sql_mode_names()
 		);
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
 			? $lexer->native_token_stream()
@@ -3601,21 +3663,26 @@ class WP_MySQL_On_SQLite extends PDO {
 		 *          SET updatable_views_with_limit = false; SELECT @@updatable_views_with_limit; -> NO
 		 */
 		$lowercase_value = null === $value ? null : strtolower( $value );
-		if ( 'on' === $lowercase_value || 'off' === $lowercase_value ) {
+		if ( 'sql_mode' !== $name && ( 'on' === $lowercase_value || 'off' === $lowercase_value ) ) {
 			$value = 'on' === $lowercase_value ? 1 : 0;
 		}
 
 		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 			if ( 'sql_mode' === $name ) {
-				// MySQL ignores trailing ASCII spaces in SQL mode names.
-				$modes = explode( ',', strtoupper( $value ) );
-				foreach ( $modes as $i => $mode ) {
-					$modes[ $i ] = rtrim( $mode, ' ' );
+				if ( null !== $value_node->get_first_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
+					$sql_modes = $this->get_default_sql_modes();
+				} elseif ( is_string( $value ) ) {
+					/*
+					 * MySQL removes spaces only from the end of the complete value.
+					 * Spaces within individual mode names remain invalid.
+					 *
+					 * See: https://github.com/mysql/mysql-server/blob/8.4/sql/strfunc.cc#L39-L64
+					 */
+					$sql_modes = explode( ',', rtrim( $value, ' ' ) );
+				} else {
+					$sql_modes = $value;
 				}
-				if ( in_array( 'NO_BACKSLASH_ESCAPES', $modes, true ) ) {
-					throw $this->new_not_supported_exception( "SQL mode 'NO_BACKSLASH_ESCAPES'" );
-				}
-				$this->active_sql_modes = $modes;
+				$this->set_sql_modes( $sql_modes );
 			} else {
 				$this->session_system_variables[ $name ] = $value;
 			}
@@ -3966,7 +4033,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				$name = strtolower( $original_name );
 				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
 				if ( 'sql_mode' === $name ) {
-					$value = implode( ',', $this->active_sql_modes );
+					$value = implode( ',', $this->get_active_sql_mode_names() );
 				} elseif ( 'version' === $name ) {
 					$version = (string) $this->mysql_version;
 					$value   = sprintf(
@@ -5773,6 +5840,171 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Get the default SQL modes for the emulated MySQL version.
+	 *
+	 * @return string[] Default SQL mode names.
+	 */
+	private function get_default_sql_modes(): array {
+		$sql_modes = self::DEFAULT_SQL_MODES;
+		if ( $this->mysql_version < 80000 ) {
+			$sql_modes[] = 'NO_AUTO_CREATE_USER';
+		}
+
+		return $sql_modes;
+	}
+
+	/**
+	 * Set the active SQL modes from a name list or numeric bitmask.
+	 *
+	 * @param string[]|int $modes SQL mode names or a numeric bitmask.
+	 */
+	private function set_sql_modes( $modes ): void {
+		if ( null === $modes ) {
+			throw $this->new_invalid_sql_mode_exception( $modes );
+		}
+
+		$known_sql_modes_mask = array_sum( self::SQL_MODES );
+
+		// TIME_TRUNCATE_FRACTIONAL was introduced in MySQL 8.0.1.
+		if ( $this->mysql_version < 80001 ) {
+			$known_sql_modes_mask &= ~self::SQL_MODES['TIME_TRUNCATE_FRACTIONAL'];
+		}
+
+		// Numeric SQL mode bitmap assignment (e.g., "SET sql_mode = 4" for ANSI_QUOTES).
+		if ( is_int( $modes ) ) {
+			// Ensure the bitmap contains only SQL mode bits known to the emulated MySQL version.
+			if ( $modes < 0 || ( $modes & ~$known_sql_modes_mask ) !== 0 ) {
+				throw $this->new_invalid_sql_mode_exception( $modes );
+			}
+
+			// Reject recognized but no longer supported SQL modes.
+			$unsupported_sql_modes = 0;
+			foreach ( self::SQL_MODES as $mode => $value ) {
+				if ( ( $modes & $value ) !== 0 && $this->is_sql_mode_removed( $mode ) ) {
+					$unsupported_sql_modes |= $value;
+				}
+			}
+
+			if ( 0 !== $unsupported_sql_modes ) {
+				throw $this->new_driver_exception(
+					sprintf(
+						'SQLSTATE[HY000]: General error: 3899 sql_mode=0x%08x is not supported.',
+						$unsupported_sql_modes
+					),
+					'HY000'
+				);
+			}
+
+			$sql_modes = $modes;
+		} elseif ( is_array( $modes ) ) {
+			// String SQL mode assignment (e.g., "SET sql_mode = 'ANSI_QUOTES,STRICT_TRANS_TABLES'").
+			$sql_modes = 0;
+			foreach ( $modes as $mode ) {
+				if ( '' === $mode ) {
+					continue;
+				}
+
+				$normalized_mode = strtoupper( $mode );
+				$mode_value      = self::SQL_MODES[ $normalized_mode ] ?? 0;
+				if (
+					0 === ( $mode_value & $known_sql_modes_mask )
+					|| ( 'NOT_USED' === $normalized_mode && $this->mysql_version < 80000 )
+					|| $this->is_sql_mode_removed( $normalized_mode )
+				) {
+					throw $this->new_invalid_sql_mode_exception( $mode );
+				}
+
+				$sql_modes |= $mode_value;
+			}
+		} else {
+			throw $this->new_driver_exception(
+				"SQLSTATE[42000]: Syntax error or access violation: 1232 Incorrect argument type to variable 'sql_mode'",
+				'42000'
+			);
+		}
+
+		if ( ( $sql_modes & self::SQL_MODES['NO_BACKSLASH_ESCAPES'] ) !== 0 ) {
+			throw $this->new_not_supported_exception( "SQL mode 'NO_BACKSLASH_ESCAPES'" );
+		}
+
+		/*
+		 * MySQL retains composite SQL modes while enabling their component modes.
+		 * Store both so "@@sql_mode" and individual mode checks match MySQL, even
+		 * though not all resulting modes are respected by the emulation yet.
+		 *
+		 * See:
+		 *   https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sql-mode-combo
+		 *   https://github.com/mysql/mysql-server/blob/8.4/sql/sys_vars.cc
+		 */
+		if ( ( $sql_modes & self::SQL_MODES['ANSI'] ) !== 0 ) {
+			$sql_modes |= self::SQL_MODES['REAL_AS_FLOAT']
+				| self::SQL_MODES['PIPES_AS_CONCAT']
+				| self::SQL_MODES['ANSI_QUOTES']
+				| self::SQL_MODES['IGNORE_SPACE']
+				| self::SQL_MODES['ONLY_FULL_GROUP_BY'];
+		}
+
+		$this->active_sql_modes = $sql_modes;
+	}
+
+	/**
+	 * Check whether an SQL mode was removed from the emulated MySQL version.
+	 *
+	 * @param  string $mode Normalized SQL mode name.
+	 * @return bool         Whether the SQL mode was removed.
+	 */
+	private function is_sql_mode_removed( string $mode ): bool {
+		/*
+		 * MySQL still recognizes the legacy bits for modes removed in 8.0.11
+		 * so it can report them as unsupported, rather than unknown.
+		 */
+		return $this->mysql_version >= 80011
+			&& in_array(
+				$mode,
+				array(
+					'POSTGRESQL',
+					'ORACLE',
+					'MSSQL',
+					'DB2',
+					'MAXDB',
+					'NO_KEY_OPTIONS',
+					'NO_TABLE_OPTIONS',
+					'NO_FIELD_OPTIONS',
+					'MYSQL323',
+					'MYSQL40',
+					'NO_AUTO_CREATE_USER',
+				),
+				true
+			);
+	}
+
+	/**
+	 * Get the active SQL mode names in canonical bitmask order.
+	 *
+	 * @return string[] Active SQL mode names.
+	 */
+	private function get_active_sql_mode_names(): array {
+		$active_modes = array();
+		foreach ( self::SQL_MODES as $mode => $value ) {
+			if ( ( $this->active_sql_modes & $value ) !== 0 ) {
+				if ( 'NOT_USED' === $mode && $this->mysql_version < 80000 ) {
+					/*
+					 * MySQL 5.7 represents reserved bit 4 with a comma in its mode
+					 * name table. Two empty components preserve that serialization
+					 * when the final list is joined with commas.
+					 */
+					$active_modes[] = '';
+					$active_modes[] = '';
+				} else {
+					$active_modes[] = $mode;
+				}
+			}
+		}
+
+		return $active_modes;
+	}
+
+	/**
 	 * Store column metadata for the last SQLite statement.
 	 *
 	 * This function stores the original SQLite column metadata as-is, without
@@ -7253,6 +7485,22 @@ class WP_MySQL_On_SQLite extends PDO {
 		return new WP_SQLite_Driver_Exception(
 			$this,
 			sprintf( 'MySQL query not supported. Cause: %s', $cause )
+		);
+	}
+
+	/**
+	 * Create a MySQL-compatible exception for an invalid SQL mode value.
+	 *
+	 * @param  mixed $value The invalid SQL mode value.
+	 * @return WP_SQLite_Driver_Exception
+	 */
+	private function new_invalid_sql_mode_exception( $value ): WP_SQLite_Driver_Exception {
+		return $this->new_driver_exception(
+			sprintf(
+				"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
+				null === $value ? 'NULL' : (string) $value
+			),
+			'42000'
 		);
 	}
 

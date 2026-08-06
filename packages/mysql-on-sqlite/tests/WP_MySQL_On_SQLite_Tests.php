@@ -3,6 +3,19 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_MySQL_On_SQLite_Tests extends TestCase {
+	/**
+	 * SQL mode bit values asserted independently from the driver implementation.
+	 */
+	private const SQL_MODE_REAL_AS_FLOAT            = 1 << 0;
+	private const SQL_MODE_PIPES_AS_CONCAT          = 1 << 1;
+	private const SQL_MODE_ANSI_QUOTES              = 1 << 2;
+	private const SQL_MODE_NOT_USED                 = 1 << 4;
+	private const SQL_MODE_POSTGRESQL               = 1 << 8;
+	private const SQL_MODE_ORACLE                   = 1 << 9;
+	private const SQL_MODE_NO_BACKSLASH_ESCAPES     = 1 << 20;
+	private const SQL_MODE_TIME_TRUNCATE_FRACTIONAL = 1 << 32;
+	private const UNKNOWN_SQL_MODE_BIT              = 1 << 33;
+
 	/** @var WP_MySQL_On_SQLite */
 	private $engine;
 
@@ -2860,6 +2873,260 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertStringNotContainsString( 'NO_AUTO_VALUE_ON_ZERO', strtoupper( $results[0]->mode ) );
 	}
 
+	public function testSqlModesUseCanonicalBitmapOrder() {
+		$this->assertQuery(
+			"SET sql_mode = 'no_engine_substitution,only_full_group_by,strict_all_tables,only_full_group_by'"
+		);
+
+		$this->assertTrue( $this->engine->is_sql_mode_active( 'ONLY_FULL_GROUP_BY' ) );
+		$this->assertTrue( $this->engine->is_sql_mode_active( 'strict_all_tables' ) );
+		$this->assertTrue( $this->engine->is_sql_mode_active( 'NO_ENGINE_SUBSTITUTION' ) );
+		$this->assertFalse( $this->engine->is_sql_mode_active( 'STRICT_TRANS_TABLES' ) );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame(
+			'ONLY_FULL_GROUP_BY,STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION',
+			$this->last_result[0]->mode
+		);
+	}
+
+	public function testSqlModesAcceptNumericBitmap() {
+		$bitmap = self::SQL_MODE_REAL_AS_FLOAT
+			| self::SQL_MODE_PIPES_AS_CONCAT
+			| self::SQL_MODE_TIME_TRUNCATE_FRACTIONAL;
+		$this->assertQuery( "SET sql_mode = $bitmap" );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame(
+			'REAL_AS_FLOAT,PIPES_AS_CONCAT,TIME_TRUNCATE_FRACTIONAL',
+			$this->last_result[0]->mode
+		);
+	}
+
+	public function testMySQL8PreservesNotUsedSqlModeBit() {
+		$this->assertQuery( "SET sql_mode = 'NOT_USED'" );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'NOT_USED', $this->last_result[0]->mode );
+
+		$this->assertQuery( 'SET sql_mode = ' . self::SQL_MODE_NOT_USED );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'NOT_USED', $this->last_result[0]->mode );
+	}
+
+	public function testMySQL57PreservesUnnamedSqlModeBit() {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->sqlite,
+				'mysql_version' => 50744,
+			)
+		);
+
+		// MySQL 5.7 serializes its unnamed bit 4 through a "," name-table placeholder.
+		$this->assertQuery( 'SET sql_mode = ' . self::SQL_MODE_NOT_USED );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( ',', $this->last_result[0]->mode );
+		$this->assertFalse( $this->engine->is_sql_mode_active( 'NOT_USED' ) );
+	}
+
+	public function testSqlModeValidationUsesEmulatedMySQLVersion() {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->sqlite,
+				'mysql_version' => 50744,
+			)
+		);
+
+		$this->assertQuery( "SET sql_mode = 'POSTGRESQL,NO_AUTO_CREATE_USER'" );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'POSTGRESQL,NO_AUTO_CREATE_USER', $this->last_result[0]->mode );
+
+		$time_truncate_fractional = self::SQL_MODE_TIME_TRUNCATE_FRACTIONAL;
+		foreach (
+			array(
+				array( "SET sql_mode = 'TIME_TRUNCATE_FRACTIONAL'", 'TIME_TRUNCATE_FRACTIONAL' ),
+				array( "SET sql_mode = $time_truncate_fractional", (string) $time_truncate_fractional ),
+			) as $invalid_sql_mode
+		) {
+			$exception = null;
+			try {
+				$this->query( $invalid_sql_mode[0] );
+			} catch ( WP_SQLite_Driver_Exception $e ) {
+				$exception = $e;
+			}
+
+			$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+			$this->assertSame(
+				sprintf(
+					"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
+					$invalid_sql_mode[1]
+				),
+				$exception->getMessage()
+			);
+			$this->assertSame( '42000', $exception->getCode() );
+		}
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'POSTGRESQL,NO_AUTO_CREATE_USER', $this->last_result[0]->mode );
+	}
+
+	public function testMySQL57RejectsNotUsedSqlModeName() {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->sqlite,
+				'mysql_version' => 50744,
+			)
+		);
+
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionCode( '42000' );
+		$this->expectExceptionMessage(
+			"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of 'NOT_USED'"
+		);
+
+		$this->query( "SET sql_mode = 'NOT_USED'" );
+	}
+
+	public function testRemovedSqlModeBitmapThrowsMySQLError() {
+		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+
+		$bitmap    = self::SQL_MODE_ANSI_QUOTES | self::SQL_MODE_POSTGRESQL | self::SQL_MODE_ORACLE;
+		$exception = null;
+		try {
+			$this->query( "SET sql_mode = $bitmap" );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame(
+			'SQLSTATE[HY000]: General error: 3899 sql_mode=0x00000300 is not supported.',
+			$exception->getMessage()
+		);
+		$this->assertSame( 'HY000', $exception->getCode() );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'ANSI_QUOTES', $this->last_result[0]->mode );
+	}
+
+	public function testSqlModeDefaultRestoresDefaultBitmap() {
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'SET sql_mode = DEFAULT' );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		// Keep the expectation independent so accidental changes to the driver default fail this test.
+		$this->assertSame(
+			'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION',
+			$this->last_result[0]->mode
+		);
+	}
+
+	public function testSqlModeDefaultUsesEmulatedMySQLVersion() {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->sqlite,
+				'mysql_version' => 50744,
+			)
+		);
+
+		$expected_modes = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( $expected_modes, $this->last_result[0]->mode );
+
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'SET sql_mode = DEFAULT' );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( $expected_modes, $this->last_result[0]->mode );
+	}
+
+	/**
+	 * @dataProvider invalidSqlModeValues
+	 */
+	public function testInvalidSqlModeValueThrowsMySQLError( string $query, string $invalid_value ) {
+		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+
+		$exception = null;
+		try {
+			$this->query( $query );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame(
+			sprintf(
+				"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
+				$invalid_value
+			),
+			$exception->getMessage()
+		);
+		$this->assertSame( '42000', $exception->getCode() );
+
+		// A rejected assignment must not change the active modes.
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'ANSI_QUOTES', $this->last_result[0]->mode );
+	}
+
+	public function invalidSqlModeValues(): array {
+		$unknown_sql_mode_bit = self::UNKNOWN_SQL_MODE_BIT;
+
+		return array(
+			'unknown mode'              => array( "SET sql_mode = 'FOOBAR'", 'FOOBAR' ),
+			'ON keyword'                => array( 'SET sql_mode = ON', 'ON' ),
+			'quoted OFF'                => array( "SET sql_mode = 'OFF'", 'OFF' ),
+			'quoted DEFAULT'            => array( "SET sql_mode = 'DEFAULT'", 'DEFAULT' ),
+			'mode removed in MySQL 8.0' => array( "SET sql_mode = 'POSTGRESQL'", 'POSTGRESQL' ),
+			'mixed valid and invalid'   => array( "SET sql_mode = 'ERROR_FOR_DIVISION_BY_ZERO,FOOBAR,IGNORE_SPACE'", 'FOOBAR' ),
+			'invalid among empty modes' => array( "SET sql_mode = ',,,,FOOBAR,,,,,'", 'FOOBAR' ),
+			'leading mode whitespace'   => array( "SET sql_mode = 'ANSI_QUOTES, NO_ENGINE_SUBSTITUTION'", ' NO_ENGINE_SUBSTITUTION' ),
+			'trailing mode whitespace'  => array( "SET sql_mode = 'ANSI_QUOTES ,NO_ENGINE_SUBSTITUTION'", 'ANSI_QUOTES ' ),
+			'whitespace-only mode'      => array( "SET sql_mode = 'ANSI_QUOTES, ,NO_ENGINE_SUBSTITUTION'", ' ' ),
+			'null'                      => array( 'SET sql_mode = NULL', 'NULL' ),
+			'negative bitmap'           => array( 'SET sql_mode = -1', '-1' ),
+			'unsupported bitmap bit'    => array( "SET sql_mode = $unknown_sql_mode_bit", (string) $unknown_sql_mode_bit ),
+		);
+	}
+
+	public function testSqlModeAllowsEmptyListComponents() {
+		$this->assertQuery( "SET sql_mode = ',,,,ONLY_FULL_GROUP_BY,,,'" );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'ONLY_FULL_GROUP_BY', $this->last_result[0]->mode );
+	}
+
+	public function testSqlModeIgnoresSpacesAtEndOfValue() {
+		$this->assertQuery( "SET sql_mode = 'ONLY_FULL_GROUP_BY   '" );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'ONLY_FULL_GROUP_BY', $this->last_result[0]->mode );
+
+		$this->assertQuery( "SET sql_mode = '   '" );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( '', $this->last_result[0]->mode );
+	}
+
+	public function testSqlModeRejectsIncorrectValueType() {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionCode( '42000' );
+		$this->expectExceptionMessage(
+			"SQLSTATE[42000]: Syntax error or access violation: 1232 Incorrect argument type to variable 'sql_mode'"
+		);
+
+		$this->query( 'SET sql_mode = 0.5' );
+	}
+
 	public function testAutoIncrementZeroAdvancesSequenceByDefault() {
 		// Default SQL modes do not include NO_AUTO_VALUE_ON_ZERO.
 		// Values like 0 and '0' should behave like NULL and advance the sequence.
@@ -2922,6 +3189,77 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$results = $this->last_result;
 		$this->assertCount( 1, $results );
 		$this->assertEquals( 1, $results[0]->ID );
+	}
+
+	public function testDoubleQuotesAreStringLiteralsByDefault() {
+		$this->assertQuery( 'SELECT "hello" AS greeting;' );
+		$results = $this->last_result;
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'hello', $results[0]->greeting );
+	}
+
+	public function testAnsiQuotesTreatsDoubleQuotesAsIdentifiers() {
+		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('alpha', 'one');"
+		);
+
+		$this->assertQuery( 'SELECT "option_name" AS "name" FROM _options WHERE "option_value" = \'one\';' );
+		$results = $this->last_result;
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'alpha', $results[0]->name );
+	}
+
+	public function testAnsiQuotesAllowsDoubleQuotedIdentifiersInDdl() {
+		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+
+		// Double quotes within the column name are escaped by doubling them.
+		$this->assertQuery( 'CREATE TABLE "table with spaces" ("column with ""quotes"" in name" INTEGER);' );
+		$this->assertQuery( 'INSERT INTO "table with spaces" ("column with ""quotes"" in name") VALUES (42);' );
+		$this->assertQuery( 'SELECT "column with ""quotes"" in name" FROM "table with spaces";' );
+
+		$results = $this->last_result;
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 42, $results[0]->{'column with "quotes" in name'} );
+	}
+
+	public function testCompositeAnsiModeEnablesAnsiQuotes() {
+		$this->assertQuery( "SET sql_mode = 'ANSI'" );
+
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('alpha', 'one');"
+		);
+
+		$this->assertQuery( 'SELECT "option_name" AS "name" FROM _options WHERE "option_value" = \'one\';' );
+		$results = $this->last_result;
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'alpha', $results[0]->name );
+	}
+
+	public function testCompositeAnsiModeExpandsToComponentModes() {
+		$this->assertQuery( "SET sql_mode = 'ANSI'" );
+
+		// The composite ANSI mode is retained alongside its component modes.
+		$this->assertTrue( $this->engine->is_sql_mode_active( 'ANSI' ) );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$results = $this->last_result;
+		$this->assertSame(
+			'REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI',
+			$results[0]->mode
+		);
+	}
+
+	public function testCompositeAnsiModeExpandsAlongsideOtherModes() {
+		$this->assertQuery( "SET sql_mode = 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES,ANSI'" );
+
+		// The expanded modes are returned in MySQL's canonical bitmask order.
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$results = $this->last_result;
+		$this->assertSame(
+			'REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI,STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION',
+			$results[0]->mode
+		);
 	}
 
 	public function testCaseInsensitiveSelect() {
@@ -5882,6 +6220,7 @@ QUERY
 			"SET sql_mode = 'STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES'",
 			"SET sql_mode = 'STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES '",
 			"SET sql_mode = 'no_backslash_escapes'",
+			'SET sql_mode = ' . self::SQL_MODE_NO_BACKSLASH_ESCAPES,
 		);
 
 		foreach ( $queries as $query ) {
