@@ -33,7 +33,10 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 		$this->assertInstanceOf( WP_MySQL_On_SQLite::class, $mysql_on_sqlite_driver );
 		$this->assertTrue( $mysql_on_sqlite_driver->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
 		$this->assertSame( $this->sqlite, $this->driver->get_connection()->get_pdo() );
-		$this->assertSame( $this->driver->get_sqlite_version(), $this->driver->client_info );
+		$this->assertSame(
+			'mysqlnd 8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION,
+			$this->driver->client_info
+		);
 		$this->assertSame( SQLITE_DRIVER_VERSION, $this->driver->get_saved_driver_version() );
 		$this->assertTrue( $this->driver->is_sql_mode_active( 'STRICT_TRANS_TABLES' ) );
 	}
@@ -67,6 +70,17 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 		$this->assertNotEmpty( $this->driver->get_last_sqlite_queries() );
 		$this->assertInstanceOf( WP_MySQL_Parser::class, $this->driver->create_parser( 'SELECT 1' ) );
 		$this->assertSame( '42', $this->driver->execute_sqlite_query( 'SELECT 42' )->fetchColumn() );
+	}
+
+	public function test_preserves_configured_mysql_version(): void {
+		$driver = new WP_SQLite_Driver(
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			'wp',
+			50744
+		);
+
+		$this->assertSame( '5.7.44-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $driver->query( 'SELECT VERSION()' )[0]->{'VERSION()'} );
+		$this->assertSame( '1', $driver->query( 'SELECT 1 /*!80000 + 1 */' )[0]->{'1'} );
 	}
 
 	public function test_preserves_transaction_method_aliases(): void {

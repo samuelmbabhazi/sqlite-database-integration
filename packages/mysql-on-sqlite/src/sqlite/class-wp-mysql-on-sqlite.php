@@ -46,6 +46,16 @@ class WP_MySQL_On_SQLite extends PDO {
 	private const MYSQL_GRAMMAR_PATH = __DIR__ . '/../mysql/mysql-grammar.php';
 
 	/**
+	 * The minimum supported MySQL version.
+	 */
+	private const MINIMUM_MYSQL_VERSION = 50700;
+
+	/**
+	 * The default MySQL version to emulate.
+	 */
+	const DEFAULT_MYSQL_VERSION = 80038;
+
+	/**
 	 * The minimum required version of SQLite.
 	 *
 	 * Currently, we require SQLite >= 3.37.0 due to the STRICT table support:
@@ -488,7 +498,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	private $mysql_version;
 
 	/**
-	 * The SQLite engine version.
+	 * The emulated MySQL client library version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
 	 * the WordPress health info. The "WP_Debug_Data::get_wp_database()" method
@@ -775,6 +785,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *     @type string|int|null $synchronous   Optional. SQLite synchronous setting.
 	 * }
 	 *
+	 * @throws InvalidArgumentException     When the MySQL version is invalid.
 	 * @throws WP_MySQL_On_SQLite_Exception When the driver initialization fails.
 	 */
 	public function __construct(
@@ -824,6 +835,16 @@ class WP_MySQL_On_SQLite extends PDO {
 		$path    = $args['path'] ?? ':memory:';
 		$db_name = $args['dbname'] ?? 'sqlite_database';
 
+		$mysql_version = $options['mysql_version'] ?? self::DEFAULT_MYSQL_VERSION;
+		if ( ! is_int( $mysql_version ) || $mysql_version < self::MINIMUM_MYSQL_VERSION ) {
+			throw new InvalidArgumentException(
+				sprintf(
+					'The "mysql_version" option must be an integer greater than or equal to %d.',
+					self::MINIMUM_MYSQL_VERSION
+				)
+			);
+		}
+
 		// Create a new SQLite connection.
 		$pdo_options = array_filter(
 			$options,
@@ -852,7 +873,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 		$this->connection = new WP_SQLite_Connection( $connection_options );
 
-		$this->mysql_version = $options['mysql_version'] ?? 80038;
+		$this->mysql_version = $mysql_version;
 		$this->main_db_name  = $db_name;
 		$this->db_name       = $db_name;
 		$this->set_sql_modes( $this->get_default_sql_modes() );
@@ -909,8 +930,8 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 		}
 
-		// Load SQLite version to a property used by WordPress health info.
-		$this->client_info = $sqlite_version;
+		// Load MySQL client information to a property used by WordPress health info.
+		$this->client_info = $this->getAttribute( PDO::ATTR_CLIENT_VERSION );
 
 		// Enable foreign keys. By default, they are off.
 		$this->connection->query( 'PRAGMA foreign_keys = ON' );
@@ -1423,11 +1444,16 @@ class WP_MySQL_On_SQLite extends PDO {
 	 */
 	#[ReturnTypeWillChange]
 	public function getAttribute( $attribute ) {
-		// Return the caller's error mode instead of the exception mode used internally.
-		if ( PDO::ATTR_ERRMODE === $attribute ) {
+		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+			return 'mysql';
+		} elseif ( PDO::ATTR_CLIENT_VERSION === $attribute ) {
+			return 'mysqlnd ' . $this->get_mysql_server_version_string();
+		} elseif ( PDO::ATTR_SERVER_VERSION === $attribute ) {
+			return $this->get_mysql_server_version_string();
+		} elseif ( PDO::ATTR_ERRMODE === $attribute ) {
+			// Return the caller's error mode instead of the exception mode used internally.
 			return $this->error_mode;
-		}
-		if ( PDO::ATTR_STRINGIFY_FETCHES === $attribute && PHP_VERSION_ID < 80200 ) {
+		} elseif ( PDO::ATTR_STRINGIFY_FETCHES === $attribute && PHP_VERSION_ID < 80200 ) {
 			// PDO SQLite cannot report this attribute before PHP 8.2.
 			return $this->stringify_fetches;
 		}
@@ -1546,7 +1572,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	public function create_parser( string $query ): WP_MySQL_Parser {
 		$lexer  = new WP_MySQL_Lexer(
 			$query,
-			80038,
+			$this->mysql_version,
 			$this->get_active_sql_mode_names()
 		);
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
@@ -3247,31 +3273,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				$this->execute_show_tables_statement( $node );
 				return;
 			case WP_MySQL_Lexer::VARIABLES_SYMBOL:
-				$this->last_column_meta      = array(
-					array(
-						'native_type' => 'STRING',
-						'pdo_type'    => PDO::PARAM_STR,
-						'flags'       => array( 'not_null' ),
-						'table'       => 'session_variables',
-						'name'        => 'Variable_name',
-						'len'         => 256,
-						'precision'   => 0,
-					),
-					array(
-						'native_type' => 'STRING',
-						'pdo_type'    => PDO::PARAM_STR,
-						'flags'       => array(),
-						'table'       => 'session_variables',
-						'name'        => 'Value',
-						'len'         => 4096,
-						'precision'   => 0,
-					),
-				);
-				$this->last_result_statement = $this->create_result_statement_from_data(
-					array_column( $this->last_column_meta, 'name' ),
-					array()
-				);
-				$this->found_rows            = 0;
+				$this->execute_show_variables_statement( $node );
 				return;
 		}
 
@@ -3282,6 +3284,39 @@ class WP_MySQL_On_SQLite extends PDO {
 				$keyword1->get_value()
 			)
 		);
+	}
+
+	/**
+	 * Translate and execute a MySQL SHOW VARIABLES statement in SQLite.
+	 *
+	 * @param WP_Parser_Node $node The "showStatement" AST node.
+	 */
+	private function execute_show_variables_statement( WP_Parser_Node $node ): void {
+		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		if ( null !== $like_or_where ) {
+			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'Variable_name' );
+		}
+
+		$query  = sprintf(
+			"SELECT column1 AS `Variable_name`, column2 AS `Value`
+			FROM (
+				VALUES
+					('version', ?),
+					('version_comment', ?)
+			)
+			WHERE TRUE %s
+			ORDER BY column1",
+			$condition ?? ''
+		);
+		$params = array(
+			$this->get_mysql_server_version_string(),
+			$this->get_mysql_server_version_comment(),
+		);
+
+		$stmt = $this->execute_sqlite_query( $query, $params );
+		$this->store_last_column_meta_from_statement( $stmt );
+		$this->last_result_statement = $stmt;
+		$this->found_rows            = array( $query, $params );
 	}
 
 	/**
@@ -4294,15 +4329,9 @@ class WP_MySQL_On_SQLite extends PDO {
 				if ( 'sql_mode' === $name ) {
 					$value = implode( ',', $this->get_active_sql_mode_names() );
 				} elseif ( 'version' === $name ) {
-					$version = (string) $this->mysql_version;
-					$value   = sprintf(
-						'%d.%d.%d',
-						$version[0],
-						substr( $version, 1, 2 ),
-						substr( $version, 3, 2 )
-					);
+					$value = $this->get_mysql_server_version_string();
 				} elseif ( 'version_comment' === $name ) {
-					$value = 'MySQL Community Server - GPL';
+					$value = $this->get_mysql_server_version_comment();
 				} elseif ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 					$value = $this->session_system_variables[ $name ] ?? null;
 				} else {
@@ -5077,17 +5106,46 @@ class WP_MySQL_On_SQLite extends PDO {
 					return 0;
 				}
 			case 'VERSION':
-				$version = (string) $this->mysql_version;
-				$value   = sprintf(
-					'%d.%d.%d',
-					$version[0],
-					substr( $version, 1, 2 ),
-					substr( $version, 3, 2 )
-				);
-				return $this->quote_sqlite_value( $value );
+				return $this->quote_sqlite_value( $this->get_mysql_server_version_string() );
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Get the configured MySQL version in dotted notation.
+	 *
+	 * @return string The MySQL version.
+	 */
+	private function get_mysql_version_string(): string {
+		return sprintf(
+			'%d.%d.%d',
+			intdiv( $this->mysql_version, 10000 ),
+			intdiv( $this->mysql_version % 10000, 100 ),
+			$this->mysql_version % 100
+		);
+	}
+
+	/**
+	 * Get the raw version string of the emulated MySQL server.
+	 *
+	 * @return string The MySQL server version.
+	 */
+	private function get_mysql_server_version_string(): string {
+		return sprintf(
+			'%s-mysql-on-sqlite-%s',
+			$this->get_mysql_version_string(),
+			SQLITE_DRIVER_VERSION
+		);
+	}
+
+	/**
+	 * Get the comment identifying the emulated MySQL server implementation.
+	 *
+	 * @return string The MySQL server version comment.
+	 */
+	private function get_mysql_server_version_comment(): string {
+		return 'MySQL on SQLite';
 	}
 
 	/**

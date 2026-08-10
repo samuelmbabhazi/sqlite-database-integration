@@ -25,7 +25,7 @@ require_once __DIR__ . '/class-wp-mysql-on-sqlite-statement.php';
  */
 class WP_SQLite_Driver {
 	/**
-	 * The SQLite engine version.
+	 * The emulated MySQL client library version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
 	 * the WordPress health info. The "WP_Debug_Data::get_wp_database()" method
@@ -75,7 +75,7 @@ class WP_SQLite_Driver {
 	public function __construct(
 		WP_SQLite_Connection $connection,
 		string $database,
-		int $mysql_version = 80038
+		int $mysql_version = WP_MySQL_On_SQLite::DEFAULT_MYSQL_VERSION
 	) {
 		$this->mysql_on_sqlite_driver = new WP_MySQL_On_SQLite(
 			sprintf( 'mysql-on-sqlite:dbname=%s', str_replace( ';', ';;', $database ) ),

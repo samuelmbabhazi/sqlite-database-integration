@@ -3895,7 +3895,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public function testShowVarianles(): void {
 		$this->assertQuery( 'SHOW VARIABLES' );
 		$this->assertQuery( "SHOW VARIABLES LIKE 'version'" );
+		$this->assertSame( 'version', $this->last_result[0]->Variable_name );
+		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $this->last_result[0]->Value );
+		$this->assertQuery( "SHOW VARIABLES LIKE 'version_comment'" );
+		$this->assertSame( 'version_comment', $this->last_result[0]->Variable_name );
+		$this->assertSame( 'MySQL on SQLite', $this->last_result[0]->Value );
 		$this->assertQuery( "SHOW VARIABLES WHERE Variable_name = 'version'" );
+		$this->assertSame( 'version', $this->last_result[0]->Variable_name );
+		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $this->last_result[0]->Value );
 		$this->assertQuery( 'SHOW GLOBAL VARIABLES' );
 		$this->assertQuery( 'SHOW SESSION VARIABLES' );
 	}
@@ -4058,7 +4065,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		// SHOW VARIABLES
 		$this->assertQuery( 'SHOW VARIABLES' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '0', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
 	}
 
 	public function testComplexSelectBasedOnDates() {
@@ -7363,10 +7370,10 @@ END;
 
 	public function testBuiltInSystemVariables(): void {
 		$result = $this->assertQuery( 'SELECT @@version' );
-		$this->assertSame( '8.0.38', $result[0]->{'@@version'} );
+		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $result[0]->{'@@version'} );
 
 		$result = $this->assertQuery( 'SELECT @@version_comment' );
-		$this->assertSame( 'MySQL Community Server - GPL', $result[0]->{'@@version_comment'} );
+		$this->assertSame( 'MySQL on SQLite', $result[0]->{'@@version_comment'} );
 	}
 
 	public function testSessionSystemVariables(): void {
@@ -12681,7 +12688,7 @@ END;
 
 	public function testVersionFunction(): void {
 		$result = $this->query( 'SELECT VERSION()' );
-		$this->assertSame( '8.0.38', $result[0]->{'VERSION()'} );
+		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $result[0]->{'VERSION()'} );
 	}
 
 	public function testFromBase64Function(): void {
