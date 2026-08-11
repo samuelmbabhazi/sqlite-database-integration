@@ -704,8 +704,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_bit_defaults (
 				id INT DEFAULT 0,
-				quoted_zero BIT(1) DEFAULT '0',
+				empty_string BIT(1) DEFAULT '',
+				text_zero BIT(8) DEFAULT '0',
+				text_a BIT(7) DEFAULT _utf8mb4'a',
+				text_sql BIT(38) DEFAULT '0;-- ',
 				integer_five BIT(4) DEFAULT 5,
+				decimal_three BIT(4) DEFAULT 2.5,
+				float_two BIT(4) DEFAULT 25e-1,
+				negative_zero BIT(1) DEFAULT -0,
 				bit_literal_five BIT(4) DEFAULT b'0101',
 				binary_number_five BIT(4) DEFAULT 0b0101,
 				hex_literal_five BIT(4) DEFAULT x'05',
@@ -718,8 +724,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery( 'SHOW CREATE TABLE _tmp_bit_defaults;' );
 		$results      = $this->last_result;
 		$create_table = $results[0]->{'Create Table'};
-		$this->assertStringContainsString( "`quoted_zero` bit(1) DEFAULT b'0'", $create_table );
+		$this->assertStringContainsString( "`empty_string` bit(1) DEFAULT b'0'", $create_table );
+		$this->assertStringContainsString( "`text_zero` bit(8) DEFAULT b'110000'", $create_table );
+		$this->assertStringContainsString( "`text_a` bit(7) DEFAULT b'1100001'", $create_table );
+		$this->assertStringContainsString( "`text_sql` bit(38) DEFAULT b'11000000111011001011010010110100100000'", $create_table );
 		$this->assertStringContainsString( "`integer_five` bit(4) DEFAULT b'101'", $create_table );
+		$this->assertStringContainsString( "`decimal_three` bit(4) DEFAULT b'11'", $create_table );
+		$this->assertStringContainsString( "`float_two` bit(4) DEFAULT b'10'", $create_table );
+		$this->assertStringContainsString( "`negative_zero` bit(1) DEFAULT b'0'", $create_table );
 		$this->assertStringContainsString( "`bit_literal_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`binary_number_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`hex_literal_five` bit(4) DEFAULT b'101'", $create_table );
@@ -734,8 +746,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			array(
 				(object) array(
 					'id'                 => '1',
-					'quoted_zero'        => '0',
+					'empty_string'       => '0',
+					'text_zero'          => '48',
+					'text_a'             => '97',
+					'text_sql'           => '207151246624',
 					'integer_five'       => '5',
+					'decimal_three'      => '3',
+					'float_two'          => '2',
+					'negative_zero'      => '0',
 					'bit_literal_five'   => '5',
 					'binary_number_five' => '5',
 					'hex_literal_five'   => '5',
@@ -746,6 +764,23 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			),
 			$results
 		);
+	}
+
+	public function testShowCreateTableWithMaximumBitDefaultValues(): void {
+		$max_bits = str_repeat( '1', 64 );
+		$this->assertQuery(
+			"CREATE TABLE _tmp_max_bit_defaults (
+				binary_value BIT(64) DEFAULT b'$max_bits',
+				hex_value BIT(64) DEFAULT x'ffffffffffffffff',
+				decimal_value BIT(64) DEFAULT 18446744073709551615
+			)"
+		);
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_max_bit_defaults;' );
+		$create_table = $this->last_result[0]->{'Create Table'};
+		$this->assertStringContainsString( "`binary_value` bit(64) DEFAULT b'$max_bits'", $create_table );
+		$this->assertStringContainsString( "`hex_value` bit(64) DEFAULT b'$max_bits'", $create_table );
+		$this->assertStringContainsString( "`decimal_value` bit(64) DEFAULT b'$max_bits'", $create_table );
 	}
 
 	/**
@@ -775,24 +810,68 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$payload = "0,\n  PRIMARY KEY (`id`)\n); DROP TABLE users; --";
 
 		return array(
-			'CREATE TABLE'       => array(
+			'CREATE TABLE'              => array(
 				"CREATE TABLE _tmp_created_invalid_bit_default (injected BIT(1) DEFAULT '$payload')",
 				'injected',
 			),
-			'ALTER TABLE ADD'    => array(
+			'ALTER TABLE ADD'           => array(
 				"ALTER TABLE _tmp_invalid_bit_default ADD COLUMN injected_2 BIT(1) DEFAULT '$payload'",
 				'injected_2',
 			),
-			'ALTER TABLE MODIFY' => array(
+			'ALTER TABLE MODIFY'        => array(
 				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '$payload'",
 				'injected',
 			),
-			'empty string'       => array(
-				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT ''",
+			'quoted byte exceeds width' => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '0'",
 				'injected',
 			),
-			'bit-like string'    => array(
+			'bit-like string'           => array(
 				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT 'b''0''; DROP TABLE users; -- '",
+				'injected',
+			),
+			'empty bit literal'         => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT b''",
+				'injected',
+			),
+			'empty hex literal'         => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT x''",
+				'injected',
+			),
+			'wide bit literal'          => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT b'10'",
+				'injected',
+			),
+			'wide binary number'        => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT 0b10',
+				'injected',
+			),
+			'wide hex literal'          => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT x'02'",
+				'injected',
+			),
+			'wide hex number'           => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT 0x02',
+				'injected',
+			),
+			'wide decimal'              => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT 2',
+				'injected',
+			),
+			'negative decimal'          => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(8) DEFAULT -0.1',
+				'injected',
+			),
+			'above BIT(64)'             => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(64) DEFAULT 18446744073709551616',
+				'injected',
+			),
+			'NULL on NOT NULL'          => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) NOT NULL DEFAULT NULL',
+				'injected',
+			),
+			'CURRENT_TIMESTAMP'         => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(64) DEFAULT CURRENT_TIMESTAMP',
 				'injected',
 			),
 		);

@@ -2060,6 +2060,25 @@ class WP_SQLite_Information_Schema_Builder {
 			return null;
 		}
 
+		return $this->normalize_column_default( $default_attr, $node, $data_type, $column_name );
+	}
+
+	/**
+	 * Validate and normalize a column default value for information schema storage.
+	 *
+	 * @param  WP_Parser_Node $default_attr The "columnAttribute" AST node containing the default.
+	 * @param  WP_Parser_Node $column       The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  string         $data_type    The column data type as stored in information schema.
+	 * @param  string         $column_name  The column name.
+	 * @return string|null                  The normalized default value.
+	 */
+	private function normalize_column_default(
+		WP_Parser_Node $default_attr,
+		WP_Parser_Node $column,
+		string $data_type,
+		string $column_name
+	): ?string {
+
 		/*
 		 * [GRAMMAR]
 		 * DEFAULT_SYMBOL (
@@ -2071,6 +2090,9 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// DEFAULT NOW()
 		if ( $default_attr->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL ) ) {
+			if ( 'bit' === $data_type ) {
+				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
+			}
 			return 'CURRENT_TIMESTAMP';
 		}
 
@@ -2078,11 +2100,37 @@ class WP_SQLite_Information_Schema_Builder {
 		$signed_literal = $default_attr->get_first_child_node( 'signedLiteral' );
 		if ( $signed_literal ) {
 			$literal = $signed_literal->get_first_child_node( 'literal' );
-			if ( null === $literal ) {
-				// A signed number, such as "-5", has no "literal" child node.
-				return $this->get_value( $signed_literal );
+			if ( $literal && $literal->has_child_node( 'nullLiteral' ) ) {
+				if ( 'bit' === $data_type && 'NO' === $this->get_column_nullable( $column ) ) {
+					throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
+				}
+				return null;
 			}
-			return $this->get_literal_default( $literal, $data_type, $column_name );
+
+			if ( 'bit' === $data_type ) {
+				$bit_default = $this->normalize_bit_default( $signed_literal, $column );
+				if ( null === $bit_default ) {
+					throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
+				}
+				return $bit_default;
+			}
+
+			// DEFAULT TRUE or DEFAULT FALSE
+			if ( $literal && $literal->has_child_node( 'boolLiteral' ) ) {
+				$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
+				return $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
+			}
+
+			/*
+			 * @TODO: Non-BIT literal defaults are currently stored verbatim. To
+			 * match MySQL, they should be normalized. For example:
+			 *  - BINARY/VARBINARY defaults stored as 0x hex literals.
+			 *  - Hex and bit literals coerced to raw bytes for text columns and to
+			 *    their decimal value for numeric columns.
+			 *  - The charset introducer dropped from text-literal defaults.
+			 *  - Numeric defaults normalized, e.g. 1.0 to 1 or 1e3 to 1000.
+			 */
+			return $this->get_value( $signed_literal );
 		}
 
 		// DEFAULT (expression) - MySQL 8.0.13+ supports exprWithParentheses
@@ -2095,83 +2143,197 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract and normalize a literal default value.
+	 * Normalize a scalar BIT default value to a MySQL bit literal.
 	 *
-	 * @param  WP_Parser_Node $literal     The "literal" AST node.
-	 * @param  string         $data_type   The column data type as stored in information schema.
-	 * @param  string         $column_name The column name.
-	 * @return string|null                 The default value as stored in information schema.
+	 * The source literal type is preserved in the AST and determines how MySQL
+	 * converts the value. In particular, text literals are converted from their
+	 * bytes, not parsed as decimal numbers.
+	 *
+	 * @param  WP_Parser_Node $signed_literal The "signedLiteral" AST node.
+	 * @param  WP_Parser_Node $column         The "columnDefinition" or "fieldDefinition" AST node.
+	 * @return string|null                    The default as a bit literal, e.g. "b'101'", or null when invalid.
 	 */
-	private function get_literal_default( WP_Parser_Node $literal, string $data_type, string $column_name ): ?string {
-		// DEFAULT NULL
-		if ( $literal->has_child_node( 'nullLiteral' ) ) {
+	private function normalize_bit_default( WP_Parser_Node $signed_literal, WP_Parser_Node $column ): ?string {
+		$literal     = $signed_literal->get_first_child_node( 'literal' );
+		$token       = $literal ? $literal->get_first_descendant_token() : null;
+		$bits        = null;
+		$hexadecimal = null;
+
+		if ( $literal && $literal->has_child_node( 'boolLiteral' ) ) {
+			$bits = $literal->get_first_child_node( 'boolLiteral' )
+				->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
+		} elseif ( $token && WP_MySQL_Lexer::BIN_NUMBER === $token->id ) {
+			$value = $token->get_value();
+			$bits  = "'" === $value[1] ? substr( $value, 2, -1 ) : substr( $value, 2 );
+			if ( '' === $bits ) {
+				return null;
+			}
+		} elseif ( $token && WP_MySQL_Lexer::HEX_NUMBER === $token->id ) {
+			$value       = strtolower( $token->get_value() );
+			$is_quoted   = "'" === $value[1];
+			$hexadecimal = $is_quoted ? substr( $value, 2, -1 ) : substr( $value, 2 );
+			if ( '' === $hexadecimal || ( $is_quoted && 0 !== strlen( $hexadecimal ) % 2 ) ) {
+				return null;
+			}
+		} elseif ( $literal && $literal->has_child_node( 'textLiteral' ) ) {
+			$string_nodes = $literal->get_first_child_node( 'textLiteral' )
+				->get_descendant_nodes( 'textStringLiteral' );
+			if ( count( $string_nodes ) < 1 ) {
+				return null;
+			}
+
+			$value = '';
+			foreach ( $string_nodes as $string_node ) {
+				$value .= $this->get_value( $string_node );
+			}
+			$value = ltrim( $value, chr( 0 ) );
+			if ( strlen( $value ) > 8 ) {
+				return null;
+			}
+			$hexadecimal = bin2hex( $value );
+		} else {
+			$bits = $this->get_numeric_literal_bits( $signed_literal );
+		}
+
+		if ( null !== $hexadecimal ) {
+			$bits = '';
+			for ( $i = 0; $i < strlen( $hexadecimal ); $i++ ) {
+				$bits .= str_pad( decbin( hexdec( $hexadecimal[ $i ] ) ), 4, '0', STR_PAD_LEFT );
+			}
+		}
+
+		if ( null === $bits ) {
+			return null;
+		}
+		$bits = ltrim( $bits, '0' );
+		$bits = '' === $bits ? '0' : $bits;
+
+		if ( strlen( $bits ) > $this->get_bit_column_length( $column ) ) {
 			return null;
 		}
 
-		// DEFAULT TRUE or DEFAULT FALSE
-		if ( $literal->has_child_node( 'boolLiteral' ) ) {
-			$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
-			$bool_value   = $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
-			return 'bit' === $data_type ? "b'{$bool_value}'" : $bool_value;
-		}
-
-		$default = $this->get_value( $literal );
-
-		if ( 'bit' === $data_type ) {
-			$bit_default = $this->get_bit_default( $default );
-			if ( null === $bit_default ) {
-				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
-			}
-			return $bit_default;
-		}
-
-		/*
-		 * @TODO: Non-BIT literal defaults are currently stored verbatim. To
-		 * match MySQL, they should be normalized. For example:
-		 *  - BINARY/VARBINARY defaults stored as 0x hex literals.
-		 *  - Hex and bit literals coerced to raw bytes for text columns and to
-		 *    their decimal value for numeric columns.
-		 *  - The charset introducer dropped from text-literal defaults.
-		 *  - Numeric defaults normalized, e.g. 1.0 to 1 or 1e3 to 1000.
-		 */
-		return $default;
+		return "b'{$bits}'";
 	}
 
 	/**
-	 * Normalize a BIT default value to a MySQL bit literal.
+	 * Convert a parsed MySQL numeric literal to normalized bits.
 	 *
-	 * The value may be a bit literal, a hex literal, or a decimal.
-	 *
-	 * @param  string      $default_value The BIT default value.
-	 * @return string|null                The default as a bit literal, e.g. "b'101'", or null when not a bit value.
+	 * @param  WP_Parser_Node $signed_literal The "signedLiteral" AST node.
+	 * @return string|null                    The normalized bits, or null when the value is outside the BIT range.
 	 */
-	private function get_bit_default( string $default_value ): ?string {
-		$value = strtolower( $default_value );
-
-		// Bit literal, e.g. b'101' or 0b101.
-		if ( preg_match( "/\Ab'([01]*)'\z/", $value, $matches ) ) {
-			$bits = ltrim( $matches[1], '0' );
-			return "b'" . ( '' === $bits ? '0' : $bits ) . "'";
+	private function get_numeric_literal_bits( WP_Parser_Node $signed_literal ): ?string {
+		$numeric_node = $signed_literal->get_first_descendant_node( 'numLiteral' );
+		if ( null === $numeric_node ) {
+			$numeric_node = $signed_literal->get_first_descendant_node( 'ulong_number' );
 		}
-		if ( preg_match( '/\A0b([01]+)\z/', $value, $matches ) ) {
-			$bits = ltrim( $matches[1], '0' );
-			return "b'" . ( '' === $bits ? '0' : $bits ) . "'";
+		if ( null === $numeric_node ) {
+			return null;
 		}
 
-		// Hex literal, e.g. x'05' or 0x05.
-		if ( preg_match( "/\Ax'([0-9a-f]*)'\z/", $value, $matches ) ) {
-			return "b'" . decbin( hexdec( $matches[1] ) ) . "'";
-		}
-		if ( preg_match( '/\A0x([0-9a-f]+)\z/', $value, $matches ) ) {
-			return "b'" . decbin( hexdec( $matches[1] ) ) . "'";
+		$numeric_token = $numeric_node->get_first_descendant_token();
+		$is_negative   = $signed_literal->has_child_token( WP_MySQL_Lexer::MINUS_OPERATOR );
+		$value         = $numeric_token->get_value();
+
+		if ( WP_MySQL_Lexer::DECIMAL_NUMBER === $numeric_token->id ) {
+			if ( $is_negative && '0' !== $this->normalize_decimal_digits( str_replace( '.', '', $value ) ) ) {
+				return null;
+			}
+			$value = $this->round_decimal_literal( $value );
+		} elseif ( WP_MySQL_Lexer::FLOAT_NUMBER === $numeric_token->id ) {
+			$value = (float) $value;
+			if ( $is_negative ) {
+				$value *= -1;
+			}
+			$value = $value < 0 ? ceil( $value ) : floor( $value );
+			if ( ! is_finite( $value ) || $value < 0 ) {
+				return null;
+			}
+			$value = 0.0 === $value ? '0' : sprintf( '%.0F', $value );
+		} elseif ( $is_negative && '0' !== $this->normalize_decimal_digits( $value ) ) {
+			return null;
 		}
 
-		// Decimal, e.g. 5, or a numeric string literal such as '0'.
-		if ( is_numeric( $value ) ) {
-			return "b'" . decbin( (int) $value ) . "'";
+		return $this->convert_decimal_to_bits( $value );
+	}
+
+	/**
+	 * Round an unsigned exact decimal literal to its MySQL integer value.
+	 *
+	 * @param  string $value The DECIMAL_NUMBER token value.
+	 * @return string        The rounded unsigned integer digits.
+	 */
+	private function round_decimal_literal( string $value ): string {
+		list ( $integer, $fraction ) = array_pad( explode( '.', $value, 2 ), 2, '' );
+		$integer                     = $this->normalize_decimal_digits( $integer );
+		if ( '' === $fraction || $fraction[0] < '5' ) {
+			return $integer;
 		}
 
-		return null;
+		for ( $i = strlen( $integer ) - 1; $i >= 0; $i-- ) {
+			if ( '9' !== $integer[ $i ] ) {
+				$integer[ $i ] = (string) ( (int) $integer[ $i ] + 1 );
+				return $integer;
+			}
+			$integer[ $i ] = '0';
+		}
+		return '1' . $integer;
+	}
+
+	/**
+	 * Convert unsigned decimal digits to normalized bits without integer overflow.
+	 *
+	 * @param  string $value The unsigned integer digits.
+	 * @return string|null   The normalized bits, or null when above the BIT(64) maximum.
+	 */
+	private function convert_decimal_to_bits( string $value ): ?string {
+		$value = $this->normalize_decimal_digits( $value );
+		$max   = '18446744073709551615';
+		if ( strlen( $value ) > strlen( $max ) || ( strlen( $value ) === strlen( $max ) && strcmp( $value, $max ) > 0 ) ) {
+			return null;
+		}
+
+		$bits = '';
+		while ( '0' !== $value ) {
+			$quotient  = '';
+			$remainder = 0;
+			for ( $i = 0; $i < strlen( $value ); $i++ ) {
+				$dividend  = $remainder * 10 + (int) $value[ $i ];
+				$digit     = intdiv( $dividend, 2 );
+				$remainder = $dividend % 2;
+				if ( '' !== $quotient || 0 !== $digit ) {
+					$quotient .= (string) $digit;
+				}
+			}
+			$bits  = (string) $remainder . $bits;
+			$value = '' === $quotient ? '0' : $quotient;
+		}
+		return '' === $bits ? '0' : $bits;
+	}
+
+	/**
+	 * Remove insignificant leading zeroes from decimal digits.
+	 *
+	 * @param  string $value The unsigned decimal digits.
+	 * @return string        The normalized digits.
+	 */
+	private function normalize_decimal_digits( string $value ): string {
+		$value = ltrim( $value, '0' );
+		return '' === $value ? '0' : $value;
+	}
+
+	/**
+	 * Get the declared width of a BIT column.
+	 *
+	 * @param  WP_Parser_Node $column The "columnDefinition" or "fieldDefinition" AST node.
+	 * @return int                    The BIT width.
+	 */
+	private function get_bit_column_length( WP_Parser_Node $column ): int {
+		$data_type    = $column->get_first_descendant_node( 'dataType' );
+		$field_length = $data_type->get_first_descendant_node( 'fieldLength' );
+		if ( null === $field_length ) {
+			return 1;
+		}
+		return (int) $field_length->get_first_descendant_token( WP_MySQL_Lexer::INT_NUMBER )->get_value();
 	}
 
 	/**
