@@ -300,7 +300,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( 'w', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 	}
 
-	public function test_journal_mode_defaults_to_wal(): void {
+	public function test_journal_mode_and_synchronous_default_to_wal_and_full(): void {
 		$path = tempnam( sys_get_temp_dir(), 'wp_sqlite_' );
 		unlink( $path );
 
@@ -312,7 +312,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 				strtolower( (string) $connection->query( 'PRAGMA journal_mode' )->fetchColumn() )
 			);
 			$this->assertSame(
-				'1',
+				'2',
 				(string) $connection->query( 'PRAGMA synchronous' )->fetchColumn()
 			);
 		} finally {
@@ -331,7 +331,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 				null,
 				array(
 					'sqlite_journal_mode' => 'DELETE',
-					'sqlite_synchronous'  => 'FULL',
+					'sqlite_synchronous'  => 'NORMAL',
 				)
 			);
 			$connection = $driver->get_connection();
@@ -340,7 +340,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 				strtolower( (string) $connection->query( 'PRAGMA journal_mode' )->fetchColumn() )
 			);
 			$this->assertSame(
-				'2',
+				'1',
 				(string) $connection->query( 'PRAGMA synchronous' )->fetchColumn()
 			);
 		} finally {

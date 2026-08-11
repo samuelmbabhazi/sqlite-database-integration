@@ -79,8 +79,7 @@ class WP_SQLite_Connection {
 	 *     @type int|null        $timeout      Optional. SQLite timeout in seconds.
 	 *                                         The time to wait for a writable lock.
 	 *     @type string|null     $journal_mode Optional. SQLite journal mode. Defaults to WAL.
-	 *     @type string|int|null $synchronous  Optional. SQLite synchronous setting. Defaults to
-	 *                                         NORMAL when the effective journal mode is WAL.
+	 *     @type string|int|null $synchronous  Optional. SQLite synchronous setting. Defaults to FULL.
 	 *     @type array           $pdo_options  Optional. PDO constructor options.
 	 * }
 	 *
@@ -116,8 +115,7 @@ class WP_SQLite_Connection {
 		$this->pdo->setAttribute( PDO::ATTR_TIMEOUT, $timeout );
 
 		// Configure SQLite journal mode. Default to WAL for best throughput.
-		$effective_journal_mode = null;
-		$journal_mode           = $options['journal_mode'] ?? 'WAL';
+		$journal_mode = $options['journal_mode'] ?? 'WAL';
 		if ( is_string( $journal_mode ) ) {
 			$journal_mode = strtoupper( $journal_mode );
 		}
@@ -127,9 +125,7 @@ class WP_SQLite_Connection {
 			);
 		}
 		try {
-			$effective_journal_mode = strtoupper(
-				(string) $this->query( 'PRAGMA journal_mode = ' . $journal_mode )->fetchColumn()
-			);
+			$this->query( 'PRAGMA journal_mode = ' . $journal_mode )->fetchColumn();
 		} catch ( PDOException $e ) {
 			// WAL may be unavailable in some environments, such as on network
 			// filesystems. When it is explicitly configured, surface the error.
@@ -140,26 +136,16 @@ class WP_SQLite_Connection {
 		}
 
 		/*
-		 * Configure SQLite synchronous setting. Default to NORMAL for WAL mode.
+		 * Configure SQLite synchronous setting. Default to FULL for durable commits.
 		 *
-		 * WAL improves read/write concurrency and "synchronous = NORMAL" avoids
-		 * frequent sync to the main database, which could become a bottleneck.
-		 * In WAL mode, NORMAL is safe and recommended. From the SQLite docs:
-		 *
-		 *   The synchronous=NORMAL setting provides the best balance between
-		 *   performance and safety for most applications running in WAL mode.
-		 *   You lose durability across power loss with synchronous NORMAL in WAL
-		 *   mode, but that is not important for most applications. Transactions
-		 *   are still atomic, consistent, and isolated, which are the most
-		 *   important characteristics in most use cases.
-		 *
-		 * SQLite defaults to "synchronous = FULL" to avoid data corruption with
-		 * other journal modes. With WAL, this is not necessary.
+		 * In WAL mode, FULL synchronizes the WAL file after each transaction
+		 * commit. NORMAL remains safe from corruption, but a committed transaction
+		 * might roll back after a power loss or operating system crash.
 		 *
 		 * See: https://sqlite.org/pragma.html#pragma_synchronous
 		 */
-		$synchronous = $options['synchronous'] ?? null;
-		if ( isset( $synchronous ) ) {
+		$synchronous = $options['synchronous'] ?? 'FULL';
+		if ( isset( $options['synchronous'] ) ) {
 			// Validate and normalize explicitly provided synchronous value.
 			if ( is_int( $synchronous ) && isset( self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ] ) ) {
 				$synchronous = self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ];
@@ -171,13 +157,8 @@ class WP_SQLite_Connection {
 					sprintf( 'Invalid SQLite synchronous setting: %s.', $options['synchronous'] )
 				);
 			}
-		} elseif ( 'WAL' === $effective_journal_mode ) {
-			// Default to NORMAL for WAL mode.
-			$synchronous = 'NORMAL';
 		}
-		if ( in_array( $synchronous, self::SQLITE_SYNCHRONOUS_SETTINGS, true ) ) {
-			$this->query( 'PRAGMA synchronous = ' . $synchronous );
-		}
+		$this->query( 'PRAGMA synchronous = ' . $synchronous );
 	}
 
 	/**

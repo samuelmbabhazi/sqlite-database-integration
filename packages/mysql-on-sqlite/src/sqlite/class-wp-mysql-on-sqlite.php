@@ -782,7 +782,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *     @type int             $mysql_version       Optional. MySQL version to emulate. Default 80038.
 	 *     @type PDO|null        $sqlite_pdo          Optional. Existing PDO SQLite connection.
 	 *     @type string|null     $sqlite_journal_mode Optional. SQLite journal mode. Default 'WAL'.
-	 *     @type string|int|null $sqlite_synchronous  Optional. SQLite synchronous setting.
+	 *     @type string|int|null $sqlite_synchronous  Optional. SQLite synchronous setting. Default 'FULL'.
 	 * }
 	 *
 	 * @throws InvalidArgumentException     When the MySQL version is invalid.

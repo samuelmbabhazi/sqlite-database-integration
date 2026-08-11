@@ -44,11 +44,20 @@ class WP_SQLite_Connection_Tests extends TestCase {
 		$this->db_path = null;
 	}
 
-	public function testDefaultJournalModeUsesWal(): void {
+	public function testDefaultJournalModeUsesWalWithFullSynchronous(): void {
 		$connection = new WP_SQLite_Connection( array( 'path' => $this->db_path ) );
 
 		$this->assertSame( 'wal', $this->get_journal_mode( $connection ) );
-		$this->assertSame( '1', $this->get_synchronous( $connection ) );
+		$this->assertSame( '2', $this->get_synchronous( $connection ) );
+	}
+
+	public function testDefaultSynchronousOverridesExistingPdoSetting(): void {
+		$pdo = new PDO( 'sqlite:' . $this->db_path );
+		$pdo->exec( 'PRAGMA synchronous = NORMAL' );
+
+		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
+
+		$this->assertSame( '2', $this->get_synchronous( $connection ) );
 	}
 
 	public function testJournalModeCanBeOverridden(): void {
@@ -66,11 +75,11 @@ class WP_SQLite_Connection_Tests extends TestCase {
 		$connection = new WP_SQLite_Connection(
 			array(
 				'path'        => $this->db_path,
-				'synchronous' => 'FULL',
+				'synchronous' => 'NORMAL',
 			)
 		);
 
-		$this->assertSame( '2', $this->get_synchronous( $connection ) );
+		$this->assertSame( '1', $this->get_synchronous( $connection ) );
 	}
 
 	public function testRollbackJournalModeKeepsDefaultSynchronous(): void {
