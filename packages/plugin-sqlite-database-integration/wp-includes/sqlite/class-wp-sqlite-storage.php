@@ -3,6 +3,9 @@
 /**
  * Manages the storage layout for the WordPress SQLite database.
  *
+ * Legacy database migration uses a PDO SQLite connection:
+ * phpcs:disable WordPress.DB.RestrictedClasses.mysql__PDO
+ *
  * Filesystem warnings are suppressed to avoid exposing database paths:
  * phpcs:disable WordPress.PHP.NoSilencedErrors.Discouraged
  */
@@ -35,6 +38,13 @@ class WP_SQLite_Storage {
 	private $database_root;
 
 	/**
+	 * Database busy timeout during legacy migration, in milliseconds.
+	 *
+	 * @var int
+	 */
+	private $migration_timeout = 10000;
+
+	/**
 	 * Create a SQLite storage manager.
 	 *
 	 * @param string|null $database_root Managed database root. Defaults to FQDBDIR.
@@ -47,7 +57,7 @@ class WP_SQLite_Storage {
 	 * Initialize the SQLite database storage.
 	 *
 	 * Uses an explicit file path or ":memory:" as provided. Otherwise, initializes
-	 * managed storage with a randomized path unless a legacy database already exists.
+	 * managed storage with a randomized path and migrates legacy storage as needed.
 	 *
 	 * @param string|null $database_path Optional explicit database path.
 	 * @return string Absolute path to the SQLite database file, or ":memory:".
@@ -74,14 +84,6 @@ class WP_SQLite_Storage {
 			if ( @is_file( $database_path ) ) {
 				return $database_path;
 			}
-		} else {
-			$legacy_path = $this->database_root . self::DATABASE_FILENAME;
-			if ( ! @is_file( $legacy_path ) ) {
-				$legacy_path .= '.php';
-			}
-			if ( @is_file( $legacy_path ) ) {
-				return $legacy_path;
-			}
 		}
 
 		// Initialize or repair the managed database under a lock.
@@ -90,16 +92,19 @@ class WP_SQLite_Storage {
 		try {
 			// Publish a new database path.
 			if ( ! @is_file( $db_path_file ) ) {
-				$legacy_path = $this->database_root . self::DATABASE_FILENAME;
-				if ( ! @is_file( $legacy_path ) ) {
-					$legacy_path .= '.php';
-				}
-				if ( @is_file( $legacy_path ) ) {
-					return $legacy_path;
-				}
 				$this->publish_database_path();
 			}
 			$database_path = $this->read_database_path( $db_path_file );
+
+			// Migrate from legacy ".ht.sqlite" and ".ht.sqlite.php" paths.
+			$legacy_path = $this->database_root . self::DATABASE_FILENAME;
+			if ( ! @is_file( $legacy_path ) ) {
+				$legacy_path .= '.php';
+			}
+			if ( ! @is_file( $database_path ) && @is_file( $legacy_path ) ) {
+				$this->migrate_legacy_database( $legacy_path, $database_path );
+				return $database_path;
+			}
 
 			// Initialize a new database.
 			$this->ensure_database( $database_path );
@@ -126,6 +131,66 @@ class WP_SQLite_Storage {
 			fclose( $database_handle );
 			@chmod( $database_path, 0600 );
 		}
+	}
+
+	/**
+	 * Move the legacy database to the intended database path.
+	 *
+	 * @param string $legacy_path   Absolute legacy database path.
+	 * @param string $database_path Absolute intended database path.
+	 */
+	private function migrate_legacy_database( string $legacy_path, string $database_path ) {
+		// Disable WAL so only the main database file needs to be moved.
+		try {
+			$this->ensure_protected_directory( dirname( $database_path ) );
+
+			$connection = new PDO( 'sqlite:' . $legacy_path );
+			$connection->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+			$connection->exec( 'PRAGMA busy_timeout = ' . $this->migration_timeout );
+
+			$deadline = microtime( true ) + ( $this->migration_timeout / 1000 );
+			do {
+				try {
+					$journal_mode = $connection->query( 'PRAGMA journal_mode = DELETE' )->fetchColumn();
+					if ( 'delete' === strtolower( (string) $journal_mode ) ) {
+						break;
+					}
+				} catch ( PDOException $exception ) {
+					$error_info        = $connection->errorInfo();
+					$sqlite_error_code = isset( $error_info[1] ) ? (int) $error_info[1] : 0;
+					$sqlite_busy       = 5;
+					if ( ( $sqlite_error_code & 0xff ) !== $sqlite_busy ) {
+						throw $exception;
+					}
+				}
+
+				if ( microtime( true ) >= $deadline ) {
+					throw new RuntimeException( 'Failed to disable WAL before migrating the SQLite database.' );
+				}
+				usleep( 100 * 1000 ); // Wait 100 milliseconds.
+			} while ( true );
+
+			// Block other reads and writes before moving the database.
+			$connection->exec( 'BEGIN EXCLUSIVE' );
+		} catch ( Throwable $exception ) {
+			throw new RuntimeException( 'Failed to prepare the SQLite database for migration.', 0, $exception );
+		}
+
+		/*
+		 * Close the connection just before moving the database. SQLite considers
+		 * renaming an open database undefined, and Windows generally prevents it.
+		 * We cannot fully prevent race conditions, but this makes them unlikely.
+		 *
+		 * See: https://www.sqlite.org/howtocorrupt.html#unlink
+		*/
+		$connection = null;
+
+		// Move only the main database file. WAL was disabled and an exclusive
+		// lock was acquired, so no valid sidecar files are expected.
+		if ( ! @rename( $legacy_path, $database_path ) ) {
+			throw new RuntimeException( 'Failed to move the SQLite database file.' );
+		}
+		@chmod( $database_path, 0600 );
 	}
 
 	/**

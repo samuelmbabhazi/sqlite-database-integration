@@ -228,21 +228,113 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_preserves_the_current_database_filename() {
-		$this->assert_legacy_database_is_preserved( '.ht.sqlite' );
+	public function test_automatically_migrates_the_current_legacy_database() {
+		$this->assert_legacy_database_is_migrated( '.ht.sqlite' );
 	}
 
-	public function test_preserves_the_older_database_filename() {
-		$this->assert_legacy_database_is_preserved( '.ht.sqlite.php' );
+	public function test_automatically_migrates_the_older_legacy_database() {
+		$this->assert_legacy_database_is_migrated( '.ht.sqlite.php' );
 	}
 
-	private function assert_legacy_database_is_preserved( $filename ) {
+	public function test_prefers_the_current_legacy_database() {
 		$database_root = $this->create_temporary_directory_path();
-		$this->create_directory( $database_root );
-		touch( $database_root . '/' . $filename );
+		$current_path  = $database_root . '/.ht.sqlite';
+		$older_path    = $database_root . '/.ht.sqlite.php';
+		$this->create_sqlite_database( $current_path );
+		$this->create_sqlite_database( $older_path );
 
-		$this->assertSame( $database_root . '/' . $filename, $this->initialize_managed_storage( $database_root ) );
-		$this->assertFileDoesNotExist( $database_root . '/db-path.php' );
+		$database_path = $this->initialize_managed_storage( $database_root );
+
+		$this->assertFileDoesNotExist( $current_path );
+		$this->assertFileExists( $older_path );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
+	public function test_waits_for_existing_wal_connections_before_migrating() {
+		$database_root = $this->create_temporary_directory_path();
+		$legacy_path   = $database_root . '/.ht.sqlite';
+		$connection    = $this->create_sqlite_database( $legacy_path );
+		$connection->query( 'PRAGMA journal_mode = WAL' );
+		$connection = null;
+
+		list( $process, $pipes ) = $this->open_temporary_database_connection( $legacy_path );
+		try {
+			$database_path = $this->initialize_managed_storage( $database_root );
+		} finally {
+			$process_result = $this->close_temporary_database_connection( $process, $pipes );
+		}
+
+		$this->assertSame( 0, $process_result['exit_code'] );
+		$this->assertSame( '', $process_result['error'] );
+		$this->assertFileDoesNotExist( $legacy_path );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
+	public function test_does_not_migrate_a_busy_legacy_database() {
+		$database_root = $this->create_temporary_directory_path();
+		$legacy_path   = $database_root . '/.ht.sqlite';
+		$connection    = $this->create_sqlite_database( $legacy_path );
+		$connection->beginTransaction();
+		$connection->exec( "UPDATE storage_test SET value = 'pending'" );
+		$storage               = new WP_SQLite_Storage( $database_root );
+		$set_migration_timeout = Closure::bind(
+			function ( $migration_timeout ) {
+				$this->migration_timeout = $migration_timeout;
+			},
+			$storage,
+			WP_SQLite_Storage::class
+		);
+		$set_migration_timeout( 10 );
+
+		try {
+			$storage->initialize();
+			$this->fail( 'A busy SQLite database was migrated.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertStringContainsString( 'Failed to prepare the SQLite database for migration', $exception->getMessage() );
+			$this->assertStringNotContainsString( $legacy_path, $exception->getMessage() );
+		} finally {
+			$connection->rollBack();
+		}
+
+		$database_path = require $database_root . '/db-path.php';
+
+		$this->assertFileExists( $legacy_path );
+		$this->assertFileDoesNotExist( $database_path );
+		$this->assertSame( $database_path, $storage->initialize() );
+		$this->assertFileDoesNotExist( $legacy_path );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
+	public function test_does_not_expose_database_paths_when_migration_fails() {
+		$database_root = $this->create_temporary_directory_path();
+		$legacy_path   = $database_root . '/.ht.sqlite';
+		$database_path = $database_root . '/.ht.secret/.ht.sqlite';
+		$this->create_sqlite_database( $legacy_path );
+		$this->create_directory( $database_path );
+		file_put_contents( $database_root . '/db-path.php', "<?php\nreturn " . var_export( $database_path, true ) . ";\n" );
+
+		try {
+			$this->initialize_managed_storage( $database_root );
+			$this->fail( 'The database was migrated over a directory.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'Failed to move the SQLite database file.', $exception->getMessage() );
+			$this->assertStringNotContainsString( $database_path, $exception->getMessage() );
+		}
+
+		$this->assertFileExists( $legacy_path );
+	}
+
+	private function assert_legacy_database_is_migrated( $filename ) {
+		$database_root = $this->create_temporary_directory_path();
+		$legacy_path   = $database_root . '/' . $filename;
+		$this->create_wal_sqlite_database_copy( $legacy_path );
+
+		$database_path        = $this->initialize_managed_storage( $database_root );
+		$stored_database_path = require $database_root . '/db-path.php';
+
+		$this->assertSame( $database_path, $stored_database_path );
+		$this->assertFileDoesNotExist( $legacy_path );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
 	}
 
 	private function initialize_managed_storage( $database_root ) {
@@ -268,6 +360,58 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$connection->exec( "INSERT INTO storage_test VALUES ('preserved')" );
 
 		return $connection;
+	}
+
+	private function create_wal_sqlite_database_copy( $database_path ) {
+		$source_directory = $this->create_temporary_directory_path();
+		$source_path      = $source_directory . '/source.sqlite';
+		$this->create_directory( $source_directory );
+		$this->create_directory( dirname( $database_path ) );
+
+		$connection = new PDO( 'sqlite:' . $source_path );
+		$connection->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+		$this->assertSame( 'wal', $connection->query( 'PRAGMA journal_mode = WAL' )->fetchColumn() );
+		$connection->exec( 'PRAGMA wal_autocheckpoint = 0' );
+		$connection->exec( 'CREATE TABLE storage_test (value TEXT NOT NULL)' );
+		$connection->exec( "INSERT INTO storage_test VALUES ('preserved')" );
+
+		$this->assertTrue( copy( $source_path, $database_path ) );
+		$this->assertTrue( copy( $source_path . '-wal', $database_path . '-wal' ) );
+		$connection = null;
+	}
+
+	private function open_temporary_database_connection( $database_path ) {
+		$script  = sprintf(
+			'$connection = new PDO(%s); $connection->query("SELECT value FROM storage_test")->fetchColumn(); fwrite(STDOUT, "ready\n"); fflush(STDOUT); usleep(250000);',
+			var_export( 'sqlite:' . $database_path, true )
+		);
+		$command = escapeshellarg( PHP_BINARY ) . ' -r ' . escapeshellarg( $script );
+		$process = proc_open(
+			$command,
+			array(
+				array( 'pipe', 'r' ),
+				array( 'pipe', 'w' ),
+				array( 'pipe', 'w' ),
+			),
+			$pipes
+		);
+
+		$this->assertIsResource( $process );
+		fclose( $pipes[0] );
+		$this->assertSame( "ready\n", fgets( $pipes[1] ) );
+
+		return array( $process, $pipes );
+	}
+
+	private function close_temporary_database_connection( $process, $pipes ) {
+		fclose( $pipes[1] );
+		$error = stream_get_contents( $pipes[2] );
+		fclose( $pipes[2] );
+
+		return array(
+			'exit_code' => proc_close( $process ),
+			'error'     => $error,
+		);
 	}
 
 	private function read_sqlite_value( $database_path ) {
